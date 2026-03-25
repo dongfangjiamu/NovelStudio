@@ -1,0 +1,14 @@
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.venv/
+*.pyc
+.env
+dist/
+build/
+*.egg-info/
+.obsidian/
+node_modules/
+.DS_Store
+*.swp
+*.bak

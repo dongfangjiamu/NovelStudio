@@ -1,0 +1,7 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "novel_editorial": "./novel_app/graph_main.py:graph"
+  },
+  "env": "./.env"
+}
