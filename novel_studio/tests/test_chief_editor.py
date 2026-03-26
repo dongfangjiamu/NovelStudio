@@ -63,6 +63,8 @@ def test_chief_editor_requests_rewrite_when_major_issues_exist() -> None:
     assert len(result["issue_ledger"]["issues"]) == 3
     assert all(item["status"] == "open" for item in result["issue_ledger"]["issues"])
     assert all(item["issue_id"].startswith("iss_") for item in result["issue_ledger"]["issues"])
+    assert result["review_resolution_trace"]["new_count"] == 3
+    assert result["review_resolution_trace"]["items"][0]["status"] == "open"
 
 
 def test_chief_editor_passes_when_no_major_issues_exist() -> None:
@@ -168,6 +170,8 @@ def test_chief_editor_marks_previous_open_issues_as_resolved() -> None:
     assert result["issue_ledger"]["resolved_count"] == 1
     assert result["issue_ledger"]["issues"][0]["issue_id"] == "iss_old_1"
     assert result["issue_ledger"]["issues"][0]["status"] == "resolved"
+    assert result["review_resolution_trace"]["resolved_count"] == 1
+    assert result["review_resolution_trace"]["items"][0]["confirmed_by"] == "pacing"
 
 
 def test_chief_editor_marks_repeated_issue_as_recurring() -> None:
@@ -243,6 +247,8 @@ def test_chief_editor_marks_repeated_issue_as_recurring() -> None:
     assert result["issue_ledger"]["issues"][0]["issue_id"] == "iss_old_1"
     assert result["issue_ledger"]["issues"][0]["status"] == "recurring"
     assert result["issue_ledger"]["issues"][0]["attempts"] == 2
+    assert result["review_resolution_trace"]["items"][0]["status"] == "recurring"
+    assert result["review_resolution_trace"]["items"][0]["reviewer_decision"] == "rewrite"
 
 
 def test_chief_editor_matches_recurring_issue_by_related_issue_id() -> None:

@@ -93,6 +93,7 @@ const ARTIFACT_LABELS = {
   chapter_lesson: "章节经验卡",
   writer_playbook: "项目写作手册",
   issue_ledger: "问题账本",
+  review_resolution_trace: "问题关闭证据",
   latest_review_reports: "审校结果",
   human_guidance: "人工指导",
   blockers: "阻塞原因",
@@ -116,6 +117,7 @@ const ARTIFACT_ORDER = [
   "chapter_lesson",
   "writer_playbook",
   "issue_ledger",
+  "review_resolution_trace",
   "blockers",
   "event_log",
 ];
@@ -401,22 +403,25 @@ function summarizeArtifact(item) {
     };
   }
   if (item.artifact_type === "planning_context") {
+    const applications = payload.issue_applications || [];
     return {
       lead: `章卡层已应用 ${(payload.applied_guardrails || []).length} 条防线`,
       bullets: [
         ...(payload.applied_guardrails || []).slice(0, 4).map((entry) => `已应用：${entry}`),
-        ...(payload.addressed_issue_ids || []).slice(0, 3).map((entry) => `关联问题：${entry}`),
+        ...applications.slice(0, 3).map((entry) => `问题 ${entry.issue_id || "unknown"}：${entry.applied_guardrail || entry.fix_instruction || "已前置规避"}`),
       ],
       excerpt: (payload.stubborn_issue_ids || []).slice(0, 3).join("\n"),
     };
   }
   if (item.artifact_type === "drafting_context") {
+    const applications = payload.issue_applications || [];
     return {
       lead: `正文层已应用 ${(payload.applied_guardrails || []).length} 条防线`,
       bullets: [
         ...(payload.applied_guardrails || []).slice(0, 4).map((entry) => `已应用：${entry}`),
         ...(payload.must_include || []).slice(0, 2).map((entry) => `必须兑现：${entry}`),
         ...(payload.must_not_change || []).slice(0, 2).map((entry) => `不可破坏：${entry}`),
+        ...applications.slice(0, 2).map((entry) => `问题 ${entry.issue_id || "unknown"}：${entry.applied_guardrail || entry.fix_instruction || "已在正文规避"}`),
       ],
       excerpt: (payload.addressed_issue_ids || []).slice(0, 4).join("\n"),
     };
@@ -474,6 +479,25 @@ function summarizeArtifact(item) {
         .join("\n"),
     };
   }
+  if (item.artifact_type === "review_resolution_trace") {
+    const entries = payload.items || [];
+    return {
+      lead: `问题关闭证据 · 已解决 ${payload.resolved_count ?? 0} 项，复发 ${payload.recurring_count ?? 0} 项，新增 ${payload.new_count ?? 0} 项`,
+      bullets: entries.slice(0, 4).map((entry) => {
+        const reviewer = entry.reviewer || "unknown";
+        const decision = entry.reviewer_decision || "未记录";
+        return `${entry.status || "open"} / ${reviewer} / ${decision}：${entry.resolution_summary || entry.fix_instruction || entry.issue_id}`;
+      }),
+      excerpt: entries
+        .slice(0, 3)
+        .map((entry) => {
+          const planning = entry.planning_application?.applied_guardrail;
+          const drafting = entry.drafting_application?.applied_guardrail;
+          return [entry.issue_id, planning, drafting].filter(Boolean).join("\n");
+        })
+        .join("\n\n"),
+    };
+  }
   if (item.artifact_type === "canon_state") {
     return {
       lead: `Canon 已更新到第 ${payload.story_clock?.current_chapter || "?"} 章`,
@@ -529,10 +553,22 @@ function artifactPayload(items, artifactType) {
   return (items || []).find((item) => item.artifact_type === artifactType)?.payload || null;
 }
 
+function traceSourceLabel(sourceType) {
+  const labels = {
+    playbook: "项目写作手册",
+    lesson: "上一章经验卡",
+    pending_issue: "未关闭问题",
+    chapter_card_required: "本章必须兑现",
+    chapter_card_invariant: "本章不可破坏",
+  };
+  return labels[sourceType] || sourceType || "未知来源";
+}
+
 function buildLearningSummary(items) {
   const chapterLesson = artifactPayload(items, "chapter_lesson") || {};
   const writerPlaybook = artifactPayload(items, "writer_playbook") || {};
   const issueLedger = artifactPayload(items, "issue_ledger") || {};
+  const reviewResolutionTrace = artifactPayload(items, "review_resolution_trace") || {};
   const planningContext = artifactPayload(items, "planning_context") || {};
   const draftingContext = artifactPayload(items, "drafting_context") || {};
   const currentCard = artifactPayload(items, "current_card") || {};
@@ -540,6 +576,15 @@ function buildLearningSummary(items) {
   const latestReviewReports = artifactPayload(items, "latest_review_reports") || [];
   const pendingIssues = (issueLedger.issues || []).filter((issue) => ["open", "recurring"].includes(issue.status));
   const recurringIssues = pendingIssues.filter((issue) => issue.status === "recurring");
+  const resolvedIssues = (reviewResolutionTrace.items || []).filter((item) => item.status === "resolved");
+  const sourceLinkedRules = [
+    ...((planningContext.guardrail_sources || []).slice(0, 3)),
+    ...((draftingContext.guardrail_sources || []).slice(0, 3)),
+  ];
+  const exactApplications = [
+    ...(planningContext.issue_applications || []).map((item) => `章卡层先处理 ${item.issue_id}：${item.applied_guardrail}`),
+    ...(draftingContext.issue_applications || []).map((item) => `正文层继续处理 ${item.issue_id}：${item.applied_guardrail}`),
+  ];
   const learningTrace = [
     {
       title: "章卡规划",
@@ -575,16 +620,17 @@ function buildLearningSummary(items) {
   return {
     learnedLead: chapterLesson.pass_reasons?.[0] || "系统还没有沉淀出明确的通过经验。",
     learnedItems: [
-      ...(planningContext.applied_guardrails || []).slice(0, 2),
-      ...(writerPlaybook.validated_patterns || []).slice(0, 2),
-      ...(chapterLesson.pass_reasons || []).slice(0, 2),
+      ...sourceLinkedRules
+        .slice(0, 4)
+        .map((item) => `${traceSourceLabel(item.source_type)}：${item.guardrail}`),
+      ...(writerPlaybook.validated_patterns || []).slice(0, 2).map((item) => `已验证有效：${item}`),
+      ...(chapterLesson.pass_reasons || []).slice(0, 2).map((item) => `通过原因：${item}`),
     ].filter(Boolean),
     guardLead: pendingIssues.length
       ? `这次已提前纳入 ${pendingIssues.length} 个未关闭问题的规避要求。`
       : "当前没有未关闭旧问题需要额外规避。",
     guardItems: [
-      ...(planningContext.applied_guardrails || []).slice(0, 2),
-      ...(draftingContext.applied_guardrails || []).slice(0, 2),
+      ...exactApplications.slice(0, 4),
       ...pendingIssues.slice(0, 3).map((issue) => issue.fix_instruction || issue.evidence || issue.issue_id),
     ].filter(Boolean),
     riskLead: recurringIssues.length
@@ -596,6 +642,17 @@ function buildLearningSummary(items) {
       ...(chapterLesson.discarded_patterns || []).slice(0, 2),
     ].filter(Boolean),
     progressSummary: chapterLesson.issue_progress_summary || issueLedger.progress_summary || "",
+    closureLead: resolvedIssues.length
+      ? `这次已有 ${resolvedIssues.length} 个旧问题被确认关闭。`
+      : "这次还没有看到明确关闭的旧问题。",
+    closureItems: resolvedIssues.slice(0, 4).map((item) => {
+      const planning = item.planning_application?.applied_guardrail;
+      const drafting = item.drafting_application?.applied_guardrail;
+      const proof = [planning ? `章卡：${planning}` : null, drafting ? `正文：${drafting}` : null]
+        .filter(Boolean)
+        .join("；");
+      return `${item.issue_id} · ${item.confirmed_by || item.reviewer || "unknown"} 确认关闭。${proof ? ` ${proof}` : ""}`;
+    }),
     traceLead: `这次运行里，学习闭环已经在 ${appliedSteps}/${learningTrace.length} 个环节落地。`,
     traceItems: learningTrace.map((item) => `${item.title} · ${item.status} · ${item.detail}`),
   };
@@ -631,6 +688,11 @@ function renderLearningPanel(run) {
       title: "仍要警惕什么",
       lead: learning.riskLead,
       items: learning.riskItems,
+    },
+    {
+      title: "哪些旧问题被怎样关闭",
+      lead: learning.closureLead,
+      items: learning.closureItems,
     },
     {
       title: "这次在哪些环节用了经验",

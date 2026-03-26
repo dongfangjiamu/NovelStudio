@@ -34,6 +34,7 @@ def test_sql_store_persists_project_and_run(tmp_path: Path) -> None:
             "chapter_lesson": {"chapter_no": 2, "pass_reasons": ["通过"]},
             "writer_playbook": {"version": 1, "always_apply": ["保持章节目的明确"]},
             "issue_ledger": {"chapter_no": 2, "status": "cleared", "open_count": 0, "issues": []},
+            "review_resolution_trace": {"chapter_no": 2, "resolved_count": 1, "items": [{"issue_id": "iss_1"}]},
             "canon_state": {"story_clock": {"current_chapter": 2}},
             "latest_review_reports": [{"reviewer": "style"}],
             "event_log": ["done"],
@@ -65,6 +66,7 @@ def test_sql_store_persists_project_and_run(tmp_path: Path) -> None:
     assert "chapter_lesson" in artifact_types
     assert "writer_playbook" in artifact_types
     assert "issue_ledger" in artifact_types
+    assert "review_resolution_trace" in artifact_types
     assert store.get_approval_request(approval.approval_id) is not None
     assert resolved is not None
     assert resolved.status == "approved"

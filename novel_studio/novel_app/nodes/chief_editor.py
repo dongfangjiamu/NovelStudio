@@ -147,6 +147,66 @@ def _stubborn_issues(issue_ledger: dict) -> list[dict]:
     ]
 
 
+def _review_resolution_trace(state: NovelState, reports: list[dict], issue_ledger: dict, *, chapter_no: int | None) -> dict:
+    planning_context = state.get("planning_context") or {}
+    drafting_context = state.get("drafting_context") or {}
+    reports_by_reviewer = {str(report.get("reviewer", "")).strip(): report for report in reports}
+    planning_links = {
+        str(item.get("issue_id", "")).strip(): item
+        for item in planning_context.get("issue_applications", [])
+        if str(item.get("issue_id", "")).strip()
+    }
+    drafting_links = {
+        str(item.get("issue_id", "")).strip(): item
+        for item in drafting_context.get("issue_applications", [])
+        if str(item.get("issue_id", "")).strip()
+    }
+    items = []
+    for issue in issue_ledger.get("issues", []):
+        issue_id = str(issue.get("issue_id", "")).strip()
+        reviewer = str(issue.get("reviewer", "unknown")).strip() or "unknown"
+        reviewer_report = reports_by_reviewer.get(reviewer, {})
+        planning_link = planning_links.get(issue_id)
+        drafting_link = drafting_links.get(issue_id)
+        status = issue.get("status", "open")
+        if status == "resolved":
+            resolution_summary = f"{reviewer} 本轮未再提出这个问题，主编将其判定为已关闭。"
+        elif status == "recurring":
+            resolution_summary = f"{reviewer} 本轮仍在重复指出这个问题，暂未关闭。"
+        else:
+            resolution_summary = f"{reviewer} 本轮新提出了这个问题，后续需要继续验证。"
+        items.append(
+            {
+                "issue_id": issue_id,
+                "status": status,
+                "reviewer": reviewer,
+                "attempts": int(issue.get("attempts", 0) or 0),
+                "fix_instruction": issue.get("fix_instruction"),
+                "evidence": issue.get("evidence"),
+                "reviewer_decision": reviewer_report.get("decision"),
+                "resolution_summary": resolution_summary,
+                "planning_application": planning_link,
+                "drafting_application": drafting_link,
+                "confirmed_by": reviewer if status == "resolved" else None,
+            }
+        )
+    return {
+        "chapter_no": chapter_no,
+        "resolved_count": issue_ledger.get("resolved_count", 0),
+        "recurring_count": issue_ledger.get("recurring_count", 0),
+        "new_count": issue_ledger.get("new_count", 0),
+        "items": items,
+        "reviewer_decisions": [
+            {
+                "reviewer": report.get("reviewer"),
+                "decision": report.get("decision"),
+                "total_score": (report.get("scores") or {}).get("total"),
+            }
+            for report in reports
+        ],
+    }
+
+
 def chief_editor(state: NovelState, runtime: Any = None) -> dict:
     del runtime
     reports = _latest_reports(state)
@@ -283,6 +343,7 @@ def chief_editor(state: NovelState, runtime: Any = None) -> dict:
         reason=reason,
     )
     issue_ledger = _build_issue_ledger(state, reports, chapter_no=chapter_no)
+    review_resolution_trace = _review_resolution_trace(state, reports, issue_ledger, chapter_no=chapter_no)
     stubborn_issues = _stubborn_issues(issue_ledger)
     if stubborn_issues:
         stubborn_labels = [
@@ -302,10 +363,12 @@ def chief_editor(state: NovelState, runtime: Any = None) -> dict:
                 "status": "needs_human_review",
                 "progress_summary": f"有 {len(stubborn_issues)} 个关键问题连续未关闭，建议人工介入。",
             },
+            "review_resolution_trace": review_resolution_trace,
             "event_log": ["phase_decision:human_check", "issue_ledger:stubborn_issue_escalation"],
         }
     return {
         "phase_decision": decision.model_dump(),
         "issue_ledger": issue_ledger,
+        "review_resolution_trace": review_resolution_trace,
         "event_log": [f"phase_decision:{final_decision}"],
     }

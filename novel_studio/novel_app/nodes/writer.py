@@ -105,9 +105,69 @@ def _draft_guardrails(state: NovelState) -> list[str]:
     return deduped[:12]
 
 
+def _drafting_evidence(state: NovelState, pending_issues: list[dict[str, Any]], draft_guardrails: list[str]) -> dict:
+    current_card = state.get("current_card") or {}
+    writer_playbook = state.get("writer_playbook") or {}
+    chapter_lesson = state.get("chapter_lesson") or {}
+    playbook_rules = [str(item).strip() for item in writer_playbook.get("always_apply", [])[:6] if str(item).strip()]
+    lesson_rules = [str(item).strip() for item in chapter_lesson.get("carry_forward_rules", [])[:4] if str(item).strip()]
+    source_links = []
+    source_links.extend(
+        {"guardrail": f"本章必须出现：{item}", "source_type": "chapter_card_required", "source_ref": item}
+        for item in current_card.get("must_include", [])[:4]
+        if str(item).strip()
+    )
+    source_links.extend(
+        {"guardrail": f"严禁改动：{item}", "source_type": "chapter_card_invariant", "source_ref": item}
+        for item in current_card.get("must_not_change", [])[:4]
+        if str(item).strip()
+    )
+    source_links.extend(
+        {"guardrail": item, "source_type": "playbook", "source_ref": "always_apply"}
+        for item in playbook_rules
+    )
+    source_links.extend(
+        {"guardrail": item, "source_type": "lesson", "source_ref": "carry_forward_rules"}
+        for item in lesson_rules
+    )
+    issue_applications = []
+    for issue in pending_issues[:6]:
+        fix_instruction = str(issue.get("fix_instruction", "")).strip()
+        if not fix_instruction:
+            continue
+        attempts = int(issue.get("attempts", 1) or 1)
+        applied_guardrail = (
+            f"优先规避顽固问题：{fix_instruction}"
+            if attempts >= 2
+            else f"提前规避已知问题：{fix_instruction}"
+        )
+        issue_applications.append(
+            {
+                "issue_id": issue.get("issue_id"),
+                "reviewer": issue.get("reviewer"),
+                "attempts": attempts,
+                "applied_guardrail": applied_guardrail,
+                "fix_instruction": fix_instruction,
+            }
+        )
+        source_links.append(
+            {
+                "guardrail": applied_guardrail,
+                "source_type": "pending_issue",
+                "source_ref": issue.get("issue_id"),
+            }
+        )
+    return {
+        "applied_guardrails": draft_guardrails,
+        "guardrail_sources": source_links,
+        "issue_applications": issue_applications,
+    }
+
+
 def draft_writer(state: NovelState, runtime: Any = None) -> dict:
     pending_issues = _pending_issue_summary(state)
     draft_guardrails = _draft_guardrails(state)
+    drafting_evidence = _drafting_evidence(state, pending_issues, draft_guardrails)
     payload = {
         "creative_contract": state.get("creative_contract", {}),
         "story_bible": state.get("story_bible", {}),
@@ -131,7 +191,7 @@ def draft_writer(state: NovelState, runtime: Any = None) -> dict:
     return {
         "drafting_context": {
             "chapter_no": (state.get("current_card") or {}).get("chapter_no"),
-            "applied_guardrails": draft_guardrails,
+            **drafting_evidence,
             "addressed_issue_ids": [item.get("issue_id") for item in pending_issues if item.get("issue_id")],
             "stubborn_issue_ids": [
                 item.get("issue_id")

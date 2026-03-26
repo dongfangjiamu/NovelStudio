@@ -58,6 +58,8 @@ def test_draft_writer_passes_learning_guardrails_to_llm(monkeypatch) -> None:
     assert any("优先规避顽固问题" in item for item in captured["payload"]["draft_guardrails"])
     assert result["drafting_context"]["addressed_issue_ids"] == ["iss_1"]
     assert result["drafting_context"]["stubborn_issue_ids"] == ["iss_1"]
+    assert result["drafting_context"]["issue_applications"][0]["issue_id"] == "iss_1"
+    assert result["drafting_context"]["guardrail_sources"][-1]["source_type"] == "pending_issue"
     assert result["event_log"] == ["chapter_draft_ready"]
 
 

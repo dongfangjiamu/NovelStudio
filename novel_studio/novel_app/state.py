@@ -44,6 +44,7 @@ class OutputState(TypedDict, total=False):
     chapter_lesson: dict
     writer_playbook: dict
     issue_ledger: dict
+    review_resolution_trace: dict
     latest_review_reports: list[dict]
     human_guidance: dict
     blockers: list[str]
@@ -59,6 +60,7 @@ class NovelState(TypedDict, total=False):
     writer_playbook: dict
     chapter_lesson: dict
     issue_ledger: dict
+    review_resolution_trace: dict
     human_instruction: dict
     planning_context: dict
     current_card: dict
