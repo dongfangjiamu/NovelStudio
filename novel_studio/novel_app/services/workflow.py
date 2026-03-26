@@ -31,19 +31,16 @@ class WorkflowService:
             "user_brief": effective_brief,
             "target_chapters": effective_target_chapters,
             "operator_id": effective_operator_id,
-            "quick_mode": quick_mode,
-            "human_instruction": (
-                {
-                    "requested_action": "quick_trial",
-                    "reason": "用户选择快速试写模式",
-                    "operator_id": effective_operator_id,
-                    "comment": "请优先给出更快可读的首章试写版本，控制篇幅和复杂度，先验证方向。",
-                    "payload": {"mode": "quick_trial"},
-                }
-                if quick_mode
-                else None
-            ),
         }
+        if quick_mode:
+            request_payload["quick_mode"] = True
+            request_payload["human_instruction"] = {
+                "requested_action": "quick_trial",
+                "reason": "用户选择快速试写模式",
+                "operator_id": effective_operator_id,
+                "comment": "请优先给出更快可读的首章试写版本，控制篇幅和复杂度，先验证方向。",
+                "payload": {"mode": "quick_trial"},
+            }
         return request_payload
 
     def run_project(

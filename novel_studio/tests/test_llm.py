@@ -88,6 +88,7 @@ def test_invoke_structured_uses_responses_stream(monkeypatch: pytest.MonkeyPatch
 def test_invoke_structured_raises_when_output_is_not_parsed(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NOVEL_STUDIO_STUB_MODE", "false")
     monkeypatch.setenv("OPENAI_API_KEY", "relay-key")
+    monkeypatch.setenv("NOVEL_STUDIO_STRUCTURED_RETRY_COUNT", "0")
 
     class FakeFinalResponse:
         output_text = "not-json"
@@ -121,3 +122,59 @@ def test_invoke_structured_raises_when_output_is_not_parsed(monkeypatch: pytest.
             runtime_context=SimpleNamespace(model_name="gpt-5.4", openai_base_url=None),
             stub_factory=lambda: DemoSchema(title="stub", count=1),
         )
+
+
+def test_invoke_structured_retries_when_first_response_is_truncated(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NOVEL_STUDIO_STUB_MODE", "false")
+    monkeypatch.setenv("OPENAI_API_KEY", "relay-key")
+    monkeypatch.setenv("NOVEL_STUDIO_STRUCTURED_RETRY_COUNT", "1")
+    calls: list[dict[str, object]] = []
+    outputs = iter(
+        [
+            '{"title":"broken","count":"',
+            '{"title":"recovered","count":4}',
+        ]
+    )
+
+    class FakeFinalResponse:
+        def __init__(self, output_text: str):
+            self.output_text = output_text
+
+    class FakeStream:
+        def __init__(self, output_text: str):
+            self._output_text = output_text
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get_final_response(self):
+            return FakeFinalResponse(self._output_text)
+
+    class FakeResponses:
+        def stream(self, **kwargs):
+            calls.append(kwargs)
+            return FakeStream(next(outputs))
+
+    class FakeOpenAI:
+        def __init__(self, *, api_key, base_url=None, timeout=None, max_retries=None):
+            self.responses = FakeResponses()
+
+    monkeypatch.setattr(llm, "OpenAI", FakeOpenAI)
+    monkeypatch.setattr(llm, "load_prompt", lambda prompt_name: f"PROMPT::{prompt_name}")
+
+    result = llm.invoke_structured(
+        prompt_name="demo_prompt",
+        schema_cls=DemoSchema,
+        payload={"chapter": 1},
+        runtime_context=SimpleNamespace(model_name="gpt-5.4", openai_base_url=None),
+        stub_factory=lambda: DemoSchema(title="stub", count=1),
+    )
+
+    assert result == {"title": "recovered", "count": 4}
+    assert len(calls) == 2
+    retry_prompt = calls[1]["input"][0]["content"][0]["text"]
+    assert "The previous answer was invalid JSON" in retry_prompt
+    assert "Keep field values shorter and more compact than before." in retry_prompt
