@@ -10,18 +10,18 @@
     <div class="shell">
       <aside class="sidebar">
         <div class="brand">
-          <div class="eyebrow">Internal Console</div>
+          <div class="eyebrow">Writer Console</div>
           <h1>NovelStudio</h1>
         </div>
 
         <section class="panel auth-panel">
-          <h2>连接</h2>
+          <h2>连接设置</h2>
           <label>
             <span>API Token</span>
             <input id="api-token" type="password" placeholder="可选" />
           </label>
           <label>
-            <span>Operator</span>
+            <span>操作者标识</span>
             <input id="operator-id" type="text" placeholder="editor-1" />
           </label>
           <button id="save-auth" class="button secondary">保存配置</button>
@@ -32,15 +32,17 @@
             <h2>项目</h2>
             <button id="refresh-projects" class="button ghost">刷新</button>
           </div>
+          <div class="muted panel-tip">默认按最新创建时间排序。先选中你要继续写的项目。</div>
           <div id="projects-list" class="stack"></div>
         </section>
       </aside>
 
       <main class="main">
         <section class="hero">
-          <div>
-            <div class="eyebrow">Workflow Control</div>
-            <h2>项目、运行、审批、续写</h2>
+          <div class="hero-copy">
+            <div class="eyebrow">Creator Workflow</div>
+            <h2>先看建议，再决定下一步</h2>
+            <p id="hero-note" class="hero-note">系统会尽量直接告诉你：现在在做什么、为什么停住了、下一步该点哪里。</p>
           </div>
           <div id="status-pill" class="pill">Ready</div>
         </section>
@@ -48,6 +50,7 @@
         <section class="grid">
           <section class="panel">
             <h2>新建项目</h2>
+            <div class="muted panel-tip">先填基础创作信息。只有在你想手动覆盖结构时，才需要用高级 JSON。</div>
             <form id="project-form" class="stack">
               <label>
                 <span>项目名</span>
@@ -61,10 +64,43 @@
                 <span>默认章节数</span>
                 <input name="default_target_chapters" type="number" min="1" value="1" />
               </label>
-              <label>
-                <span>默认 Brief JSON</span>
-                <textarea name="default_user_brief" rows="8">{"title":"长夜炉火","genre":"东方玄幻","platform":"起点中文网","hook":"一个被逐出山门的外门弟子，靠偷听禁地炉火中的古老对话逆天改命。","must_have":["稳步升级","师门阴谋","章末钩子强"],"must_not_have":["后宫泛滥","无代价外挂"]}</textarea>
-              </label>
+              <div class="form-block">
+                <div class="form-block-title">基础创作设定</div>
+                <label>
+                  <span>作品标题</span>
+                  <input name="brief_title" type="text" value="长夜炉火" />
+                </label>
+                <label>
+                  <span>题材</span>
+                  <input name="brief_genre" type="text" value="东方玄幻" />
+                </label>
+                <label>
+                  <span>平台</span>
+                  <input name="brief_platform" type="text" value="起点中文网" />
+                </label>
+                <label>
+                  <span>核心钩子</span>
+                  <textarea name="brief_hook" rows="4">一个被逐出山门的外门弟子，靠偷听禁地炉火中的古老对话逆天改命。</textarea>
+                </label>
+                <label>
+                  <span>必须包含</span>
+                  <textarea name="brief_must_have" rows="4">稳步升级
+师门阴谋
+章末钩子强</textarea>
+                </label>
+                <label>
+                  <span>必须避免</span>
+                  <textarea name="brief_must_not_have" rows="3">后宫泛滥
+无代价外挂</textarea>
+                </label>
+              </div>
+              <details class="advanced-box">
+                <summary>高级：直接编辑 Brief JSON</summary>
+                <label>
+                  <span>若填写这里，将覆盖上面的基础创作设定</span>
+                  <textarea name="default_user_brief" rows="8" placeholder='{"title":"长夜炉火","genre":"东方玄幻"}'></textarea>
+                </label>
+              </details>
               <button class="button primary" type="submit">创建项目</button>
             </form>
           </section>
@@ -77,6 +113,31 @@
               </div>
               <button id="create-run" class="button primary" disabled>生成章节</button>
             </div>
+            <section id="overview-strip" class="overview-strip">
+              <article class="overview-card">
+                <div class="summary-label">项目阶段</div>
+                <div id="overview-stage" class="overview-value">等待选择项目</div>
+              </article>
+              <article class="overview-card">
+                <div class="summary-label">最新章节</div>
+                <div id="overview-chapter" class="overview-value">尚未开始</div>
+              </article>
+              <article class="overview-card">
+                <div class="summary-label">当前阻塞</div>
+                <div id="overview-blocker" class="overview-value">暂无</div>
+              </article>
+              <article class="overview-card accent">
+                <div class="summary-label">推荐操作</div>
+                <div id="overview-action" class="overview-value">先选择一个项目。</div>
+              </article>
+            </section>
+            <section id="action-banner" class="action-banner">
+              <div>
+                <div class="action-kicker">现在最值得做的一件事</div>
+                <h3 id="action-title">先选择项目</h3>
+                <p id="action-body" class="action-body">当前页面会尽量只推荐一个动作，避免你同时处理多件事。</p>
+              </div>
+            </section>
             <section class="run-brief">
               <div class="summary-grid">
                 <article class="summary-card">
@@ -98,7 +159,7 @@
               </div>
               <div class="focus-run-panel">
                 <div class="panel-head">
-                  <h3>当前焦点 Run</h3>
+                  <h3>当前最需要你关注的运行</h3>
                   <div id="focus-run-caption" class="muted">暂无活跃 Run</div>
                 </div>
                 <div id="focus-run" class="stack compact"></div>
@@ -106,15 +167,15 @@
             </section>
             <div class="columns">
               <div>
-                <h3>章节</h3>
+                <h3>章节成果</h3>
                 <div id="chapters-list" class="stack compact"></div>
               </div>
               <div>
-                <h3>Runs</h3>
+                <h3>运行记录</h3>
                 <div id="runs-list" class="stack compact"></div>
               </div>
               <div>
-                <h3>审批</h3>
+                <h3>待处理审批</h3>
                 <div id="approvals-list" class="stack compact"></div>
               </div>
             </div>
@@ -124,17 +185,19 @@
         <section class="grid lower-grid">
           <section class="panel">
             <div class="panel-head">
-              <h2>Run 工件</h2>
+              <h2>写作过程材料</h2>
               <div id="selected-run-label" class="muted">未选择 Run</div>
             </div>
+            <div class="muted panel-tip">这里会展示当前运行过程中已经产出的章卡、审校结果、正文草稿和发布包。</div>
             <div id="artifacts-list" class="stack compact"></div>
           </section>
 
           <section class="panel">
             <div class="panel-head">
-              <h2>审计日志</h2>
+              <h2>系统记录</h2>
               <button id="refresh-audit" class="button ghost">刷新</button>
             </div>
+            <div class="muted panel-tip">这部分偏技术，只在你想排查问题时查看。</div>
             <div id="audit-list" class="stack compact"></div>
           </section>
         </section>

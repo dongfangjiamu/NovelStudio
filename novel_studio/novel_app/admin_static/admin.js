@@ -35,7 +35,74 @@ const el = {
   focusRun: document.getElementById("focus-run"),
   selectedRunLabel: document.getElementById("selected-run-label"),
   statusPill: document.getElementById("status-pill"),
+  heroNote: document.getElementById("hero-note"),
+  overviewStage: document.getElementById("overview-stage"),
+  overviewChapter: document.getElementById("overview-chapter"),
+  overviewBlocker: document.getElementById("overview-blocker"),
+  overviewAction: document.getElementById("overview-action"),
+  actionTitle: document.getElementById("action-title"),
+  actionBody: document.getElementById("action-body"),
 };
+
+const STATUS_LABELS = {
+  running: "生成中",
+  awaiting_approval: "等待审批",
+  failed: "已失败",
+  completed: "已完成",
+  pending: "待处理",
+  approved: "已通过",
+  rejected: "已驳回",
+};
+
+const NODE_LABELS = {
+  interviewer_contract: "整理创作约束",
+  lore_builder: "建立设定",
+  arc_planner: "规划卷纲",
+  chapter_planner: "生成章卡",
+  draft_writer: "写初稿",
+  patch_writer: "修稿",
+  continuity_reviewer: "连续性审校",
+  pacing_reviewer: "节奏审校",
+  style_reviewer: "文风审校",
+  reader_simulator: "读者模拟",
+  chief_editor: "主编汇总",
+  release_prepare: "整理发布包",
+  canon_commit: "回写 Canon",
+  feedback_ingest: "回收结果",
+  human_gate: "等待人工处理",
+};
+
+const ARTIFACT_LABELS = {
+  creative_contract: "创作契约",
+  story_bible: "故事设定",
+  arc_plan: "卷纲规划",
+  current_card: "当前章卡",
+  current_draft: "当前正文草稿",
+  phase_decision: "阶段决策",
+  publish_package: "发布包",
+  canon_state: "Canon 状态",
+  feedback_summary: "反馈摘要",
+  latest_review_reports: "审校结果",
+  human_guidance: "人工指导",
+  blockers: "阻塞原因",
+  event_log: "事件日志",
+};
+
+const ARTIFACT_ORDER = [
+  "publish_package",
+  "current_draft",
+  "current_card",
+  "latest_review_reports",
+  "phase_decision",
+  "human_guidance",
+  "creative_contract",
+  "story_bible",
+  "arc_plan",
+  "canon_state",
+  "feedback_summary",
+  "blockers",
+  "event_log",
+];
 
 function setStatus(text, kind = "ready") {
   el.statusPill.textContent = text;
@@ -77,7 +144,7 @@ function card(title, meta, actions = [], extra = "") {
 }
 
 function statusChip(status) {
-  return `<span class="status-chip status-${status}">${status}</span>`;
+  return `<span class="status-chip status-${status}">${STATUS_LABELS[status] || status}</span>`;
 }
 
 function formatTimestamp(value) {
@@ -107,6 +174,21 @@ function formatDuration(ms) {
 
 function selectedProject() {
   return state.projects.find((item) => item.project_id === state.selectedProjectId) || null;
+}
+
+function nodeLabel(value) {
+  return NODE_LABELS[value] || value || "未记录";
+}
+
+function artifactLabel(value) {
+  return ARTIFACT_LABELS[value] || value;
+}
+
+function parseListField(value) {
+  return String(value || "")
+    .split(/\n|,/)
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 function latestChapterNo(chapters) {
@@ -152,6 +234,7 @@ function deriveSummary(project, snapshot) {
       system: "系统空闲。",
       event: "还没有选定目标项目。",
       next: "在左侧选择项目，或在“新建项目”区域创建一个项目。",
+      heroNote: "先确认你要继续写的项目，再进行生成。系统会尽量把推荐动作放在最显眼的位置。",
       pill: "等待选择项目",
       kind: "ready",
       focusRun: null,
@@ -173,6 +256,9 @@ function deriveSummary(project, snapshot) {
       next: stale
         ? `这条 Run 已经 ${formatDuration(staleMs)} 没有新进度。它更像是卡住，而不是一直重写。先点“刷新”确认；如果仍不动，就点“标记失败”，然后再“重新尝试”。`
         : `当前已经有 Run 在执行，不要重复点击“生成章节”。等待自动刷新，或点“查看工件”跟踪当前 Run。`,
+      heroNote: stale
+        ? "系统判断这条运行更像是卡住，而不是正常生成中。建议先收口这条失败，再决定是否重试。"
+        : "当前已经在写作流程中。你现在最需要做的是观察，不是重复点击。",
       pill: stale ? `Run 可能卡住: ${focusRun.run_id}` : `Run 执行中: ${currentNode}`,
       kind: "warn",
       focusRun,
@@ -187,6 +273,7 @@ function deriveSummary(project, snapshot) {
       system: "系统已暂停，等待人工决定。",
       event: `待处理审批：${pendingApproval.reason}`,
       next: "去“审批”栏点击“通过”或“驳回”。如果通过后要继续写下一章，再点击“执行”。",
+      heroNote: "现在系统不会继续自动写。你做出审批决定后，它才会进入下一步。",
       pill: "等待人工审批",
       kind: "warn",
       focusRun: focusRun || null,
@@ -201,6 +288,7 @@ function deriveSummary(project, snapshot) {
       system: "系统等待你执行下一步续写。",
       event: `审批已通过，但尚未执行：${approvedWaitingExecution.approval_id}`,
       next: "在“审批”栏点击“执行”，启动下一条后台 Run。",
+      heroNote: "审批已经通过，但还没有开始续写。这里最重要的是启动下一条运行。",
       pill: "等待执行续写",
       kind: "warn",
       focusRun: focusRun || null,
@@ -214,7 +302,8 @@ function deriveSummary(project, snapshot) {
       goal: `重新尝试生成第 ${progress.chapter_no || latestChapter + 1 || 1} 章。`,
       system: "上一条 Run 已失败，系统目前空闲。",
       event: focusRun.error ? `失败原因：${focusRun.error}` : `失败 Run：${focusRun.run_id}`,
-      next: "先查看 failed Run 的状态和工件；确认问题后，再点击“重新生成章节”。",
+      next: "优先处理这条最新失败记录。先查看工件确认问题，再决定是否点“重新尝试”。更老的失败记录默认只作参考。",
+      heroNote: "你不需要把所有失败记录都重新点一遍。通常只处理最新那条失败记录。",
       pill: "上一条 Run 失败",
       kind: "error",
       focusRun,
@@ -229,6 +318,7 @@ function deriveSummary(project, snapshot) {
       system: "系统空闲，最近一次 Run 已完成。",
       event: `最近已生成到第 ${latestChapter} 章。`,
       next: "先查看当前章节工件和审校结果；如果没有待审批项且你想继续，可以再次点击“生成章节”。",
+      heroNote: "当前没有阻塞。你可以先复核结果，再决定是否继续写下一章。",
       pill: "最近 Run 已完成",
       kind: "ready",
       focusRun,
@@ -242,6 +332,7 @@ function deriveSummary(project, snapshot) {
     system: "系统空闲。",
     event: "项目已创建，但还没有任何章节和 Run。",
     next: "点击“生成章节”，启动第一个后台 Run。",
+    heroNote: "这是一个全新项目。先跑出第 1 章，再看系统给出的材料和建议。",
     pill: "可以开始生成",
     kind: "ready",
     focusRun: null,
@@ -255,9 +346,37 @@ function renderSummary(summary) {
   el.summarySystem.textContent = summary.system;
   el.summaryEvent.textContent = summary.event;
   el.summaryNext.textContent = summary.next;
+  el.heroNote.textContent = summary.heroNote || "系统会尽量直接告诉你：现在在做什么、为什么停住了、下一步该点哪里。";
+  el.actionTitle.textContent = summary.goal;
+  el.actionBody.textContent = summary.next;
   setStatus(summary.pill, summary.kind);
   el.createRun.disabled = summary.disableRunButton;
   el.createRun.textContent = summary.runButtonLabel;
+}
+
+function renderOverview(project, snapshot, summary) {
+  const chapters = snapshot.chapters || [];
+  const focusRun = summary.focusRun;
+  el.overviewStage.textContent = !project
+    ? "等待选择项目"
+    : focusRun?.status === "running"
+      ? "写作中"
+      : focusRun?.status === "awaiting_approval"
+        ? "等待审批"
+        : focusRun?.status === "failed"
+          ? "需要补救"
+          : chapters.length
+            ? "已有章节成果"
+            : "尚未启动";
+  el.overviewChapter.textContent = chapters.length ? `已生成到第 ${latestChapterNo(chapters)} 章` : "尚未生成章节";
+  el.overviewBlocker.textContent = focusRun?.status === "failed"
+    ? "最新运行失败"
+    : focusRun?.status === "awaiting_approval"
+      ? "等待人工审批"
+      : focusRun?.status === "running"
+        ? "无，需要等待"
+        : "暂无明显阻塞";
+  el.overviewAction.textContent = summary.next;
 }
 
 function renderFocusRun(summary) {
@@ -274,7 +393,7 @@ function renderFocusRun(summary) {
   const updatedAt = progress.updated_at || run.created_at;
   const staleMs = updatedAt ? Date.now() - new Date(updatedAt).getTime() : 0;
   const staleLabel = staleMs > 0 ? formatDuration(staleMs) : "未记录";
-  const currentNode = progress.current_node || "未记录";
+  const currentNode = nodeLabel(progress.current_node);
   const stageGoal = progress.stage_goal || "未记录";
   const possibleCause = progress.possible_cause;
   const errorBlock = run.error
@@ -293,7 +412,7 @@ function renderFocusRun(summary) {
     actionButtons.push(`<button class="button ghost" data-action="retry-run" data-id="${run.run_id}">重新尝试</button>`);
   }
 
-  el.focusRunCaption.textContent = `${run.run_id} · ${run.status}`;
+  el.focusRunCaption.textContent = `${run.run_id} · ${STATUS_LABELS[run.status] || run.status}`;
   el.focusRun.innerHTML = `
     <div class="focus-run-grid">
       <div class="focus-metric">
@@ -360,9 +479,10 @@ function renderProjectState() {
   const snapshot = state.projectSnapshot;
   renderChapters(snapshot.chapters || []);
   const focusRunId = pickFocusRun(snapshot.runs || [])?.run_id || null;
+  const summary = deriveSummary(project, snapshot);
+  renderOverview(project, snapshot, summary);
   renderRuns(snapshot.runs || [], focusRunId);
   renderApprovals(snapshot.approvals || []);
-  const summary = deriveSummary(project, snapshot);
   renderSummary(summary);
   renderFocusRun(summary);
 }
@@ -377,7 +497,7 @@ function renderProjects() {
       const active = project.project_id === state.selectedProjectId ? "active" : "";
       return `<button class="card ${active}" data-project-id="${project.project_id}">
         <h4>${project.name}</h4>
-        <div class="meta">${project.project_id}</div>
+        <div class="meta">${formatTimestamp(project.created_at)} · ${project.project_id}</div>
       </button>`;
     })
     .join("");
@@ -388,39 +508,79 @@ function renderProjects() {
 
 function renderChapters(chapters) {
   el.chaptersList.innerHTML = chapters.length
-    ? chapters.map((item) => card(`第 ${item.chapter_no} 章`, `${item.title}<br>${item.status}`)).join("")
+    ? chapters
+        .slice()
+        .sort((left, right) => right.chapter_no - left.chapter_no)
+        .map((item) => card(`第 ${item.chapter_no} 章`, `${item.title}<br>${STATUS_LABELS[item.status] || item.status}`))
+        .join("")
     : `<div class="empty">暂无章节</div>`;
 }
 
 function renderRuns(runs, focusRunId) {
-  el.runsList.innerHTML = runs.length
-    ? runs
-        .map((item) => {
-          const progress = item.result?.progress || {};
-          const updatedAt = progress.updated_at || item.created_at;
-          const marker = item.status === "running"
-            ? progress.latest_event || progress.current_node || "waiting"
-            : item.error || progress.latest_event || "无附加信息";
-          const activeClass = item.run_id === state.selectedRunId || item.run_id === focusRunId ? "active-run" : "";
-          return `
-            <div class="card ${activeClass}">
-              <div class="card-head">
-                <h4>${item.run_id}</h4>
-                ${statusChip(item.status)}
-              </div>
-              <div class="meta">创建于 ${formatTimestamp(item.created_at)}</div>
-              <div class="meta">最近更新 ${formatTimestamp(updatedAt)} · 重写 ${progress.rewrite_count ?? 0} 次</div>
-              <div class="meta">${marker}</div>
-              <div class="actions">
-                <button class="button ghost" data-action="view-run" data-id="${item.run_id}">查看工件</button>
-                ${item.status === "running" ? `<button class="button ghost" data-action="mark-failed" data-id="${item.run_id}">标记失败</button>` : ""}
-                ${item.status === "failed" ? `<button class="button ghost" data-action="retry-run" data-id="${item.run_id}">重新尝试</button>` : ""}
-              </div>
-            </div>
-          `;
-        })
-        .join("")
-    : `<div class="empty">暂无 Run</div>`;
+  if (!runs.length) {
+    el.runsList.innerHTML = `<div class="empty">暂无运行记录</div>`;
+    return;
+  }
+
+  const recommended = [];
+  const history = [];
+  runs.forEach((item) => {
+    if (item.run_id === focusRunId) {
+      recommended.push(item);
+    } else {
+      history.push(item);
+    }
+  });
+
+  const renderRunCard = (item, { recommendedCard = false } = {}) => {
+    const progress = item.result?.progress || {};
+    const updatedAt = progress.updated_at || item.created_at;
+    const marker = item.status === "running"
+      ? progress.latest_event || nodeLabel(progress.current_node) || "等待反馈"
+      : item.error || progress.latest_event || "无附加信息";
+    const classes = ["card"];
+    if (item.run_id === state.selectedRunId || item.run_id === focusRunId) classes.push("active-run");
+    if (recommendedCard) classes.push("recommended");
+    if (!recommendedCard) classes.push("history");
+    const actions = [`<button class="button ghost" data-action="view-run" data-id="${item.run_id}">查看工件</button>`];
+    if (recommendedCard && item.status === "running") {
+      actions.push(`<button class="button ghost" data-action="mark-failed" data-id="${item.run_id}">标记失败</button>`);
+    }
+    if (recommendedCard && item.status === "failed") {
+      actions.push(`<button class="button ghost" data-action="retry-run" data-id="${item.run_id}">重新尝试</button>`);
+    }
+    const caption = recommendedCard
+      ? "这是当前最值得处理的一条运行记录。"
+      : item.status === "failed"
+        ? "历史失败记录，默认只用于参考，不建议优先再次重试。"
+        : "历史记录，可随时查看过程材料。";
+    return `
+      <div class="${classes.join(" ")}">
+        <div class="card-head">
+          <h4>${item.run_id}</h4>
+          ${statusChip(item.status)}
+        </div>
+        <div class="meta">创建于 ${formatTimestamp(item.created_at)}</div>
+        <div class="meta">最近更新 ${formatTimestamp(updatedAt)} · 重写 ${progress.rewrite_count ?? 0} 次</div>
+        <div class="meta">${marker}</div>
+        <div class="card-caption">${caption}</div>
+        <div class="actions">
+          ${actions.join("")}
+        </div>
+      </div>
+    `;
+  };
+
+  const blocks = [];
+  if (recommended.length) {
+    blocks.push(`<div class="section-caption">当前推荐处理</div>`);
+    blocks.push(recommended.map((item) => renderRunCard(item, { recommendedCard: true })).join(""));
+  }
+  if (history.length) {
+    blocks.push(`<div class="section-caption">历史记录</div>`);
+    blocks.push(history.map((item) => renderRunCard(item)).join(""));
+  }
+  el.runsList.innerHTML = blocks.join("");
   el.runsList.querySelectorAll("[data-action]").forEach((node) => {
     node.addEventListener("click", () => handleRunAction(node.dataset.action, node.dataset.id));
   });
@@ -439,8 +599,8 @@ function renderApprovals(items) {
             actions.push({ action: "execute", id: item.approval_id, label: "执行" });
           }
           return card(
-            item.requested_action,
-            `${item.status}<br>${item.reason}`,
+            item.requested_action === "continue" ? "继续写下一章" : item.requested_action,
+            `${STATUS_LABELS[item.status] || item.status}<br>${item.reason}`,
             actions,
             item.executed_run_id ? `<div class="meta">executed: ${item.executed_run_id}</div>` : ""
           );
@@ -453,11 +613,38 @@ function renderApprovals(items) {
 }
 
 function renderArtifacts(items) {
-  el.artifactsList.innerHTML = items.length
-    ? items
-        .map((item) => card(item.artifact_type, item.created_at, [], `<pre>${JSON.stringify(item.payload, null, 2)}</pre>`))
-        .join("")
-    : `<div class="empty">暂无工件</div>`;
+  if (!items.length) {
+    el.artifactsList.innerHTML = `<div class="empty">当前还没有可展示的过程材料</div>`;
+    return;
+  }
+
+  const sorted = [...items].sort((left, right) => {
+    const leftRank = ARTIFACT_ORDER.indexOf(left.artifact_type);
+    const rightRank = ARTIFACT_ORDER.indexOf(right.artifact_type);
+    return (leftRank === -1 ? 999 : leftRank) - (rightRank === -1 ? 999 : rightRank);
+  });
+
+  el.artifactsList.innerHTML = sorted
+    .map((item) => {
+      const hint = item.artifact_type === "publish_package"
+        ? "这是最接近对外可读结果的版本。"
+        : item.artifact_type === "current_draft"
+          ? "这是当前章节的正文草稿。"
+          : item.artifact_type === "current_card"
+            ? "这是系统准备写这一章前的章卡。"
+            : item.artifact_type === "latest_review_reports"
+              ? "这里能看到系统为什么判定通过、重写或重规划。"
+              : "这是流程中的中间材料。";
+      return `
+        <div class="card artifact-card">
+          <h4>${artifactLabel(item.artifact_type)}</h4>
+          <div class="meta">${formatTimestamp(item.created_at)}</div>
+          <div class="card-caption">${hint}</div>
+          <pre>${JSON.stringify(item.payload, null, 2)}</pre>
+        </div>
+      `;
+    })
+    .join("");
 }
 
 function renderAudit(items) {
@@ -627,13 +814,24 @@ async function createProject(event) {
   const form = event.currentTarget;
   const formData = new FormData(form);
   try {
+    const advancedBrief = String(formData.get("default_user_brief") || "").trim();
+    const defaultUserBrief = advancedBrief
+      ? JSON.parse(advancedBrief)
+      : {
+          title: String(formData.get("brief_title") || "").trim(),
+          genre: String(formData.get("brief_genre") || "").trim(),
+          platform: String(formData.get("brief_platform") || "").trim(),
+          hook: String(formData.get("brief_hook") || "").trim(),
+          must_have: parseListField(formData.get("brief_must_have")),
+          must_not_have: parseListField(formData.get("brief_must_not_have")),
+        };
     const project = await api("/api/projects", {
       method: "POST",
       body: JSON.stringify({
         name: formData.get("name"),
         description: formData.get("description") || null,
         default_target_chapters: Number(formData.get("default_target_chapters") || 1),
-        default_user_brief: JSON.parse(String(formData.get("default_user_brief") || "{}")),
+        default_user_brief: defaultUserBrief,
       }),
     });
     form.reset();

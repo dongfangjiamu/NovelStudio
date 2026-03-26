@@ -67,6 +67,16 @@ body {
   border-radius: 18px;
 }
 
+.hero-copy {
+  max-width: 760px;
+}
+
+.hero-note {
+  margin: 8px 0 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
 .grid {
   display: grid;
   grid-template-columns: 360px 1fr;
@@ -83,6 +93,56 @@ body {
   grid-template-columns: repeat(3, 1fr);
   gap: 16px;
   margin-top: 16px;
+}
+
+.overview-strip {
+  margin-top: 16px;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+.overview-card {
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(255, 252, 246, 0.98), rgba(248, 242, 231, 0.92));
+}
+
+.overview-card.accent {
+  background: linear-gradient(180deg, rgba(255, 244, 235, 0.98), rgba(251, 236, 224, 0.92));
+  border-color: rgba(138, 59, 18, 0.28);
+}
+
+.overview-value {
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.action-banner {
+  margin-top: 14px;
+  padding: 16px 18px;
+  border-radius: 18px;
+  border: 1px solid rgba(138, 59, 18, 0.22);
+  background: linear-gradient(135deg, rgba(255, 244, 235, 0.98), rgba(255, 251, 245, 0.92));
+}
+
+.action-kicker {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 6px;
+}
+
+.action-banner h3 {
+  margin: 0;
+}
+
+.action-body {
+  margin: 8px 0 0;
+  color: var(--muted);
+  line-height: 1.6;
 }
 
 .run-brief {
@@ -178,6 +238,38 @@ label {
   font-size: 14px;
 }
 
+.form-block {
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: rgba(248, 242, 231, 0.6);
+}
+
+.form-block-title {
+  margin-bottom: 10px;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.advanced-box {
+  border: 1px dashed var(--line);
+  border-radius: 16px;
+  padding: 12px 14px;
+  background: rgba(255, 251, 245, 0.8);
+}
+
+.advanced-box summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.advanced-box[open] summary {
+  margin-bottom: 10px;
+}
+
 input,
 textarea,
 button {
@@ -238,11 +330,41 @@ textarea {
   font-size: 13px;
 }
 
+.panel-tip {
+  margin-top: 8px;
+  line-height: 1.55;
+}
+
 .card {
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 14px;
   background: #fff;
+}
+
+.card.recommended {
+  border-color: rgba(138, 59, 18, 0.45);
+  box-shadow: 0 0 0 2px rgba(138, 59, 18, 0.08);
+  background: linear-gradient(180deg, rgba(255, 251, 246, 1), rgba(255, 245, 235, 0.92));
+}
+
+.card.history {
+  opacity: 0.92;
+}
+
+.card-caption {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.section-caption {
+  margin-bottom: 8px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
 }
 
 .card.active {
@@ -348,11 +470,16 @@ pre {
   font-size: 12px;
 }
 
+.artifact-card pre {
+  margin-top: 10px;
+}
+
 @media (max-width: 1080px) {
   .shell,
   .grid,
   .lower-grid,
   .columns,
+  .overview-strip,
   .summary-grid,
   .focus-run-grid {
     grid-template-columns: 1fr;
