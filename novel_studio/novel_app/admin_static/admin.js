@@ -470,7 +470,7 @@ function renderAudit(items) {
 
 async function loadProjects() {
   setStatus("正在加载项目…");
-  state.projects = await api("/api/projects");
+  state.projects = (await api("/api/projects")).sort((left, right) => right.created_at.localeCompare(left.created_at));
   renderProjects();
   if (!state.selectedProjectId && state.projects.length) {
     await selectProject(state.projects[0].project_id);
