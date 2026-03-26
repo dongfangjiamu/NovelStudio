@@ -233,11 +233,13 @@ def test_chief_editor_marks_repeated_issue_as_recurring() -> None:
 
     result = chief_editor(state)
 
-    assert result["phase_decision"]["final_decision"] == "rewrite"
+    assert result["phase_decision"]["final_decision"] == "human_check"
+    assert result["phase_decision"]["next_owner"] == "human_gate"
     assert result["issue_ledger"]["open_count"] == 1
     assert result["issue_ledger"]["recurring_count"] == 1
     assert result["issue_ledger"]["new_count"] == 0
     assert result["issue_ledger"]["resolved_count"] == 0
+    assert result["issue_ledger"]["status"] == "needs_human_review"
     assert result["issue_ledger"]["issues"][0]["issue_id"] == "iss_old_1"
     assert result["issue_ledger"]["issues"][0]["status"] == "recurring"
     assert result["issue_ledger"]["issues"][0]["attempts"] == 2
@@ -312,6 +314,78 @@ def test_chief_editor_matches_recurring_issue_by_related_issue_id() -> None:
     assert result["issue_ledger"]["issues"][0]["issue_id"] == "iss_prev_exact"
     assert result["issue_ledger"]["issues"][0]["status"] == "recurring"
     assert result["issue_ledger"]["issues"][0]["attempts"] == 2
+
+
+def test_chief_editor_escalates_stubborn_major_issue_to_human_check() -> None:
+    previous_issue = {
+        "issue_id": "iss_stubborn_1",
+        "chapter_no": 1,
+        "reviewer": "continuity",
+        "severity": "major",
+        "category": "canon",
+        "evidence": "关键判断缺少执事异常反应。",
+        "fix_instruction": "补一个执事听到旧案后的失态细节。",
+        "status": "recurring",
+        "attempts": 1,
+    }
+    state = {
+        "issue_ledger": {
+            "chapter_no": 1,
+            "status": "needs_revision",
+            "open_count": 1,
+            "new_count": 0,
+            "recurring_count": 1,
+            "resolved_count": 0,
+            "issues": [previous_issue],
+        },
+        "review_reports": [
+            {
+                "reviewer": "continuity",
+                "decision": "rewrite",
+                "scores": {"continuity": 75, "pacing": 80, "style": 80, "hook": 79, "total": 79},
+                "hard_violations": [],
+                "issues": [
+                    {
+                        "severity": "major",
+                        "type": "canon",
+                        "evidence": "执事异常反应仍不足以支撑主角判断。",
+                        "fix_instruction": "补一个执事听到旧案后的失态细节。",
+                        "related_issue_id": "iss_stubborn_1",
+                    }
+                ],
+            },
+            {
+                "reviewer": "pacing",
+                "decision": "pass",
+                "scores": {"continuity": 84, "pacing": 88, "style": 81, "hook": 86, "total": 85},
+                "hard_violations": [],
+                "issues": [],
+            },
+            {
+                "reviewer": "style",
+                "decision": "pass",
+                "scores": {"continuity": 82, "pacing": 82, "style": 86, "hook": 82, "total": 83},
+                "hard_violations": [],
+                "issues": [],
+            },
+            {
+                "reviewer": "reader_sim",
+                "decision": "pass",
+                "scores": {"continuity": 82, "pacing": 84, "style": 80, "hook": 90, "total": 84},
+                "hard_violations": [],
+                "issues": [],
+            },
+        ],
+    }
+
+    result = chief_editor(state)
+
+    assert result["phase_decision"]["final_decision"] == "human_check"
+    assert result["phase_decision"]["next_owner"] == "human_gate"
+    assert "连续 2 轮未关闭" in result["phase_decision"]["reason"]
+    assert result["issue_ledger"]["status"] == "needs_human_review"
+    assert "建议人工介入" in result["issue_ledger"]["progress_summary"]
+    assert result["event_log"] == ["phase_decision:human_check", "issue_ledger:stubborn_issue_escalation"]
 
 
 def test_chief_editor_routes_to_human_check_when_reviewer_requests_it() -> None:

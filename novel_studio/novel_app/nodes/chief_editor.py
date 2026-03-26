@@ -7,6 +7,8 @@ from typing import Any
 from novel_app.schemas import PhaseDecision
 from novel_app.state import NovelState
 
+RECURRING_ESCALATION_ATTEMPTS = 2
+
 
 def _latest_reports(state: NovelState) -> list[dict]:
     reports = state.get("review_reports") or []
@@ -133,6 +135,16 @@ def _build_issue_ledger(state: NovelState, reports: list[dict], *, chapter_no: i
         "progress_summary": f"已解决 {resolved_count} 项，复发 {len(recurring_issues)} 项，新增 {len(new_issues)} 项。",
         "issues": all_issues,
     }
+
+
+def _stubborn_issues(issue_ledger: dict) -> list[dict]:
+    return [
+        item
+        for item in issue_ledger.get("issues", [])
+        if item.get("status") == "recurring"
+        and int(item.get("attempts", 0) or 0) >= RECURRING_ESCALATION_ATTEMPTS
+        and item.get("severity") in {"major", "critical"}
+    ]
 
 
 def chief_editor(state: NovelState, runtime: Any = None) -> dict:
@@ -271,6 +283,27 @@ def chief_editor(state: NovelState, runtime: Any = None) -> dict:
         reason=reason,
     )
     issue_ledger = _build_issue_ledger(state, reports, chapter_no=chapter_no)
+    stubborn_issues = _stubborn_issues(issue_ledger)
+    if stubborn_issues:
+        stubborn_labels = [
+            item.get("fix_instruction") or item.get("evidence") or item.get("issue_id")
+            for item in stubborn_issues
+        ]
+        return {
+            "phase_decision": PhaseDecision(
+                final_decision="human_check",
+                must_fix=stubborn_labels,
+                can_defer=can_defer,
+                next_owner="human_gate",
+                reason=f"同一关键问题已连续 {RECURRING_ESCALATION_ATTEMPTS} 轮未关闭，停止自动盲修，转人工决策。",
+            ).model_dump(),
+            "issue_ledger": {
+                **issue_ledger,
+                "status": "needs_human_review",
+                "progress_summary": f"有 {len(stubborn_issues)} 个关键问题连续未关闭，建议人工介入。",
+            },
+            "event_log": ["phase_decision:human_check", "issue_ledger:stubborn_issue_escalation"],
+        }
     return {
         "phase_decision": decision.model_dump(),
         "issue_ledger": issue_ledger,
