@@ -508,8 +508,42 @@ function buildLearningSummary(items) {
   const chapterLesson = artifactPayload(items, "chapter_lesson") || {};
   const writerPlaybook = artifactPayload(items, "writer_playbook") || {};
   const issueLedger = artifactPayload(items, "issue_ledger") || {};
+  const currentCard = artifactPayload(items, "current_card") || {};
+  const currentDraft = artifactPayload(items, "current_draft") || {};
+  const latestReviewReports = artifactPayload(items, "latest_review_reports") || [];
   const pendingIssues = (issueLedger.issues || []).filter((issue) => ["open", "recurring"].includes(issue.status));
   const recurringIssues = pendingIssues.filter((issue) => issue.status === "recurring");
+  const learningTrace = [
+    {
+      title: "章卡规划",
+      status: currentCard.chapter_no ? "已应用" : "未应用",
+      detail: currentCard.chapter_no
+        ? "系统已在章卡层提前注入经验规则和问题规避要求。"
+        : "还没有看到章卡生成结果。",
+    },
+    {
+      title: "正文起草",
+      status: currentDraft.title ? "已应用" : "未应用",
+      detail: currentDraft.title
+        ? "正文起草前已读取经验卡、写作手册和未关闭问题。"
+        : "正文层还没有可见结果。",
+    },
+    {
+      title: "审校复核",
+      status: latestReviewReports.length ? "已应用" : "未应用",
+      detail: latestReviewReports.length
+        ? "审校已开始优先复查旧问题是否真正关闭。"
+        : "审校层还没有返回结果。",
+    },
+    {
+      title: "经验沉淀",
+      status: chapterLesson.chapter_no || writerPlaybook.version ? "已应用" : "未应用",
+      detail: chapterLesson.chapter_no || writerPlaybook.version
+        ? "本章结果已经反哺经验卡和项目写作手册。"
+        : "本章还没有完成经验回收。",
+    },
+  ];
+  const appliedSteps = learningTrace.filter((item) => item.status === "已应用").length;
 
   return {
     learnedLead: chapterLesson.pass_reasons?.[0] || "系统还没有沉淀出明确的通过经验。",
@@ -533,6 +567,8 @@ function buildLearningSummary(items) {
       ...(chapterLesson.discarded_patterns || []).slice(0, 2),
     ].filter(Boolean),
     progressSummary: chapterLesson.issue_progress_summary || issueLedger.progress_summary || "",
+    traceLead: `这次运行里，学习闭环已经在 ${appliedSteps}/${learningTrace.length} 个环节落地。`,
+    traceItems: learningTrace.map((item) => `${item.title} · ${item.status} · ${item.detail}`),
   };
 }
 
@@ -566,6 +602,11 @@ function renderLearningPanel(run) {
       title: "仍要警惕什么",
       lead: learning.riskLead,
       items: learning.riskItems,
+    },
+    {
+      title: "这次在哪些环节用了经验",
+      lead: learning.traceLead,
+      items: learning.traceItems,
     },
   ];
   el.learningPanel.innerHTML = cards
