@@ -246,6 +246,160 @@ function buildTimelineEntries(run) {
   return entries;
 }
 
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function summarizeArtifact(item) {
+  const payload = item.payload || {};
+  if (item.artifact_type === "publish_package") {
+    return {
+      lead: `${payload.title || "未命名章节"} · 约 ${payload.word_count || 0} 字`,
+      bullets: [
+        payload.blurb ? `章节提要：${payload.blurb}` : null,
+        payload.chapter_end_question ? `章末钩子：${payload.chapter_end_question}` : null,
+        payload.operator_notes ? `操作备注：${payload.operator_notes}` : null,
+      ].filter(Boolean),
+      excerpt: payload.excerpt || payload.full_text || "",
+    };
+  }
+  if (item.artifact_type === "current_draft") {
+    return {
+      lead: `${payload.title || "当前正文草稿"} · ${payload.summary_100w || "已生成正文草稿"}`,
+      bullets: (payload.risk_notes || []).slice(0, 4).map((note) => `风险提示：${note}`),
+      excerpt: payload.content || "",
+    };
+  }
+  if (item.artifact_type === "current_card") {
+    return {
+      lead: `第 ${payload.chapter_no || "?"} 章 · ${payload.purpose || "未记录章卡目的"}`,
+      bullets: [
+        payload.pov ? `视角：${payload.pov}` : null,
+        ...(payload.must_include || []).slice(0, 3).map((itemValue) => `必须包含：${itemValue}`),
+        ...(payload.must_not_change || []).slice(0, 2).map((itemValue) => `不可改动：${itemValue}`),
+      ].filter(Boolean),
+      excerpt: (payload.scene_beats || [])
+        .slice(0, 3)
+        .map((beat, index) => `场景${index + 1}：${beat.goal} / ${beat.conflict} / ${beat.turn}`)
+        .join("\n"),
+    };
+  }
+  if (item.artifact_type === "latest_review_reports") {
+    const reports = Array.isArray(payload) ? payload : [];
+    return {
+      lead: reports.length ? `共 ${reports.length} 份审校意见` : "暂无审校意见",
+      bullets: reports.slice(0, 4).map((report) => {
+        const reviewer = artifactLabel(`${report.reviewer}_reviewer`).replace("_reviewer", "");
+        return `${reviewer || report.reviewer}：${report.decision} / 总分 ${report.scores?.total ?? "?"}`;
+      }),
+      excerpt: reports[0]?.issues?.[0]
+        ? `${reports[0].issues[0].evidence}\n建议：${reports[0].issues[0].fix_instruction}`
+        : "",
+    };
+  }
+  if (item.artifact_type === "phase_decision") {
+    return {
+      lead: `系统决定：${payload.final_decision || "未记录"}`,
+      bullets: [
+        payload.reason ? `原因：${payload.reason}` : null,
+        ...(payload.must_fix || []).slice(0, 4).map((entry) => `必须修复：${entry}`),
+        ...(payload.can_defer || []).slice(0, 2).map((entry) => `可延后：${entry}`),
+      ].filter(Boolean),
+      excerpt: "",
+    };
+  }
+  if (item.artifact_type === "creative_contract") {
+    return {
+      lead: `${payload.project?.working_title || "未命名作品"} · ${payload.project?.genre || "未记录题材"}`,
+      bullets: [
+        payload.reader_promise?.one_sentence_hook ? `一句话卖点：${payload.reader_promise.one_sentence_hook}` : null,
+        ...(payload.non_negotiables?.must_have || []).slice(0, 3).map((entry) => `必须包含：${entry}`),
+        ...(payload.non_negotiables?.must_not_have || []).slice(0, 2).map((entry) => `必须避免：${entry}`),
+      ].filter(Boolean),
+      excerpt: "",
+    };
+  }
+  if (item.artifact_type === "story_bible") {
+    return {
+      lead: payload.premise || "故事设定已生成",
+      bullets: [
+        ...(payload.world_rules || []).slice(0, 3).map((entry) => `世界规则：${entry}`),
+        ...(payload.factions || []).slice(0, 3).map((entry) => `势力：${entry}`),
+      ],
+      excerpt: (payload.character_cards || [])
+        .slice(0, 3)
+        .map((character) => `${character.role} ${character.character_id}：${character.desire}`)
+        .join("\n"),
+    };
+  }
+  if (item.artifact_type === "arc_plan") {
+    return {
+      lead: payload.arc_name || "卷纲已生成",
+      bullets: [
+        payload.arc_goal ? `卷目标：${payload.arc_goal}` : null,
+        payload.conflict_core ? `核心冲突：${payload.conflict_core}` : null,
+        ...(payload.milestones || []).slice(0, 3).map((entry) => `里程碑：${entry}`),
+      ].filter(Boolean),
+      excerpt: payload.climax_hook || "",
+    };
+  }
+  if (item.artifact_type === "feedback_summary") {
+    return {
+      lead: `第 ${payload.chapter_no || "?"} 章结果已回收`,
+      bullets: [
+        payload.status ? `状态：${payload.status}` : null,
+        payload.next_step ? `下一步：${payload.next_step}` : null,
+      ].filter(Boolean),
+      excerpt: "",
+    };
+  }
+  if (item.artifact_type === "canon_state") {
+    return {
+      lead: `Canon 已更新到第 ${payload.story_clock?.current_chapter || "?"} 章`,
+      bullets: [
+        payload.story_clock?.current_arc ? `当前卷：${payload.story_clock.current_arc}` : null,
+        `角色状态数：${Object.keys(payload.character_states || {}).length}`,
+        `开放悬念数：${(payload.open_loops || []).length}`,
+      ].filter(Boolean),
+      excerpt: (payload.open_loops || []).slice(0, 3).map((loop) => `${loop.id}: ${loop.question}`).join("\n"),
+    };
+  }
+  if (item.artifact_type === "human_guidance") {
+    return {
+      lead: payload.reason || "需要人工介入",
+      bullets: [
+        ...(payload.must_fix || []).slice(0, 4).map((entry) => `必须修复：${entry}`),
+        ...(payload.can_defer || []).slice(0, 2).map((entry) => `可延后：${entry}`),
+      ],
+      excerpt: "",
+    };
+  }
+  if (item.artifact_type === "blockers") {
+    const blockers = Array.isArray(payload) ? payload : [];
+    return {
+      lead: blockers.length ? `当前有 ${blockers.length} 个阻塞点` : "当前没有阻塞点",
+      bullets: blockers.slice(0, 5),
+      excerpt: "",
+    };
+  }
+  if (item.artifact_type === "event_log") {
+    const logs = Array.isArray(payload) ? payload : [];
+    return {
+      lead: logs.length ? `已记录 ${logs.length} 条事件` : "暂无事件",
+      bullets: logs.slice(-5).map((entry) => eventLabel(entry)),
+      excerpt: "",
+    };
+  }
+  return {
+    lead: "这是流程中的中间材料。",
+    bullets: [],
+    excerpt: "",
+  };
+}
+
 function parseListField(value) {
   return String(value || "")
     .split(/\n|,/)
@@ -722,6 +876,7 @@ function renderArtifacts(items) {
 
   el.artifactsList.innerHTML = sorted
     .map((item) => {
+      const summary = summarizeArtifact(item);
       const hint = item.artifact_type === "publish_package"
         ? "这是最接近对外可读结果的版本。"
         : item.artifact_type === "current_draft"
@@ -729,14 +884,28 @@ function renderArtifacts(items) {
           : item.artifact_type === "current_card"
             ? "这是系统准备写这一章前的章卡。"
             : item.artifact_type === "latest_review_reports"
-              ? "这里能看到系统为什么判定通过、重写或重规划。"
+            ? "这里能看到系统为什么判定通过、重写或重规划。"
               : "这是流程中的中间材料。";
+      const bulletsHtml = summary.bullets.length
+        ? `<ul class="artifact-bullets">${summary.bullets.map((entry) => `<li>${escapeHtml(entry)}</li>`).join("")}</ul>`
+        : `<div class="meta">暂无进一步摘要</div>`;
+      const excerptHtml = summary.excerpt
+        ? `<div class="artifact-excerpt">${escapeHtml(summary.excerpt).replaceAll("\n", "<br>")}</div>`
+        : "";
       return `
         <div class="card artifact-card">
           <h4>${artifactLabel(item.artifact_type)}</h4>
           <div class="meta">${formatTimestamp(item.created_at)}</div>
           <div class="card-caption">${hint}</div>
-          <pre>${JSON.stringify(item.payload, null, 2)}</pre>
+          <div class="artifact-summary">
+            <div class="artifact-lead">${escapeHtml(summary.lead)}</div>
+            ${bulletsHtml}
+            ${excerptHtml}
+          </div>
+          <details class="artifact-raw">
+            <summary>查看原始数据</summary>
+            <pre>${escapeHtml(JSON.stringify(item.payload, null, 2))}</pre>
+          </details>
         </div>
       `;
     })

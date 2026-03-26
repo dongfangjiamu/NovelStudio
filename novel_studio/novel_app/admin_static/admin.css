@@ -474,6 +474,47 @@ pre {
   margin-top: 10px;
 }
 
+.artifact-summary {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.artifact-lead {
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.artifact-bullets {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--ink);
+  line-height: 1.6;
+}
+
+.artifact-excerpt {
+  padding: 12px;
+  border-radius: 12px;
+  background: #fbf6ee;
+  border: 1px solid var(--line);
+  line-height: 1.65;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.artifact-raw {
+  margin-top: 10px;
+  border-top: 1px dashed var(--line);
+  padding-top: 10px;
+}
+
+.artifact-raw summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .timeline {
   margin-top: 12px;
   display: flex;
