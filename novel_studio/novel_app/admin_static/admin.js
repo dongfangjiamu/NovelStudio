@@ -2,6 +2,8 @@ const state = {
   projects: [],
   selectedProjectId: null,
   selectedRunId: null,
+  artifactRunId: null,
+  artifactFingerprint: "",
   projectSnapshot: {
     chapters: [],
     runs: [],
@@ -969,6 +971,17 @@ function renderArtifacts(items) {
     .join("");
 }
 
+function fingerprintArtifacts(items) {
+  return JSON.stringify(
+    (items || []).map((item) => ({
+      artifact_id: item.artifact_id,
+      artifact_type: item.artifact_type,
+      chapter_no: item.chapter_no,
+      payload: item.payload,
+    }))
+  );
+}
+
 function renderArtifactsLoading(runId) {
   el.selectedRunLabel.textContent = `${runId} · 正在加载`;
   el.artifactsList.innerHTML = `<div class="empty">正在加载这条运行的过程材料…</div>`;
@@ -1026,30 +1039,54 @@ async function selectProject(projectId) {
     await loadArtifacts(state.selectedRunId);
   } else {
     el.selectedRunLabel.textContent = "未选择 Run";
+    state.artifactRunId = null;
+    state.artifactFingerprint = "";
     renderArtifacts([]);
   }
 }
 
-async function loadArtifacts(runId) {
+async function loadArtifacts(
+  runId,
+  {
+    showLoading = false,
+    scrollOnSuccess = false,
+    updateStatus = false,
+  } = {}
+) {
   state.selectedRunId = runId;
   renderProjectState();
-  renderArtifactsLoading(runId);
-  setStatus(`正在加载 ${runId} 的过程材料…`);
+  if (showLoading) {
+    renderArtifactsLoading(runId);
+  }
+  if (updateStatus) {
+    setStatus(`正在加载 ${runId} 的过程材料…`);
+  }
   try {
     const artifacts = await api(`/api/runs/${runId}/artifacts`);
-    renderArtifacts(artifacts);
-    renderProjectState();
+    const fingerprint = fingerprintArtifacts(artifacts);
+    const shouldRender = state.artifactRunId !== runId || state.artifactFingerprint !== fingerprint;
+    if (shouldRender) {
+      renderArtifacts(artifacts);
+      state.artifactRunId = runId;
+      state.artifactFingerprint = fingerprint;
+    }
     const run = state.projectSnapshot.runs.find((item) => item.run_id === runId);
     const chapterText = run ? `第 ${chapterForRun(run)} 章` : runId;
     el.selectedRunLabel.textContent = `${chapterText} · ${runId}`;
-    setStatus(
-      artifacts.length
-        ? `已加载 ${chapterText} 的过程材料`
-        : `${chapterText} 当前还没有可展示的过程材料`,
-      artifacts.length ? "ready" : "warn"
-    );
-    scrollArtifactsIntoView();
+    if (updateStatus) {
+      setStatus(
+        artifacts.length
+          ? `已加载 ${chapterText} 的过程材料`
+          : `${chapterText} 当前还没有可展示的过程材料`,
+        artifacts.length ? "ready" : "warn"
+      );
+    }
+    if (scrollOnSuccess) {
+      scrollArtifactsIntoView();
+    }
   } catch (error) {
+    state.artifactRunId = runId;
+    state.artifactFingerprint = "";
     el.selectedRunLabel.textContent = `${runId} · 加载失败`;
     el.artifactsList.innerHTML = `<div class="empty">过程材料加载失败：${escapeHtml(String(error.message || error))}</div>`;
     setStatus(`加载 ${runId} 的过程材料失败：${String(error.message || error)}`, "error");
@@ -1060,7 +1097,7 @@ async function loadArtifacts(runId) {
 async function handleRunAction(action, runId) {
   if (action === "view-run") {
     try {
-      await loadArtifacts(runId);
+      await loadArtifacts(runId, { showLoading: true, scrollOnSuccess: true, updateStatus: true });
     } catch (_error) {
       // loadArtifacts already updates the visible error state and status pill.
     }
