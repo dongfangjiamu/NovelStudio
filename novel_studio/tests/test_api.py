@@ -99,6 +99,8 @@ def test_run_flow() -> None:
     assert completed_run["status"] == "completed"
     assert completed_run["finished_at"] is not None
     assert completed_run["result"]["publish_package"]["chapter_no"] == 2
+    assert completed_run["artifact_count"] > 0
+    assert completed_run["has_artifacts"] is True
 
     get_run_response = client.get(f"/api/runs/{run_payload['run_id']}")
 
@@ -113,6 +115,7 @@ def test_run_flow() -> None:
     assert chapters_response.json()[0]["chapter_no"] == 2
     assert runs_response.status_code == 200
     assert runs_response.json()[0]["run_id"] == run_payload["run_id"]
+    assert runs_response.json()[0]["artifact_count"] > 0
     assert artifacts_response.status_code == 200
     assert any(item["artifact_type"] == "publish_package" for item in artifacts_response.json())
 
@@ -321,6 +324,9 @@ def test_running_run_exposes_live_artifacts() -> None:
     assert any(item["artifact_type"] == "creative_contract" for item in live_artifacts)
     assert any(item["artifact_type"] == "current_card" for item in live_artifacts)
     assert any(item["artifact_type"] == "phase_decision" for item in live_artifacts)
+    run_snapshot = client.get(f"/api/runs/{run['run_id']}").json()
+    assert run_snapshot["artifact_count"] >= 3
+    assert run_snapshot["has_artifacts"] is True
 
     release_run.set()
     completed_run = wait_for_run(client, run["run_id"])

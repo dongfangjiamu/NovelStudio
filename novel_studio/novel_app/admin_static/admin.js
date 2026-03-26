@@ -163,6 +163,14 @@ function artifactsPanel() {
   return el.artifactsList.closest(".panel");
 }
 
+function renderViewArtifactsButton(runId, artifactCount) {
+  const count = Number(artifactCount || 0);
+  if (count <= 0) {
+    return `<button class="button ghost" data-action="view-run" data-id="${runId}" disabled>暂无工件</button>`;
+  }
+  return `<button class="button ghost" data-action="view-run" data-id="${runId}">查看工件（${count}）</button>`;
+}
+
 function statusChip(status) {
   return `<span class="status-chip status-${status}">${STATUS_LABELS[status] || status}</span>`;
 }
@@ -676,7 +684,7 @@ function renderFocusRun(summary) {
     ? `<div class="focus-metric"><strong>系统处理</strong><div class="meta">${intervention.action === "auto_timeout" ? "系统已自动收口这条超时运行" : "这条运行已被人工收口"}</div></div>`
     : "";
   const actionButtons = [
-    `<button class="button ghost" data-action="view-run" data-id="${run.run_id}">查看工件</button>`,
+    renderViewArtifactsButton(run.run_id, run.artifact_count),
   ];
   if (run.status === "running") {
     actionButtons.push(`<button class="button ghost" data-action="mark-failed" data-id="${run.run_id}">标记失败</button>`);
@@ -764,7 +772,7 @@ function renderFocusRun(summary) {
       </div>
     </div>
   `;
-  el.focusRun.querySelectorAll("[data-action]").forEach((node) => {
+  el.focusRun.querySelectorAll("[data-action]:not([disabled])").forEach((node) => {
     node.addEventListener("click", () => handleRunAction(node.dataset.action, node.dataset.id));
   });
 }
@@ -838,7 +846,7 @@ function renderRuns(runs, focusRunId) {
     if (item.run_id === state.selectedRunId || item.run_id === focusRunId) classes.push("active-run");
     if (recommendedCard) classes.push("recommended");
     if (!recommendedCard) classes.push("history");
-    const actions = [`<button class="button ghost" data-action="view-run" data-id="${item.run_id}">查看工件</button>`];
+    const actions = [renderViewArtifactsButton(item.run_id, item.artifact_count)];
     if (recommendedCard && item.status === "running") {
       actions.push(`<button class="button ghost" data-action="mark-failed" data-id="${item.run_id}">标记失败</button>`);
     }
@@ -859,7 +867,7 @@ function renderRuns(runs, focusRunId) {
           ${statusChip(item.status)}
         </div>
         <div class="meta">创建于 ${formatTimestamp(item.created_at)} · ${item.run_id}</div>
-        <div class="meta">最近更新 ${formatTimestamp(updatedAt)} · 重写 ${progress.rewrite_count ?? 0} 次</div>
+        <div class="meta">最近更新 ${formatTimestamp(updatedAt)} · 重写 ${progress.rewrite_count ?? 0} 次 · 工件 ${item.artifact_count ?? 0} 个</div>
         <div class="meta">${summarizeRunCard(item)}</div>
         <div class="meta">${marker}</div>
         <div class="card-caption">${caption}</div>
@@ -880,7 +888,7 @@ function renderRuns(runs, focusRunId) {
     blocks.push(history.map((item) => renderRunCard(item)).join(""));
   }
   el.runsList.innerHTML = blocks.join("");
-  el.runsList.querySelectorAll("[data-action]").forEach((node) => {
+  el.runsList.querySelectorAll("[data-action]:not([disabled])").forEach((node) => {
     node.addEventListener("click", () => handleRunAction(node.dataset.action, node.dataset.id));
   });
 }

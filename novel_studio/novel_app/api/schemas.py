@@ -57,6 +57,8 @@ class RunResponse(BaseModel):
     request: RunRequestPayload
     result: dict[str, Any] | None = None
     error: str | None = None
+    artifact_count: int = 0
+    has_artifacts: bool = False
 
 
 class ChapterResponse(BaseModel):

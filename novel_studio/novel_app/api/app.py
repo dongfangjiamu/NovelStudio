@@ -247,6 +247,19 @@ def create_app(
                 )
             result["progress"] = progress
             payload["result"] = result
+        stored_artifacts = app.state.store.list_artifacts(run.run_id)
+        artifact_count = len(stored_artifacts)
+        if run.status == "running":
+            live_artifacts = (result.get("live_artifacts") or []) if isinstance(result, dict) else []
+            if live_artifacts:
+                seen_types = {item.artifact_type for item in stored_artifacts}
+                artifact_count += sum(
+                    1
+                    for item in live_artifacts
+                    if item.get("artifact_type") and item.get("artifact_type") not in seen_types
+                )
+        payload["artifact_count"] = artifact_count
+        payload["has_artifacts"] = artifact_count > 0
         return payload
 
     def maybe_finalize_stale_run(run):
