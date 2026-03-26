@@ -106,6 +106,7 @@ class WorkflowService:
             "canon_state": latest_by_type.get("canon_state"),
             "writer_playbook": latest_by_type.get("writer_playbook"),
             "chapter_lesson": latest_by_type.get("chapter_lesson"),
+            "issue_ledger": latest_by_type.get("issue_ledger"),
             "human_instruction": human_instruction,
             "chapters_completed": chapters_completed,
         }
@@ -127,6 +128,7 @@ class WorkflowService:
                 "canon_state": request_payload["canon_state"],
                 "writer_playbook": request_payload.get("writer_playbook"),
                 "chapter_lesson": request_payload.get("chapter_lesson"),
+                "issue_ledger": request_payload.get("issue_ledger"),
                 "human_instruction": request_payload["human_instruction"],
                 "target_chapters": request_payload["target_chapters"],
                 "chapters_completed": request_payload["chapters_completed"],

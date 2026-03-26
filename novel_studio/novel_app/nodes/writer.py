@@ -83,6 +83,7 @@ def patch_writer(state: NovelState, runtime: Any = None) -> dict:
             "current_card": state.get("current_card", {}),
             "current_draft": state.get("current_draft", {}),
             "phase_decision": state.get("phase_decision", {}),
+            "issue_ledger": state.get("issue_ledger", {}),
             "review_reports": state.get("review_reports", []),
             "writer_playbook": state.get("writer_playbook", {}),
             "latest_chapter_lesson": state.get("chapter_lesson", {}),

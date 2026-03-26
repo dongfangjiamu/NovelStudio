@@ -244,6 +244,7 @@ class InMemoryStore:
                 "feedback_summary",
                 "chapter_lesson",
                 "writer_playbook",
+                "issue_ledger",
                 "latest_review_reports",
                 "human_guidance",
                 "blockers",

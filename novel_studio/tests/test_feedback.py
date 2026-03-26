@@ -41,6 +41,27 @@ def test_feedback_ingest_generates_chapter_lesson_and_writer_playbook() -> None:
                 "comment": "保留主角主动性，把试探前置。",
                 "reason": "先把主角能动性立住",
             },
+            "issue_ledger": {
+                "chapter_no": 1,
+                "status": "needs_revision",
+                "open_count": 2,
+                "issues": [
+                    {
+                        "issue_id": "iss_1",
+                        "category": "pacing",
+                        "evidence": "主角主动试探来得偏晚。",
+                        "fix_instruction": "让主角更早做出一次带风险的小试探。",
+                        "status": "open",
+                    },
+                    {
+                        "issue_id": "iss_2",
+                        "category": "hook",
+                        "evidence": "章末风险升级还可以更明确。",
+                        "fix_instruction": "把章末问句落到更危险的选择上。",
+                        "status": "open",
+                    },
+                ],
+            },
             "chapters_completed": 0,
         }
     )
@@ -50,6 +71,8 @@ def test_feedback_ingest_generates_chapter_lesson_and_writer_playbook() -> None:
 
     assert lesson["chapter_no"] == 1
     assert lesson["rewrite_count"] == 1
+    assert lesson["issue_ledger_status"] == "needs_revision"
+    assert lesson["open_issue_count"] == 2
     assert any("带风险的小试探" in item for item in lesson["carry_forward_rules"])
     assert any("升级风险" in item for item in lesson["discarded_patterns"])
 

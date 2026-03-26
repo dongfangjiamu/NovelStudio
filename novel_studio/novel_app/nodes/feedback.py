@@ -59,10 +59,11 @@ def _human_rules(state: NovelState) -> list[str]:
 def _build_chapter_lesson(state: NovelState, chapter_no: int) -> dict[str, Any]:
     publish_package = state.get("publish_package") or {}
     current_card = state.get("current_card") or {}
-    issues = _review_issues(state)
+    issue_ledger = state.get("issue_ledger") or {}
+    issues = list(issue_ledger.get("issues") or []) or _review_issues(state)
     rewrite_count = int(state.get("rewrite_count", 0) or 0)
-    fix_rules = _dedupe_preserve_order([issue["fix_instruction"] for issue in issues if issue["fix_instruction"]])
-    fail_reasons = _dedupe_preserve_order([issue["evidence"] for issue in issues if issue["evidence"]])
+    fix_rules = _dedupe_preserve_order([issue.get("fix_instruction", "") for issue in issues if issue.get("fix_instruction")])
+    fail_reasons = _dedupe_preserve_order([issue.get("evidence", "") for issue in issues if issue.get("evidence")])
     pass_reasons = []
     if rewrite_count == 0:
         pass_reasons.append("首稿通过当前阶段审校，无需重写。")
@@ -75,7 +76,7 @@ def _build_chapter_lesson(state: NovelState, chapter_no: int) -> dict[str, Any]:
 
     discarded_patterns = []
     for issue in issues:
-        issue_type = issue["type"]
+        issue_type = issue.get("category") or issue.get("type") or "general"
         if issue_type == "pacing":
             discarded_patterns.append("避免长时间铺垫后才进入主冲突。")
         elif issue_type == "hook":
@@ -96,6 +97,8 @@ def _build_chapter_lesson(state: NovelState, chapter_no: int) -> dict[str, Any]:
         "chapter_no": chapter_no,
         "title": publish_package.get("title") or current_card.get("purpose") or f"第{chapter_no}章",
         "rewrite_count": rewrite_count,
+        "issue_ledger_status": issue_ledger.get("status", "cleared"),
+        "open_issue_count": int(issue_ledger.get("open_count", 0) or 0),
         "pass_reasons": _dedupe_preserve_order(pass_reasons),
         "fail_reasons": fail_reasons,
         "carry_forward_rules": carry_forward_rules,

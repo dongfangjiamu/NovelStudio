@@ -87,6 +87,7 @@ const ARTIFACT_LABELS = {
   feedback_summary: "反馈摘要",
   chapter_lesson: "章节经验卡",
   writer_playbook: "项目写作手册",
+  issue_ledger: "问题账本",
   latest_review_reports: "审校结果",
   human_guidance: "人工指导",
   blockers: "阻塞原因",
@@ -107,6 +108,7 @@ const ARTIFACT_ORDER = [
   "feedback_summary",
   "chapter_lesson",
   "writer_playbook",
+  "issue_ledger",
   "blockers",
   "event_log",
 ];
@@ -421,6 +423,18 @@ function summarizeArtifact(item) {
         ...(payload.validated_patterns || []).slice(0, 2).map((entry) => `已验证有效：${entry}`),
       ],
       excerpt: (payload.watch_out || []).slice(0, 4).join("\n"),
+    };
+  }
+  if (item.artifact_type === "issue_ledger") {
+    const issues = payload.issues || [];
+    return {
+      lead: `问题账本 · ${payload.status || "unknown"} · 未关闭 ${payload.open_count ?? issues.length} 项`,
+      bullets: issues.slice(0, 4).map((issue) => {
+        const reviewer = issue.reviewer || "unknown";
+        const severity = issue.severity || "minor";
+        return `${reviewer} / ${severity}：${issue.fix_instruction || issue.evidence || issue.issue_id}`;
+      }),
+      excerpt: issues.slice(0, 3).map((issue) => `${issue.category || "general"}：${issue.evidence || ""}`).join("\n"),
     };
   }
   if (item.artifact_type === "canon_state") {

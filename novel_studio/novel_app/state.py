@@ -23,6 +23,7 @@ class InputState(TypedDict, total=False):
     canon_state: dict
     writer_playbook: dict
     chapter_lesson: dict
+    issue_ledger: dict
     human_instruction: dict
     target_chapters: int
     chapters_completed: int
@@ -40,6 +41,7 @@ class OutputState(TypedDict, total=False):
     feedback_summary: dict
     chapter_lesson: dict
     writer_playbook: dict
+    issue_ledger: dict
     latest_review_reports: list[dict]
     human_guidance: dict
     blockers: list[str]
@@ -54,6 +56,7 @@ class NovelState(TypedDict, total=False):
     canon_state: dict
     writer_playbook: dict
     chapter_lesson: dict
+    issue_ledger: dict
     human_instruction: dict
     current_card: dict
     current_draft: dict

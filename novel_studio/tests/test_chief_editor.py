@@ -58,6 +58,11 @@ def test_chief_editor_requests_rewrite_when_major_issues_exist() -> None:
     result = chief_editor(state)
     assert result["phase_decision"]["final_decision"] == "rewrite"
     assert result["phase_decision"]["next_owner"] == "patch_writer"
+    assert result["issue_ledger"]["status"] == "needs_revision"
+    assert result["issue_ledger"]["open_count"] == 3
+    assert len(result["issue_ledger"]["issues"]) == 3
+    assert all(item["status"] == "open" for item in result["issue_ledger"]["issues"])
+    assert all(item["issue_id"].startswith("iss_") for item in result["issue_ledger"]["issues"])
 
 
 def test_chief_editor_passes_when_no_major_issues_exist() -> None:
@@ -96,6 +101,8 @@ def test_chief_editor_passes_when_no_major_issues_exist() -> None:
     result = chief_editor(state)
     assert result["phase_decision"]["final_decision"] == "pass"
     assert result["phase_decision"]["next_owner"] == "release_prepare"
+    assert result["issue_ledger"]["status"] == "cleared"
+    assert result["issue_ledger"]["open_count"] == 0
 
 
 def test_chief_editor_routes_to_human_check_when_reviewer_requests_it() -> None:
@@ -136,3 +143,4 @@ def test_chief_editor_routes_to_human_check_when_reviewer_requests_it() -> None:
 
     assert result["phase_decision"]["final_decision"] == "human_check"
     assert result["phase_decision"]["next_owner"] == "human_gate"
+    assert result["issue_ledger"]["status"] == "needs_human_review"

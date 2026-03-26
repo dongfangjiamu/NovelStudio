@@ -107,6 +107,7 @@ def test_prepare_followup_request_reuses_writer_learning_artifacts() -> None:
             {"artifact_type": "canon_state", "payload": {"story_clock": {"current_chapter": 1}}},
             {"artifact_type": "writer_playbook", "payload": {"version": 2, "always_apply": ["主角主动性前置"]}},
             {"artifact_type": "chapter_lesson", "payload": {"chapter_no": 1, "carry_forward_rules": ["章末必须升级风险"]}},
+            {"artifact_type": "issue_ledger", "payload": {"chapter_no": 1, "open_count": 1}},
         ],
         approval=approval,
         requested_action="continue",
@@ -114,3 +115,4 @@ def test_prepare_followup_request_reuses_writer_learning_artifacts() -> None:
 
     assert request_payload["writer_playbook"]["version"] == 2
     assert request_payload["chapter_lesson"]["chapter_no"] == 1
+    assert request_payload["issue_ledger"]["open_count"] == 1
