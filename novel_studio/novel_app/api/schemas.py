@@ -37,12 +37,14 @@ class RunCreateRequest(BaseModel):
     user_brief: dict[str, Any] | None = None
     target_chapters: int | None = Field(default=None, ge=1, le=100)
     operator_id: str | None = Field(default=None, min_length=1, max_length=120)
+    quick_mode: bool = False
 
 
 class RunRequestPayload(BaseModel):
     user_brief: dict[str, Any]
     target_chapters: int
     operator_id: str
+    quick_mode: bool = False
     human_instruction: dict[str, Any] | None = None
 
 

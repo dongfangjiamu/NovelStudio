@@ -117,6 +117,31 @@ def test_run_flow() -> None:
     assert any(item["artifact_type"] == "publish_package" for item in artifacts_response.json())
 
 
+def test_quick_mode_run_request_is_persisted() -> None:
+    client = make_client()
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "快速试写项目",
+            "default_user_brief": {
+                "title": "长夜炉火",
+                "genre": "东方玄幻",
+            },
+            "default_target_chapters": 1,
+        },
+    ).json()
+
+    run_response = client.post(
+        f"/api/projects/{project['project_id']}/runs",
+        json={"quick_mode": True, "operator_id": "quick-editor"},
+    )
+
+    assert run_response.status_code == 201
+    payload = run_response.json()
+    assert payload["request"]["quick_mode"] is True
+    assert payload["request"]["human_instruction"]["requested_action"] == "quick_trial"
+
+
 def test_approval_request_flow() -> None:
     client = make_client()
     project = client.post(
@@ -241,11 +266,13 @@ def test_running_run_exposes_live_artifacts() -> None:
     release_run = Event()
 
     class FakeWorkflow:
-        def prepare_project_request(self, *, project, user_brief, target_chapters, operator_id):
+        def prepare_project_request(self, *, project, user_brief, target_chapters, operator_id, quick_mode=False):
             return {
                 "user_brief": user_brief or project.default_user_brief,
                 "target_chapters": target_chapters or project.default_target_chapters,
                 "operator_id": operator_id or "tester",
+                "quick_mode": quick_mode,
+                "human_instruction": None,
             }
 
         def run_project(self, *, project, request_payload, on_update=None):
@@ -316,11 +343,13 @@ def test_mark_failed_prevents_late_background_overwrite() -> None:
     release_run = Event()
 
     class FakeWorkflow:
-        def prepare_project_request(self, *, project, user_brief, target_chapters, operator_id):
+        def prepare_project_request(self, *, project, user_brief, target_chapters, operator_id, quick_mode=False):
             return {
                 "user_brief": user_brief or project.default_user_brief,
                 "target_chapters": target_chapters or project.default_target_chapters,
                 "operator_id": operator_id or "tester",
+                "quick_mode": quick_mode,
+                "human_instruction": None,
             }
 
         def run_project(self, *, project, request_payload, on_update=None):
@@ -385,11 +414,13 @@ def test_retry_failed_run_creates_new_background_run() -> None:
         def __init__(self) -> None:
             self.calls = 0
 
-        def prepare_project_request(self, *, project, user_brief, target_chapters, operator_id):
+        def prepare_project_request(self, *, project, user_brief, target_chapters, operator_id, quick_mode=False):
             return {
                 "user_brief": user_brief or project.default_user_brief,
                 "target_chapters": target_chapters or project.default_target_chapters,
                 "operator_id": operator_id or "tester",
+                "quick_mode": quick_mode,
+                "human_instruction": None,
             }
 
         def run_project(self, *, project, request_payload, on_update=None):

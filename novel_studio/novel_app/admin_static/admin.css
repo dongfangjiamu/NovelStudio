@@ -221,6 +221,12 @@ body {
   gap: 12px;
 }
 
+.action-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .stack {
   display: flex;
   flex-direction: column;

@@ -19,6 +19,7 @@ class WorkflowService:
         user_brief: dict[str, Any] | None,
         target_chapters: int | None,
         operator_id: str | None,
+        quick_mode: bool = False,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         effective_brief = user_brief or project.default_user_brief
         if not effective_brief:
@@ -30,6 +31,18 @@ class WorkflowService:
             "user_brief": effective_brief,
             "target_chapters": effective_target_chapters,
             "operator_id": effective_operator_id,
+            "quick_mode": quick_mode,
+            "human_instruction": (
+                {
+                    "requested_action": "quick_trial",
+                    "reason": "用户选择快速试写模式",
+                    "operator_id": effective_operator_id,
+                    "comment": "请优先给出更快可读的首章试写版本，控制篇幅和复杂度，先验证方向。",
+                    "payload": {"mode": "quick_trial"},
+                }
+                if quick_mode
+                else None
+            ),
         }
         return request_payload
 
@@ -44,6 +57,7 @@ class WorkflowService:
             input_state={
                 "user_brief": request_payload["user_brief"],
                 "target_chapters": request_payload["target_chapters"],
+                "human_instruction": request_payload.get("human_instruction"),
             },
             context=RuntimeContext(
                 project_id=project.project_id,
@@ -88,6 +102,7 @@ class WorkflowService:
             "user_brief": original_request.get("user_brief") or project.default_user_brief,
             "target_chapters": target_chapters,
             "operator_id": original_request.get("operator_id") or self._config.operator_id,
+            "quick_mode": original_request.get("quick_mode", False),
             "creative_contract": latest_by_type.get("creative_contract"),
             "story_bible": latest_by_type.get("story_bible"),
             "arc_plan": latest_by_type.get("arc_plan"),

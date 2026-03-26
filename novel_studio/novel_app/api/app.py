@@ -442,6 +442,7 @@ def create_app(
             user_brief=payload.user_brief,
             target_chapters=payload.target_chapters,
             operator_id=payload.operator_id,
+            quick_mode=payload.quick_mode,
         )
         run = app.state.store.save_run(
             project_id=project_id,
@@ -473,6 +474,7 @@ def create_app(
                 "target_chapters": run.request["target_chapters"],
                 "operator_id": run.request["operator_id"],
                 "status": run.status,
+                "quick_mode": run.request.get("quick_mode", False),
             },
         )
         return RunResponse.model_validate(run.__dict__)

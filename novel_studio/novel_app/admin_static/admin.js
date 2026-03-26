@@ -24,6 +24,7 @@ const el = {
   artifactsList: document.getElementById("artifacts-list"),
   auditList: document.getElementById("audit-list"),
   createRun: document.getElementById("create-run"),
+  createRunQuick: document.getElementById("create-run-quick"),
   projectForm: document.getElementById("project-form"),
   projectTitle: document.getElementById("project-title"),
   projectMeta: document.getElementById("project-meta"),
@@ -246,6 +247,32 @@ function buildTimelineEntries(run) {
   return entries;
 }
 
+function chapterForRun(run) {
+  const progress = run.result?.progress || {};
+  const publish = run.result?.publish_package || {};
+  return progress.chapter_no || publish.chapter_no || 1;
+}
+
+function summarizeRunCard(run) {
+  const progress = run.result?.progress || {};
+  const publish = run.result?.publish_package || {};
+  if (run.status === "running") {
+    return `系统正在 ${nodeLabel(progress.current_node)}。`;
+  }
+  if (run.status === "awaiting_approval") {
+    return "这一章已经生成，正在等你决定是否继续。";
+  }
+  if (run.status === "failed") {
+    return run.result?.manual_intervention?.action === "auto_timeout"
+      ? "这次运行长时间无进度，系统已自动收口。"
+      : "这次运行没有顺利完成。";
+  }
+  if (run.status === "completed") {
+    return publish.blurb || "这一章已经生成完成，可先阅读结果。";
+  }
+  return "查看这条运行的详细结果。";
+}
+
 function escapeHtml(value) {
   return String(value)
     .replaceAll("&", "&amp;")
@@ -456,7 +483,9 @@ function deriveSummary(project, snapshot) {
       kind: "ready",
       focusRun: null,
       disableRunButton: true,
+      disableQuickRunButton: true,
       runButtonLabel: "生成章节",
+      quickRunButtonLabel: "快速试写",
     };
   }
 
@@ -480,7 +509,9 @@ function deriveSummary(project, snapshot) {
       kind: "warn",
       focusRun,
       disableRunButton: true,
+      disableQuickRunButton: true,
       runButtonLabel: "生成中…",
+      quickRunButtonLabel: "生成中…",
     };
   }
 
@@ -495,7 +526,9 @@ function deriveSummary(project, snapshot) {
       kind: "warn",
       focusRun: focusRun || null,
       disableRunButton: true,
+      disableQuickRunButton: true,
       runButtonLabel: "等待审批",
+      quickRunButtonLabel: "等待审批",
     };
   }
 
@@ -510,7 +543,9 @@ function deriveSummary(project, snapshot) {
       kind: "warn",
       focusRun: focusRun || null,
       disableRunButton: true,
+      disableQuickRunButton: true,
       runButtonLabel: "等待执行",
+      quickRunButtonLabel: "等待执行",
     };
   }
 
@@ -529,7 +564,9 @@ function deriveSummary(project, snapshot) {
       kind: "error",
       focusRun,
       disableRunButton: false,
+      disableQuickRunButton: latestChapter > 0,
       runButtonLabel: "重新生成章节",
+      quickRunButtonLabel: latestChapter > 0 ? "仅首章可用" : "快速试写",
     };
   }
 
@@ -544,7 +581,9 @@ function deriveSummary(project, snapshot) {
       kind: "ready",
       focusRun,
       disableRunButton: false,
+      disableQuickRunButton: true,
       runButtonLabel: "继续生成章节",
+      quickRunButtonLabel: "仅首章可用",
     };
   }
 
@@ -558,7 +597,9 @@ function deriveSummary(project, snapshot) {
     kind: "ready",
     focusRun: null,
     disableRunButton: false,
+    disableQuickRunButton: false,
     runButtonLabel: "生成章节",
+    quickRunButtonLabel: "快速试写",
   };
 }
 
@@ -573,6 +614,8 @@ function renderSummary(summary) {
   setStatus(summary.pill, summary.kind);
   el.createRun.disabled = summary.disableRunButton;
   el.createRun.textContent = summary.runButtonLabel;
+  el.createRunQuick.disabled = summary.disableQuickRunButton;
+  el.createRunQuick.textContent = summary.quickRunButtonLabel;
 }
 
 function renderOverview(project, snapshot, summary) {
@@ -638,12 +681,12 @@ function renderFocusRun(summary) {
     actionButtons.push(`<button class="button ghost" data-action="retry-run" data-id="${run.run_id}">重新尝试</button>`);
   }
 
-  el.focusRunCaption.textContent = `${run.run_id} · ${STATUS_LABELS[run.status] || run.status}`;
+  el.focusRunCaption.textContent = `第 ${chapterForRun(run)} 章 · ${STATUS_LABELS[run.status] || run.status}`;
   el.focusRun.innerHTML = `
     <div class="focus-run-grid">
       <div class="focus-metric">
-        <strong>Run</strong>
-        <div class="meta">${run.run_id}</div>
+        <strong>章节</strong>
+        <div class="meta">第 ${chapterForRun(run)} 章</div>
       </div>
       <div class="focus-metric">
         <strong>状态</strong>
@@ -786,6 +829,7 @@ function renderRuns(runs, focusRunId) {
     const marker = item.status === "running"
       ? progress.latest_event || nodeLabel(progress.current_node) || "等待反馈"
       : item.error || progress.latest_event || "无附加信息";
+    const chapterNo = chapterForRun(item);
     const classes = ["card"];
     if (item.run_id === state.selectedRunId || item.run_id === focusRunId) classes.push("active-run");
     if (recommendedCard) classes.push("recommended");
@@ -807,11 +851,12 @@ function renderRuns(runs, focusRunId) {
     return `
       <div class="${classes.join(" ")}">
         <div class="card-head">
-          <h4>${item.run_id}</h4>
+          <h4>第 ${chapterNo} 章 · ${STATUS_LABELS[item.status] || item.status}</h4>
           ${statusChip(item.status)}
         </div>
-        <div class="meta">创建于 ${formatTimestamp(item.created_at)}</div>
+        <div class="meta">创建于 ${formatTimestamp(item.created_at)} · ${item.run_id}</div>
         <div class="meta">最近更新 ${formatTimestamp(updatedAt)} · 重写 ${progress.rewrite_count ?? 0} 次</div>
+        <div class="meta">${summarizeRunCard(item)}</div>
         <div class="meta">${marker}</div>
         <div class="card-caption">${caption}</div>
         <div class="actions">
@@ -1109,12 +1154,12 @@ async function createProject(event) {
   }
 }
 
-async function createRun() {
+async function createRun({ quickMode = false } = {}) {
   if (!state.selectedProjectId) return;
   try {
     const payload = await api(`/api/projects/${state.selectedProjectId}/runs`, {
       method: "POST",
-      body: JSON.stringify({ operator_id: state.operatorId }),
+      body: JSON.stringify({ operator_id: state.operatorId, quick_mode: quickMode }),
     });
     state.selectedRunId = payload.run_id;
     await selectProject(state.selectedProjectId);
@@ -1122,9 +1167,9 @@ async function createRun() {
     await selectProject(state.selectedProjectId);
     await loadAudit();
     if (completedRun) {
-      setStatus("Run 已完成");
+      setStatus(quickMode ? "快速试写已完成" : "Run 已完成");
     } else {
-      setStatus(`Run 仍在后台执行，可稍后刷新查看: ${payload.run_id}`, "warn");
+      setStatus(`${quickMode ? "快速试写" : "Run"} 仍在后台执行，可稍后刷新查看: ${payload.run_id}`, "warn");
     }
   } catch (error) {
     setStatus(String(error.message || error), "error");
@@ -1146,7 +1191,8 @@ async function boot() {
   el.refreshProjects.addEventListener("click", () => loadProjects().catch((error) => setStatus(error.message, "error")));
   el.refreshAudit.addEventListener("click", () => loadAudit().catch((error) => setStatus(error.message, "error")));
   el.projectForm.addEventListener("submit", createProject);
-  el.createRun.addEventListener("click", () => createRun());
+  el.createRun.addEventListener("click", () => createRun({ quickMode: false }));
+  el.createRunQuick.addEventListener("click", () => createRun({ quickMode: true }));
 
   try {
     await loadProjects();
