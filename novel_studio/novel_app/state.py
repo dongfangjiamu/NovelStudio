@@ -21,6 +21,8 @@ class InputState(TypedDict, total=False):
     story_bible: dict
     arc_plan: dict
     canon_state: dict
+    writer_playbook: dict
+    chapter_lesson: dict
     human_instruction: dict
     target_chapters: int
     chapters_completed: int
@@ -36,6 +38,8 @@ class OutputState(TypedDict, total=False):
     publish_package: dict
     canon_state: dict
     feedback_summary: dict
+    chapter_lesson: dict
+    writer_playbook: dict
     latest_review_reports: list[dict]
     human_guidance: dict
     blockers: list[str]
@@ -48,6 +52,8 @@ class NovelState(TypedDict, total=False):
     story_bible: dict
     arc_plan: dict
     canon_state: dict
+    writer_playbook: dict
+    chapter_lesson: dict
     human_instruction: dict
     current_card: dict
     current_draft: dict

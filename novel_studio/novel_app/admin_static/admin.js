@@ -85,6 +85,8 @@ const ARTIFACT_LABELS = {
   publish_package: "发布包",
   canon_state: "Canon 状态",
   feedback_summary: "反馈摘要",
+  chapter_lesson: "章节经验卡",
+  writer_playbook: "项目写作手册",
   latest_review_reports: "审校结果",
   human_guidance: "人工指导",
   blockers: "阻塞原因",
@@ -103,6 +105,8 @@ const ARTIFACT_ORDER = [
   "arc_plan",
   "canon_state",
   "feedback_summary",
+  "chapter_lesson",
+  "writer_playbook",
   "blockers",
   "event_log",
 ];
@@ -391,10 +395,32 @@ function summarizeArtifact(item) {
     return {
       lead: `第 ${payload.chapter_no || "?"} 章结果已回收`,
       bullets: [
-        payload.status ? `状态：${payload.status}` : null,
-        payload.next_step ? `下一步：${payload.next_step}` : null,
+        ...(payload.immediate_actions || []).slice(0, 3).map((entry) => `立即执行：${entry}`),
+        ...(payload.observe || []).slice(0, 2).map((entry) => `继续观察：${entry}`),
+        ...(payload.discard || []).slice(0, 2).map((entry) => `避免复发：${entry}`),
+        payload.playbook_version ? `写作手册版本：v${payload.playbook_version}` : null,
       ].filter(Boolean),
       excerpt: "",
+    };
+  }
+  if (item.artifact_type === "chapter_lesson") {
+    return {
+      lead: `第 ${payload.chapter_no || "?"} 章经验卡 · 重写 ${payload.rewrite_count ?? 0} 次`,
+      bullets: [
+        ...(payload.pass_reasons || []).slice(0, 2).map((entry) => `通过原因：${entry}`),
+        ...(payload.carry_forward_rules || []).slice(0, 3).map((entry) => `延续规则：${entry}`),
+      ],
+      excerpt: (payload.discarded_patterns || []).slice(0, 3).join("\n"),
+    };
+  }
+  if (item.artifact_type === "writer_playbook") {
+    return {
+      lead: `写作手册 v${payload.version || 1} · 已更新到第 ${payload.last_chapter_no || "?"} 章`,
+      bullets: [
+        ...(payload.always_apply || []).slice(0, 4).map((entry) => `始终遵守：${entry}`),
+        ...(payload.validated_patterns || []).slice(0, 2).map((entry) => `已验证有效：${entry}`),
+      ],
+      excerpt: (payload.watch_out || []).slice(0, 4).join("\n"),
     };
   }
   if (item.artifact_type === "canon_state") {

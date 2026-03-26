@@ -47,6 +47,8 @@ def chapter_planner(state: NovelState, runtime: Any = None) -> dict:
         "story_bible": state.get("story_bible", {}),
         "arc_plan": state.get("arc_plan", {}),
         "canon_state": state.get("canon_state", {}),
+        "writer_playbook": state.get("writer_playbook", {}),
+        "latest_chapter_lesson": state.get("chapter_lesson", {}),
         "human_instruction": state.get("human_instruction", {}),
     }
     runtime_context = getattr(runtime, "context", None)

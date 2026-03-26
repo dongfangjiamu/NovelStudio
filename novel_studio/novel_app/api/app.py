@@ -41,6 +41,8 @@ LIVE_ARTIFACT_TYPES = [
     "publish_package",
     "canon_state",
     "feedback_summary",
+    "chapter_lesson",
+    "writer_playbook",
     "latest_review_reports",
     "human_guidance",
     "blockers",

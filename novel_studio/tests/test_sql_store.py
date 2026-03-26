@@ -29,6 +29,8 @@ def test_sql_store_persists_project_and_run(tmp_path: Path) -> None:
             "publish_package": {"chapter_no": 2, "title": "第2章 测试"},
             "phase_decision": {"final_decision": "pass"},
             "feedback_summary": {"chapter_no": 2},
+            "chapter_lesson": {"chapter_no": 2, "pass_reasons": ["通过"]},
+            "writer_playbook": {"version": 1, "always_apply": ["保持章节目的明确"]},
             "canon_state": {"story_clock": {"current_chapter": 2}},
             "latest_review_reports": [{"reviewer": "style"}],
             "event_log": ["done"],
@@ -54,6 +56,9 @@ def test_sql_store_persists_project_and_run(tmp_path: Path) -> None:
     assert len(store.list_projects()) == 1
     assert len(store.list_chapters(project.project_id)) == 1
     assert len(store.list_artifacts(run.run_id)) >= 1
+    artifact_types = {item.artifact_type for item in store.list_artifacts(run.run_id)}
+    assert "chapter_lesson" in artifact_types
+    assert "writer_playbook" in artifact_types
     assert store.get_approval_request(approval.approval_id) is not None
     assert resolved is not None
     assert resolved.status == "approved"

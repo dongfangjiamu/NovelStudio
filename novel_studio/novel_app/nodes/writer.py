@@ -54,6 +54,8 @@ def draft_writer(state: NovelState, runtime: Any = None) -> dict:
         "story_bible": state.get("story_bible", {}),
         "canon_state": state.get("canon_state", {}),
         "current_card": state.get("current_card", {}),
+        "writer_playbook": state.get("writer_playbook", {}),
+        "latest_chapter_lesson": state.get("chapter_lesson", {}),
         "human_instruction": state.get("human_instruction", {}),
     }
     runtime_context = getattr(runtime, "context", None)
@@ -82,6 +84,8 @@ def patch_writer(state: NovelState, runtime: Any = None) -> dict:
             "current_draft": state.get("current_draft", {}),
             "phase_decision": state.get("phase_decision", {}),
             "review_reports": state.get("review_reports", []),
+            "writer_playbook": state.get("writer_playbook", {}),
+            "latest_chapter_lesson": state.get("chapter_lesson", {}),
             "human_instruction": state.get("human_instruction", {}),
         }
         runtime_context = getattr(runtime, "context", None)

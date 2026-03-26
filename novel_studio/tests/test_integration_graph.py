@@ -31,5 +31,8 @@ def test_graph_runs_multi_chapter_stub_flow(monkeypatch) -> None:
     assert result["phase_decision"]["final_decision"] == "pass"
     assert result["publish_package"]["chapter_no"] == 2
     assert result["canon_state"]["story_clock"]["current_chapter"] == 2
+    assert result["chapter_lesson"]["chapter_no"] == 2
+    assert result["writer_playbook"]["last_chapter_no"] == 2
+    assert result["writer_playbook"]["version"] >= 2
     assert "phase_decision:rewrite" in result["event_log"]
     assert "phase_decision:pass" in result["event_log"]
