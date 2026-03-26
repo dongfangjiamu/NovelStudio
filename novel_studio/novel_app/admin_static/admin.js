@@ -159,6 +159,10 @@ function card(title, meta, actions = [], extra = "") {
   return `<div class="card"><h4>${title}</h4><div class="meta">${meta}</div>${extra}${actionsHtml}</div>`;
 }
 
+function artifactsPanel() {
+  return el.artifactsList.closest(".panel");
+}
+
 function statusChip(status) {
   return `<span class="status-chip status-${status}">${STATUS_LABELS[status] || status}</span>`;
 }
@@ -957,6 +961,15 @@ function renderArtifacts(items) {
     .join("");
 }
 
+function renderArtifactsLoading(runId) {
+  el.selectedRunLabel.textContent = `${runId} · 正在加载`;
+  el.artifactsList.innerHTML = `<div class="empty">正在加载这条运行的过程材料…</div>`;
+}
+
+function scrollArtifactsIntoView() {
+  artifactsPanel()?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
 function renderAudit(items) {
   el.auditList.innerHTML = items.length
     ? items
@@ -1011,15 +1024,38 @@ async function selectProject(projectId) {
 
 async function loadArtifacts(runId) {
   state.selectedRunId = runId;
-  el.selectedRunLabel.textContent = runId;
-  const artifacts = await api(`/api/runs/${runId}/artifacts`);
-  renderArtifacts(artifacts);
   renderProjectState();
+  renderArtifactsLoading(runId);
+  setStatus(`正在加载 ${runId} 的过程材料…`);
+  try {
+    const artifacts = await api(`/api/runs/${runId}/artifacts`);
+    renderArtifacts(artifacts);
+    renderProjectState();
+    const run = state.projectSnapshot.runs.find((item) => item.run_id === runId);
+    const chapterText = run ? `第 ${chapterForRun(run)} 章` : runId;
+    el.selectedRunLabel.textContent = `${chapterText} · ${runId}`;
+    setStatus(
+      artifacts.length
+        ? `已加载 ${chapterText} 的过程材料`
+        : `${chapterText} 当前还没有可展示的过程材料`,
+      artifacts.length ? "ready" : "warn"
+    );
+    scrollArtifactsIntoView();
+  } catch (error) {
+    el.selectedRunLabel.textContent = `${runId} · 加载失败`;
+    el.artifactsList.innerHTML = `<div class="empty">过程材料加载失败：${escapeHtml(String(error.message || error))}</div>`;
+    setStatus(`加载 ${runId} 的过程材料失败：${String(error.message || error)}`, "error");
+    throw error;
+  }
 }
 
 async function handleRunAction(action, runId) {
   if (action === "view-run") {
-    await loadArtifacts(runId);
+    try {
+      await loadArtifacts(runId);
+    } catch (_error) {
+      // loadArtifacts already updates the visible error state and status pill.
+    }
     return;
   }
 
