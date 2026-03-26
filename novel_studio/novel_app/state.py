@@ -33,7 +33,9 @@ class OutputState(TypedDict, total=False):
     creative_contract: dict
     story_bible: dict
     arc_plan: dict
+    planning_context: dict
     current_card: dict
+    drafting_context: dict
     current_draft: dict
     phase_decision: dict
     publish_package: dict
@@ -58,7 +60,9 @@ class NovelState(TypedDict, total=False):
     chapter_lesson: dict
     issue_ledger: dict
     human_instruction: dict
+    planning_context: dict
     current_card: dict
+    drafting_context: dict
     current_draft: dict
     phase_decision: dict
     publish_package: dict

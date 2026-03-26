@@ -63,5 +63,7 @@ def test_chapter_planner_passes_learning_guardrails_to_llm(monkeypatch) -> None:
     assert "主角主动性前置" in payload["planning_guardrails"]
     assert "章末必须升级风险" in payload["planning_guardrails"]
     assert any("顽固问题" in item for item in payload["planning_guardrails"])
+    assert result["planning_context"]["addressed_issue_ids"] == ["iss_1"]
+    assert result["planning_context"]["stubborn_issue_ids"] == ["iss_1"]
     assert result["current_card"]["chapter_no"] == 2
     assert result["event_log"] == ["chapter_card_ready:2"]

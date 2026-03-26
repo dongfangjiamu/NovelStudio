@@ -95,6 +95,8 @@ def _planning_guardrails(state: NovelState) -> list[str]:
 
 
 def chapter_planner(state: NovelState, runtime: Any = None) -> dict:
+    pending_issues = _pending_issue_summary(state)
+    planning_guardrails = _planning_guardrails(state)
     payload = {
         "creative_contract": state.get("creative_contract", {}),
         "story_bible": state.get("story_bible", {}),
@@ -103,8 +105,8 @@ def chapter_planner(state: NovelState, runtime: Any = None) -> dict:
         "writer_playbook": state.get("writer_playbook", {}),
         "latest_chapter_lesson": state.get("chapter_lesson", {}),
         "issue_ledger": state.get("issue_ledger", {}),
-        "pending_issues_summary": _pending_issue_summary(state),
-        "planning_guardrails": _planning_guardrails(state),
+        "pending_issues_summary": pending_issues,
+        "planning_guardrails": planning_guardrails,
         "human_instruction": state.get("human_instruction", {}),
     }
     runtime_context = getattr(runtime, "context", None)
@@ -116,6 +118,21 @@ def chapter_planner(state: NovelState, runtime: Any = None) -> dict:
         stub_factory=lambda: _stub_card(state),
     )
     return {
+        "planning_context": {
+            "chapter_no": card.get("chapter_no") if isinstance(card, dict) else None,
+            "applied_guardrails": planning_guardrails,
+            "addressed_issue_ids": [item.get("issue_id") for item in pending_issues if item.get("issue_id")],
+            "stubborn_issue_ids": [
+                item.get("issue_id")
+                for item in pending_issues
+                if int(item.get("attempts", 1) or 1) >= 2 and item.get("issue_id")
+            ],
+            "source_counts": {
+                "playbook_rules": len((state.get("writer_playbook") or {}).get("always_apply", [])),
+                "lesson_rules": len((state.get("chapter_lesson") or {}).get("carry_forward_rules", [])),
+                "pending_issues": len(pending_issues),
+            },
+        },
         "current_card": card,
         "event_log": [f"chapter_card_ready:{card['chapter_no']}"] if isinstance(card, dict) else ["chapter_card_ready"],
     }

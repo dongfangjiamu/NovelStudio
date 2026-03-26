@@ -82,7 +82,9 @@ const ARTIFACT_LABELS = {
   creative_contract: "创作契约",
   story_bible: "故事设定",
   arc_plan: "卷纲规划",
+  planning_context: "章卡应用证据",
   current_card: "当前章卡",
+  drafting_context: "正文应用证据",
   current_draft: "当前正文草稿",
   phase_decision: "阶段决策",
   publish_package: "发布包",
@@ -107,7 +109,9 @@ const ARTIFACT_ORDER = [
   "creative_contract",
   "story_bible",
   "arc_plan",
+  "planning_context",
   "canon_state",
+  "drafting_context",
   "feedback_summary",
   "chapter_lesson",
   "writer_playbook",
@@ -396,6 +400,27 @@ function summarizeArtifact(item) {
       excerpt: payload.climax_hook || "",
     };
   }
+  if (item.artifact_type === "planning_context") {
+    return {
+      lead: `章卡层已应用 ${(payload.applied_guardrails || []).length} 条防线`,
+      bullets: [
+        ...(payload.applied_guardrails || []).slice(0, 4).map((entry) => `已应用：${entry}`),
+        ...(payload.addressed_issue_ids || []).slice(0, 3).map((entry) => `关联问题：${entry}`),
+      ],
+      excerpt: (payload.stubborn_issue_ids || []).slice(0, 3).join("\n"),
+    };
+  }
+  if (item.artifact_type === "drafting_context") {
+    return {
+      lead: `正文层已应用 ${(payload.applied_guardrails || []).length} 条防线`,
+      bullets: [
+        ...(payload.applied_guardrails || []).slice(0, 4).map((entry) => `已应用：${entry}`),
+        ...(payload.must_include || []).slice(0, 2).map((entry) => `必须兑现：${entry}`),
+        ...(payload.must_not_change || []).slice(0, 2).map((entry) => `不可破坏：${entry}`),
+      ],
+      excerpt: (payload.addressed_issue_ids || []).slice(0, 4).join("\n"),
+    };
+  }
   if (item.artifact_type === "feedback_summary") {
     return {
       lead: `第 ${payload.chapter_no || "?"} 章结果已回收`,
@@ -508,6 +533,8 @@ function buildLearningSummary(items) {
   const chapterLesson = artifactPayload(items, "chapter_lesson") || {};
   const writerPlaybook = artifactPayload(items, "writer_playbook") || {};
   const issueLedger = artifactPayload(items, "issue_ledger") || {};
+  const planningContext = artifactPayload(items, "planning_context") || {};
+  const draftingContext = artifactPayload(items, "drafting_context") || {};
   const currentCard = artifactPayload(items, "current_card") || {};
   const currentDraft = artifactPayload(items, "current_draft") || {};
   const latestReviewReports = artifactPayload(items, "latest_review_reports") || [];
@@ -516,16 +543,16 @@ function buildLearningSummary(items) {
   const learningTrace = [
     {
       title: "章卡规划",
-      status: currentCard.chapter_no ? "已应用" : "未应用",
-      detail: currentCard.chapter_no
-        ? "系统已在章卡层提前注入经验规则和问题规避要求。"
+      status: planningContext.chapter_no ? "已应用" : "未应用",
+      detail: planningContext.chapter_no
+        ? `系统已在章卡层落地 ${(planningContext.applied_guardrails || []).length} 条防线。`
         : "还没有看到章卡生成结果。",
     },
     {
       title: "正文起草",
-      status: currentDraft.title ? "已应用" : "未应用",
-      detail: currentDraft.title
-        ? "正文起草前已读取经验卡、写作手册和未关闭问题。"
+      status: draftingContext.chapter_no ? "已应用" : "未应用",
+      detail: draftingContext.chapter_no
+        ? `正文起草前已落地 ${(draftingContext.applied_guardrails || []).length} 条防线。`
         : "正文层还没有可见结果。",
     },
     {
@@ -548,6 +575,7 @@ function buildLearningSummary(items) {
   return {
     learnedLead: chapterLesson.pass_reasons?.[0] || "系统还没有沉淀出明确的通过经验。",
     learnedItems: [
+      ...(planningContext.applied_guardrails || []).slice(0, 2),
       ...(writerPlaybook.validated_patterns || []).slice(0, 2),
       ...(chapterLesson.pass_reasons || []).slice(0, 2),
     ].filter(Boolean),
@@ -555,7 +583,8 @@ function buildLearningSummary(items) {
       ? `这次已提前纳入 ${pendingIssues.length} 个未关闭问题的规避要求。`
       : "当前没有未关闭旧问题需要额外规避。",
     guardItems: [
-      ...(chapterLesson.carry_forward_rules || []).slice(0, 2),
+      ...(planningContext.applied_guardrails || []).slice(0, 2),
+      ...(draftingContext.applied_guardrails || []).slice(0, 2),
       ...pendingIssues.slice(0, 3).map((issue) => issue.fix_instruction || issue.evidence || issue.issue_id),
     ].filter(Boolean),
     riskLead: recurringIssues.length

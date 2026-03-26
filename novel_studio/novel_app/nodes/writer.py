@@ -106,6 +106,8 @@ def _draft_guardrails(state: NovelState) -> list[str]:
 
 
 def draft_writer(state: NovelState, runtime: Any = None) -> dict:
+    pending_issues = _pending_issue_summary(state)
+    draft_guardrails = _draft_guardrails(state)
     payload = {
         "creative_contract": state.get("creative_contract", {}),
         "story_bible": state.get("story_bible", {}),
@@ -114,8 +116,8 @@ def draft_writer(state: NovelState, runtime: Any = None) -> dict:
         "writer_playbook": state.get("writer_playbook", {}),
         "latest_chapter_lesson": state.get("chapter_lesson", {}),
         "issue_ledger": state.get("issue_ledger", {}),
-        "pending_issues_summary": _pending_issue_summary(state),
-        "draft_guardrails": _draft_guardrails(state),
+        "pending_issues_summary": pending_issues,
+        "draft_guardrails": draft_guardrails,
         "human_instruction": state.get("human_instruction", {}),
     }
     runtime_context = getattr(runtime, "context", None)
@@ -127,6 +129,18 @@ def draft_writer(state: NovelState, runtime: Any = None) -> dict:
         stub_factory=lambda: _draft_stub(state),
     )
     return {
+        "drafting_context": {
+            "chapter_no": (state.get("current_card") or {}).get("chapter_no"),
+            "applied_guardrails": draft_guardrails,
+            "addressed_issue_ids": [item.get("issue_id") for item in pending_issues if item.get("issue_id")],
+            "stubborn_issue_ids": [
+                item.get("issue_id")
+                for item in pending_issues
+                if int(item.get("attempts", 1) or 1) >= 2 and item.get("issue_id")
+            ],
+            "must_include": list((state.get("current_card") or {}).get("must_include", []))[:4],
+            "must_not_change": list((state.get("current_card") or {}).get("must_not_change", []))[:4],
+        },
         "current_draft": draft,
         "event_log": ["chapter_draft_ready"],
     }

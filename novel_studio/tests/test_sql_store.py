@@ -24,7 +24,9 @@ def test_sql_store_persists_project_and_run(tmp_path: Path) -> None:
     store.save_run_outputs(
         run=run,
         result={
+            "planning_context": {"chapter_no": 2, "applied_guardrails": ["主角主动性前置"]},
             "current_card": {"chapter_no": 2},
+            "drafting_context": {"chapter_no": 2, "applied_guardrails": ["章末必须升级风险"]},
             "current_draft": {"title": "第2章 测试"},
             "publish_package": {"chapter_no": 2, "title": "第2章 测试"},
             "phase_decision": {"final_decision": "pass"},
@@ -58,6 +60,8 @@ def test_sql_store_persists_project_and_run(tmp_path: Path) -> None:
     assert len(store.list_chapters(project.project_id)) == 1
     assert len(store.list_artifacts(run.run_id)) >= 1
     artifact_types = {item.artifact_type for item in store.list_artifacts(run.run_id)}
+    assert "planning_context" in artifact_types
+    assert "drafting_context" in artifact_types
     assert "chapter_lesson" in artifact_types
     assert "writer_playbook" in artifact_types
     assert "issue_ledger" in artifact_types
