@@ -1,0 +1,10 @@
+[Unit]
+Description=NovelStudio Health Check
+Requires=novelstudio-compose.service
+After=novelstudio-compose.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/NovelStudio
+Environment=ENV_FILE=/root/NovelStudio/.env.compose
+ExecStart=/root/NovelStudio/ops/check_system_health.sh

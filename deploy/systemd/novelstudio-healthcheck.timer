@@ -1,0 +1,11 @@
+[Unit]
+Description=Run NovelStudio health checks every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Persistent=true
+Unit=novelstudio-healthcheck.service
+
+[Install]
+WantedBy=timers.target

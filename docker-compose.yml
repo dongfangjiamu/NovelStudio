@@ -1,0 +1,66 @@
+services:
+  app:
+    build:
+      context: ./novel_studio
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import json, urllib.request; data = json.load(urllib.request.urlopen('http://127.0.0.1:8000/healthz')); raise SystemExit(0 if data.get('status') == 'ok' and data.get('database', {}).get('status') == 'ready' else 1)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://novelstudio:novelstudio@postgres:5432/novelstudio}
+      NOVEL_STUDIO_STUB_MODE: ${NOVEL_STUDIO_STUB_MODE:-true}
+      NOVEL_STUDIO_MODEL: ${NOVEL_STUDIO_MODEL:-gpt-5-nano}
+      NOVEL_STUDIO_PROJECT_ID: ${NOVEL_STUDIO_PROJECT_ID:-prod-book}
+      NOVEL_STUDIO_OPERATOR_ID: ${NOVEL_STUDIO_OPERATOR_ID:-system}
+      NOVEL_STUDIO_ADMIN_TOKEN: ${NOVEL_STUDIO_ADMIN_TOKEN:-change-me}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+    ports:
+      - "${APP_BIND_HOST:-127.0.0.1}:${APP_PORT:-18080}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-novelstudio}
+      POSTGRES_USER: ${POSTGRES_USER:-novelstudio}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-novelstudio}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:7
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:

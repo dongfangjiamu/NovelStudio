@@ -1,0 +1,223 @@
+import time
+
+from fastapi.testclient import TestClient
+
+from novel_app.api.app import create_app
+from novel_app.config import AppConfig
+from novel_app.services.store import InMemoryStore
+
+
+def make_client() -> TestClient:
+    app = create_app(
+        config=AppConfig(
+            stub_mode=True,
+            openai_api_key=None,
+            admin_token=None,
+            database_url="sqlite:///:memory:",
+            model_name="gpt-5-nano",
+            project_id="api-test",
+            operator_id="tester",
+        ),
+        store=InMemoryStore(),
+    )
+    return TestClient(app)
+
+
+def wait_for_run(client: TestClient, run_id: str, *, timeout: float = 2.0) -> dict:
+    deadline = time.time() + timeout
+    last_payload = None
+    while time.time() < deadline:
+        response = client.get(f"/api/runs/{run_id}")
+        assert response.status_code == 200
+        last_payload = response.json()
+        if last_payload["status"] != "running":
+            return last_payload
+        time.sleep(0.02)
+    raise AssertionError(f"run did not finish in time: {run_id} last={last_payload}")
+
+
+def test_healthz() -> None:
+    client = make_client()
+
+    response = client.get("/healthz")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    assert response.json()["stub_mode"] is True
+    assert response.json()["auth_mode"] == "open"
+    assert response.json()["database"]["status"] == "ready"
+    assert response.json()["database"]["backend"] == "inmemory"
+
+
+def test_project_create_and_list() -> None:
+    client = make_client()
+
+    create_response = client.post(
+        "/api/projects",
+        json={
+            "name": "测试项目",
+            "description": "alpha",
+            "default_user_brief": {"title": "长夜炉火", "genre": "东方玄幻"},
+            "default_target_chapters": 2,
+        },
+    )
+    list_response = client.get("/api/projects")
+
+    assert create_response.status_code == 201
+    assert list_response.status_code == 200
+    assert len(list_response.json()) == 1
+    assert list_response.json()[0]["name"] == "测试项目"
+
+
+def test_run_flow() -> None:
+    client = make_client()
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "测试项目",
+            "default_user_brief": {
+                "title": "长夜炉火",
+                "genre": "东方玄幻",
+                "platform": "起点中文网",
+                "hook": "一个被逐出山门的外门弟子，靠偷听禁地炉火中的古老对话逆天改命。",
+                "must_have": ["稳步升级", "师门阴谋", "章末钩子强"],
+                "must_not_have": ["后宫泛滥", "无代价外挂"],
+            },
+            "default_target_chapters": 2,
+        },
+    ).json()
+
+    run_response = client.post(f"/api/projects/{project['project_id']}/runs", json={})
+
+    assert run_response.status_code == 201
+    run_payload = run_response.json()
+    assert run_payload["status"] == "running"
+    assert run_payload["finished_at"] is None
+    completed_run = wait_for_run(client, run_payload["run_id"])
+    assert completed_run["status"] == "completed"
+    assert completed_run["finished_at"] is not None
+    assert completed_run["result"]["publish_package"]["chapter_no"] == 2
+
+    get_run_response = client.get(f"/api/runs/{run_payload['run_id']}")
+
+    assert get_run_response.status_code == 200
+    assert get_run_response.json()["run_id"] == run_payload["run_id"]
+
+    chapters_response = client.get(f"/api/projects/{project['project_id']}/chapters")
+    runs_response = client.get(f"/api/projects/{project['project_id']}/runs")
+    artifacts_response = client.get(f"/api/runs/{run_payload['run_id']}/artifacts")
+
+    assert chapters_response.status_code == 200
+    assert chapters_response.json()[0]["chapter_no"] == 2
+    assert runs_response.status_code == 200
+    assert runs_response.json()[0]["run_id"] == run_payload["run_id"]
+    assert artifacts_response.status_code == 200
+    assert any(item["artifact_type"] == "publish_package" for item in artifacts_response.json())
+
+
+def test_approval_request_flow() -> None:
+    client = make_client()
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "测试项目",
+            "default_user_brief": {
+                "title": "长夜炉火",
+                "genre": "东方玄幻",
+                "platform": "起点中文网",
+                "hook": "一个被逐出山门的外门弟子，靠偷听禁地炉火中的古老对话逆天改命。",
+                "must_have": ["稳步升级", "师门阴谋", "章末钩子强"],
+                "must_not_have": ["后宫泛滥", "无代价外挂"],
+            },
+            "default_target_chapters": 1,
+        },
+    ).json()
+    run_payload = client.post(f"/api/projects/{project['project_id']}/runs", json={}).json()
+    wait_for_run(client, run_payload["run_id"])
+
+    create_response = client.post(
+        f"/api/runs/{run_payload['run_id']}/approval-requests",
+        json={
+            "requested_action": "continue",
+            "reason": "需要人工确认是否继续写下一章",
+            "chapter_no": 1,
+            "payload": {"source": "test-suite"},
+        },
+    )
+
+    assert create_response.status_code == 201
+    approval_id = create_response.json()["approval_id"]
+
+    resolve_response = client.post(
+        f"/api/approval-requests/{approval_id}/resolve",
+        json={
+            "decision": "approved",
+            "operator_id": "editor-1",
+            "comment": "继续",
+        },
+    )
+
+    assert resolve_response.status_code == 200
+    assert resolve_response.json()["status"] == "approved"
+    list_response = client.get(f"/api/projects/{project['project_id']}/approval-requests")
+    assert list_response.status_code == 200
+    assert list_response.json()[0]["approval_id"] == approval_id
+
+
+def test_execute_approved_followup_run_continues_to_next_chapter() -> None:
+    client = make_client()
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "测试项目",
+            "default_user_brief": {
+                "title": "长夜炉火",
+                "genre": "东方玄幻",
+                "platform": "起点中文网",
+                "hook": "一个被逐出山门的外门弟子，靠偷听禁地炉火中的古老对话逆天改命。",
+                "must_have": ["稳步升级", "师门阴谋", "章末钩子强"],
+                "must_not_have": ["后宫泛滥", "无代价外挂"],
+            },
+            "default_target_chapters": 1,
+        },
+    ).json()
+    initial_run = client.post(f"/api/projects/{project['project_id']}/runs", json={}).json()
+    wait_for_run(client, initial_run["run_id"])
+
+    approval = client.post(
+        f"/api/runs/{initial_run['run_id']}/approval-requests",
+        json={
+            "requested_action": "continue",
+            "reason": "继续下一章",
+            "chapter_no": 1,
+            "payload": {"source": "test-suite"},
+        },
+    ).json()
+    client.post(
+        f"/api/approval-requests/{approval['approval_id']}/resolve",
+        json={"decision": "approved", "operator_id": "editor-1", "comment": "延续当前悬念，但把主角主动试探前置"},
+    )
+
+    execute_response = client.post(f"/api/approval-requests/{approval['approval_id']}/execute")
+
+    assert execute_response.status_code == 200
+    execute_payload = execute_response.json()
+    assert execute_payload["run"]["status"] == "running"
+    assert execute_payload["run"]["finished_at"] is None
+    completed_followup = wait_for_run(client, execute_payload["run"]["run_id"])
+    assert completed_followup["finished_at"] is not None
+    assert completed_followup["result"]["publish_package"]["chapter_no"] == 2
+    assert execute_payload["approval"]["executed_run_id"] == execute_payload["run"]["run_id"]
+    assert completed_followup["request"]["human_instruction"]["comment"] == "延续当前悬念，但把主角主动试探前置"
+
+
+def test_admin_page_routes() -> None:
+    client = make_client()
+
+    root_response = client.get("/")
+    admin_response = client.get("/admin")
+
+    assert root_response.status_code == 200
+    assert admin_response.status_code == 200
+    assert "NovelStudio Admin" in root_response.text
+    assert "NovelStudio Admin" in admin_response.text

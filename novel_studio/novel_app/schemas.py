@@ -156,3 +156,9 @@ class PublishPackage(StrictModel):
     title: str
     blurb: str
     excerpt: str
+    full_text: str
+    word_count: int = Field(ge=0)
+    chapter_end_question: str = ""
+    reviewer_summary: dict[str, Any] = Field(default_factory=dict)
+    canon_snapshot: dict[str, Any] = Field(default_factory=dict)
+    operator_notes: str | None = None

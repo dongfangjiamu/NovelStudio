@@ -1,4 +1,4 @@
-from novel_app.schemas import ChapterCard, CreativeContract
+from novel_app.schemas import ChapterCard, CreativeContract, PublishPackage
 
 
 def test_creative_contract_validation() -> None:
@@ -52,3 +52,21 @@ def test_chapter_card_requires_two_scene_beats() -> None:
         word_count_target=2800,
     )
     assert len(card.scene_beats) == 2
+
+
+def test_publish_package_accepts_extended_release_fields() -> None:
+    package = PublishPackage(
+        chapter_no=1,
+        title="第1章 炉火中的第二道声音",
+        blurb="主角第一次听见旧案线索。",
+        excerpt="第一段摘录",
+        full_text="完整正文内容",
+        word_count=1234,
+        chapter_end_question="第二道声音是谁？",
+        reviewer_summary={"final_decision": "pass"},
+        canon_snapshot={"story_clock": {"current_chapter": 1}},
+        operator_notes="保留当前节奏",
+    )
+
+    assert package.word_count == 1234
+    assert package.reviewer_summary["final_decision"] == "pass"

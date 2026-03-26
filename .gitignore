@@ -12,3 +12,7 @@ node_modules/
 .DS_Store
 *.swp
 *.bak
+.env.compose
+backups/
+novel_studio/.langgraph_api/
+novel_studio/*.db

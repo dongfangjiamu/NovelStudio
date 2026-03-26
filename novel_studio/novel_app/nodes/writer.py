@@ -54,6 +54,7 @@ def draft_writer(state: NovelState, runtime: Any = None) -> dict:
         "story_bible": state.get("story_bible", {}),
         "canon_state": state.get("canon_state", {}),
         "current_card": state.get("current_card", {}),
+        "human_instruction": state.get("human_instruction", {}),
     }
     runtime_context = getattr(runtime, "context", None)
     draft = invoke_structured(
@@ -81,6 +82,7 @@ def patch_writer(state: NovelState, runtime: Any = None) -> dict:
             "current_draft": state.get("current_draft", {}),
             "phase_decision": state.get("phase_decision", {}),
             "review_reports": state.get("review_reports", []),
+            "human_instruction": state.get("human_instruction", {}),
         }
         runtime_context = getattr(runtime, "context", None)
         draft = invoke_structured(

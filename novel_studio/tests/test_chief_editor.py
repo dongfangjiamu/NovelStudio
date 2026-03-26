@@ -96,3 +96,43 @@ def test_chief_editor_passes_when_no_major_issues_exist() -> None:
     result = chief_editor(state)
     assert result["phase_decision"]["final_decision"] == "pass"
     assert result["phase_decision"]["next_owner"] == "release_prepare"
+
+
+def test_chief_editor_routes_to_human_check_when_reviewer_requests_it() -> None:
+    state = {
+        "review_reports": [
+            {
+                "reviewer": "continuity",
+                "decision": "human_review",
+                "scores": {"continuity": 65, "pacing": 70, "style": 80, "hook": 70, "total": 71},
+                "hard_violations": [],
+                "issues": [],
+            },
+            {
+                "reviewer": "pacing",
+                "decision": "pass",
+                "scores": {"continuity": 82, "pacing": 82, "style": 82, "hook": 82, "total": 82},
+                "hard_violations": [],
+                "issues": [],
+            },
+            {
+                "reviewer": "style",
+                "decision": "pass",
+                "scores": {"continuity": 82, "pacing": 82, "style": 82, "hook": 82, "total": 82},
+                "hard_violations": [],
+                "issues": [],
+            },
+            {
+                "reviewer": "reader_sim",
+                "decision": "pass",
+                "scores": {"continuity": 82, "pacing": 82, "style": 82, "hook": 82, "total": 82},
+                "hard_violations": [],
+                "issues": [],
+            },
+        ]
+    }
+
+    result = chief_editor(state)
+
+    assert result["phase_decision"]["final_decision"] == "human_check"
+    assert result["phase_decision"]["next_owner"] == "human_gate"

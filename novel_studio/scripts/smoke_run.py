@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
-import os
 
+from novel_app.config import load_config
 from novel_app.graph_main import graph
 
 
 def main() -> None:
+    config = load_config()
     sample_input = {
         "user_brief": {
             "title": "长夜炉火",
@@ -18,11 +19,7 @@ def main() -> None:
         },
         "target_chapters": 2,
     }
-    context = {
-        "project_id": os.getenv("NOVEL_STUDIO_PROJECT_ID", "demo-book"),
-        "operator_id": os.getenv("NOVEL_STUDIO_OPERATOR_ID", "local-dev"),
-        "model_name": os.getenv("NOVEL_STUDIO_MODEL", "gpt-5-nano"),
-    }
+    context = config.to_runtime_context()
     result = graph.invoke(sample_input, context=context)
     print(json.dumps(result, ensure_ascii=False, indent=2))
 

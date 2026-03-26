@@ -2,24 +2,24 @@ from __future__ import annotations
 
 from langgraph.graph import END, START, StateGraph
 
-from .nodes.arc_planner import arc_planner
-from .nodes.canon_manager import canon_commit
-from .nodes.chapter_planner import chapter_planner
-from .nodes.chief_editor import chief_editor
-from .nodes.feedback import feedback_ingest
-from .nodes.human_gate import human_gate
-from .nodes.interviewer import interviewer_contract
-from .nodes.lore_builder import lore_builder
-from .nodes.release import release_prepare
-from .nodes.reviewers import (
+from novel_app.nodes.arc_planner import arc_planner
+from novel_app.nodes.canon_manager import canon_commit
+from novel_app.nodes.chapter_planner import chapter_planner
+from novel_app.nodes.chief_editor import chief_editor
+from novel_app.nodes.feedback import feedback_ingest
+from novel_app.nodes.human_gate import human_gate
+from novel_app.nodes.interviewer import interviewer_contract
+from novel_app.nodes.lore_builder import lore_builder
+from novel_app.nodes.release import release_prepare
+from novel_app.nodes.reviewers import (
     continuity_reviewer,
     pacing_reviewer,
     reader_simulator,
     style_reviewer,
 )
-from .nodes.writer import draft_writer, patch_writer
-from .routers import route_after_feedback, route_after_review
-from .state import InputState, NovelState, OutputState, RuntimeContext
+from novel_app.nodes.writer import draft_writer, patch_writer
+from novel_app.routers import route_after_feedback, route_after_review
+from novel_app.state import InputState, NovelState, OutputState, RuntimeContext
 
 
 builder = StateGraph(

@@ -14,6 +14,7 @@ def feedback_ingest(state: NovelState, runtime: Any = None) -> dict:
             "observe": [],
             "discard": [],
         },
+        "latest_review_reports": list(state.get("review_reports", [])),
         "chapters_completed": state.get("chapters_completed", 0) + 1,
         "rewrite_count": 0,
         "review_reports": [],

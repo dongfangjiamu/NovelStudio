@@ -23,6 +23,18 @@ def _stub_arc_plan(_: NovelState) -> ArcPlan:
 
 
 def arc_planner(state: NovelState, runtime: Any = None) -> dict:
+    existing_plan = state.get("arc_plan")
+    if existing_plan:
+        return {
+            "arc_plan": existing_plan,
+            "canon_state": state.get("canon_state") or {
+                "story_clock": {"current_arc": 1, "current_chapter": 0, "in_story_time": "day_0"},
+                "character_states": {},
+                "open_loops": [],
+            },
+            "event_log": ["arc_plan_reused"],
+        }
+
     payload = {
         "creative_contract": state.get("creative_contract", {}),
         "story_bible": state.get("story_bible", {}),

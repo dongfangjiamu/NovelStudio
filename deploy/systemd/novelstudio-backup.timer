@@ -1,0 +1,10 @@
+[Unit]
+Description=Run NovelStudio backup every night
+
+[Timer]
+OnCalendar=*-*-* 03:17:00
+Persistent=true
+Unit=novelstudio-backup.service
+
+[Install]
+WantedBy=timers.target

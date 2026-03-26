@@ -26,6 +26,20 @@ def chief_editor(state: NovelState, runtime: Any = None) -> dict:
         )
         return {"phase_decision": decision.model_dump()}
 
+    human_review_requests = [report["reviewer"] for report in reports if report.get("decision") == "human_review"]
+    if human_review_requests:
+        decision = PhaseDecision(
+            final_decision="human_check",
+            must_fix=[],
+            can_defer=[],
+            next_owner="human_gate",
+            reason=f"审校要求人工确认：{', '.join(human_review_requests)}",
+        )
+        return {
+            "phase_decision": decision.model_dump(),
+            "event_log": ["phase_decision:human_check"],
+        }
+
     hard_violations = [v for report in reports for v in report.get("hard_violations", [])]
     if hard_violations:
         decision = PhaseDecision(

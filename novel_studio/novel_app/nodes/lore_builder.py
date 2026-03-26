@@ -40,6 +40,13 @@ def _stub_bible(state: NovelState) -> StoryBible:
 
 
 def lore_builder(state: NovelState, runtime: Any = None) -> dict:
+    existing = state.get("story_bible")
+    if existing:
+        return {
+            "story_bible": existing,
+            "event_log": ["story_bible_reused"],
+        }
+
     payload = {"creative_contract": state.get("creative_contract", {})}
     runtime_context = getattr(runtime, "context", None)
     bible = invoke_structured(

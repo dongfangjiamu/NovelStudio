@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>NovelStudio Admin</title>
+    <link rel="stylesheet" href="/admin-static/admin.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="eyebrow">Internal Console</div>
+          <h1>NovelStudio</h1>
+        </div>
+
+        <section class="panel auth-panel">
+          <h2>连接</h2>
+          <label>
+            <span>API Token</span>
+            <input id="api-token" type="password" placeholder="可选" />
+          </label>
+          <label>
+            <span>Operator</span>
+            <input id="operator-id" type="text" placeholder="editor-1" />
+          </label>
+          <button id="save-auth" class="button secondary">保存配置</button>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>项目</h2>
+            <button id="refresh-projects" class="button ghost">刷新</button>
+          </div>
+          <div id="projects-list" class="stack"></div>
+        </section>
+      </aside>
+
+      <main class="main">
+        <section class="hero">
+          <div>
+            <div class="eyebrow">Workflow Control</div>
+            <h2>项目、运行、审批、续写</h2>
+          </div>
+          <div id="status-pill" class="pill">Ready</div>
+        </section>
+
+        <section class="grid">
+          <section class="panel">
+            <h2>新建项目</h2>
+            <form id="project-form" class="stack">
+              <label>
+                <span>项目名</span>
+                <input name="name" type="text" required />
+              </label>
+              <label>
+                <span>简介</span>
+                <textarea name="description" rows="2"></textarea>
+              </label>
+              <label>
+                <span>默认章节数</span>
+                <input name="default_target_chapters" type="number" min="1" value="1" />
+              </label>
+              <label>
+                <span>默认 Brief JSON</span>
+                <textarea name="default_user_brief" rows="8">{"title":"长夜炉火","genre":"东方玄幻","platform":"起点中文网","hook":"一个被逐出山门的外门弟子，靠偷听禁地炉火中的古老对话逆天改命。","must_have":["稳步升级","师门阴谋","章末钩子强"],"must_not_have":["后宫泛滥","无代价外挂"]}</textarea>
+              </label>
+              <button class="button primary" type="submit">创建项目</button>
+            </form>
+          </section>
+
+          <section class="panel project-panel">
+            <div class="panel-head">
+              <div>
+                <h2 id="project-title">未选择项目</h2>
+                <div id="project-meta" class="muted">选择左侧项目后查看详情</div>
+              </div>
+              <button id="create-run" class="button primary" disabled>生成章节</button>
+            </div>
+            <div class="columns">
+              <div>
+                <h3>章节</h3>
+                <div id="chapters-list" class="stack compact"></div>
+              </div>
+              <div>
+                <h3>Runs</h3>
+                <div id="runs-list" class="stack compact"></div>
+              </div>
+              <div>
+                <h3>审批</h3>
+                <div id="approvals-list" class="stack compact"></div>
+              </div>
+            </div>
+          </section>
+        </section>
+
+        <section class="grid lower-grid">
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Run 工件</h2>
+              <div id="selected-run-label" class="muted">未选择 Run</div>
+            </div>
+            <div id="artifacts-list" class="stack compact"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h2>审计日志</h2>
+              <button id="refresh-audit" class="button ghost">刷新</button>
+            </div>
+            <div id="audit-list" class="stack compact"></div>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <script src="/admin-static/admin.js" defer></script>
+  </body>
+</html>

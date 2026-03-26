@@ -43,6 +43,13 @@ def _stub_contract(state: NovelState) -> CreativeContract:
 
 
 def interviewer_contract(state: NovelState, runtime: Any = None) -> dict:
+    existing = state.get("creative_contract")
+    if existing:
+        return {
+            "creative_contract": existing,
+            "event_log": ["creative_contract_reused"],
+        }
+
     payload = {"user_brief": state.get("user_brief", {})}
     runtime_context = getattr(runtime, "context", None)
     contract = invoke_structured(

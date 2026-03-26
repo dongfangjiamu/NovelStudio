@@ -1,0 +1,11 @@
+[Unit]
+Description=NovelStudio Backup Cycle
+Requires=novelstudio-compose.service
+After=novelstudio-compose.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/NovelStudio
+Environment=ENV_FILE=/root/NovelStudio/.env.compose
+Environment=COMPOSE_PROJECT_NAME=novelstudio
+ExecStart=/root/NovelStudio/ops/run_backup_cycle.sh
