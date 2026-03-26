@@ -28,6 +28,7 @@ def test_invoke_structured_returns_stub_in_stub_mode(monkeypatch: pytest.MonkeyP
 def test_invoke_structured_uses_responses_stream(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NOVEL_STUDIO_STUB_MODE", "false")
     monkeypatch.setenv("OPENAI_API_KEY", "relay-key")
+    monkeypatch.setenv("NOVEL_STUDIO_LLM_TIMEOUT_SECONDS", "123")
     captured: dict[str, object] = {}
 
     class FakeFinalResponse:
@@ -49,9 +50,11 @@ def test_invoke_structured_uses_responses_stream(monkeypatch: pytest.MonkeyPatch
             return FakeStream()
 
     class FakeOpenAI:
-        def __init__(self, *, api_key, base_url=None):
+        def __init__(self, *, api_key, base_url=None, timeout=None, max_retries=None):
             captured["api_key"] = api_key
             captured["base_url"] = base_url
+            captured["timeout"] = timeout
+            captured["max_retries"] = max_retries
             self.responses = FakeResponses()
 
     monkeypatch.setattr(llm, "OpenAI", FakeOpenAI)
@@ -68,6 +71,8 @@ def test_invoke_structured_uses_responses_stream(monkeypatch: pytest.MonkeyPatch
     assert result == {"title": "live", "count": 2}
     assert captured["api_key"] == "relay-key"
     assert captured["base_url"] == "https://relay.example.com/openai"
+    assert captured["timeout"] == 123.0
+    assert captured["max_retries"] == 1
     stream_kwargs = captured["stream_kwargs"]
     assert stream_kwargs["model"] == "gpt-5.4"
     assert stream_kwargs["store"] is False
@@ -102,7 +107,7 @@ def test_invoke_structured_raises_when_output_is_not_parsed(monkeypatch: pytest.
             return FakeStream()
 
     class FakeOpenAI:
-        def __init__(self, *, api_key, base_url=None):
+        def __init__(self, *, api_key, base_url=None, timeout=None, max_retries=None):
             self.responses = FakeResponses()
 
     monkeypatch.setattr(llm, "OpenAI", FakeOpenAI)

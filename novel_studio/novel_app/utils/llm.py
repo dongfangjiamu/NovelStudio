@@ -37,6 +37,15 @@ def _resolve_base_url(runtime_context: Any) -> str | None:
     )
 
 
+def _resolve_timeout_seconds(runtime_context: Any) -> float:
+    value = (
+        getattr(runtime_context, "llm_timeout_seconds", None)
+        or os.getenv("NOVEL_STUDIO_LLM_TIMEOUT_SECONDS")
+        or "120"
+    )
+    return float(value)
+
+
 def _build_user_prompt(*, prompt_name: str, schema_cls: type[T], payload: dict) -> str:
     schema_json = {}
     if issubclass(schema_cls, BaseModel):
@@ -108,6 +117,8 @@ def invoke_structured(
     client = OpenAI(
         api_key=os.getenv("OPENAI_API_KEY"),
         base_url=_resolve_base_url(runtime_context),
+        timeout=_resolve_timeout_seconds(runtime_context),
+        max_retries=1,
     )
     user_text = _build_user_prompt(prompt_name=prompt_name, schema_cls=schema_cls, payload=payload)
     with client.responses.stream(

@@ -190,7 +190,7 @@ async function loadAudit() {
   renderAudit(logs);
 }
 
-async function waitForRunCompletion(runId, timeoutMs = 180000) {
+async function waitForRunCompletion(runId, timeoutMs = 480000) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
     const run = await api(`/api/runs/${runId}`);
@@ -204,11 +204,12 @@ async function waitForRunCompletion(runId, timeoutMs = 180000) {
     }
     await new Promise((resolve) => setTimeout(resolve, 1500));
   }
-  throw new Error(`run_timeout:${runId}`);
+  return null;
 }
 
 async function handleApprovalAction(action, approvalId) {
   try {
+    let backgroundStillRunning = false;
     if (action === "approve" || action === "reject") {
       await api(`/api/approval-requests/${approvalId}/resolve`, {
         method: "POST",
@@ -222,12 +223,19 @@ async function handleApprovalAction(action, approvalId) {
     if (action === "execute") {
       const payload = await api(`/api/approval-requests/${approvalId}/execute`, { method: "POST" });
       setStatus("续写任务已提交，正在后台执行…", "warn");
-      await waitForRunCompletion(payload.run.run_id);
-      await loadArtifacts(payload.run.run_id);
+      const completedRun = await waitForRunCompletion(payload.run.run_id);
+      if (completedRun) {
+        await loadArtifacts(payload.run.run_id);
+      } else {
+        backgroundStillRunning = true;
+        setStatus(`续写仍在后台执行，可稍后刷新查看: ${payload.run.run_id}`, "warn");
+      }
     }
     await selectProject(state.selectedProjectId);
     await loadAudit();
-    setStatus("审批操作已完成");
+    if (!backgroundStillRunning) {
+      setStatus("审批操作已完成");
+    }
   } catch (error) {
     setStatus(String(error.message || error), "error");
   }
@@ -264,10 +272,14 @@ async function createRun() {
       body: JSON.stringify({ operator_id: state.operatorId }),
     });
     setStatus("Run 已提交，正在后台执行…", "warn");
-    await waitForRunCompletion(payload.run_id);
+    const completedRun = await waitForRunCompletion(payload.run_id);
     await selectProject(state.selectedProjectId);
     await loadAudit();
-    setStatus("Run 已完成");
+    if (completedRun) {
+      setStatus("Run 已完成");
+    } else {
+      setStatus(`Run 仍在后台执行，可稍后刷新查看: ${payload.run_id}`, "warn");
+    }
   } catch (error) {
     setStatus(String(error.message || error), "error");
   }
