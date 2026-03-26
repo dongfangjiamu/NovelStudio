@@ -1,4 +1,5 @@
 import time
+from datetime import datetime, timedelta, timezone
 from threading import Event
 
 from fastapi.testclient import TestClient
@@ -430,3 +431,52 @@ def test_retry_failed_run_creates_new_background_run() -> None:
 
     completed_retry = wait_for_run(client, retry_run["run_id"])
     assert completed_retry["status"] == "completed"
+
+
+def test_stale_running_run_auto_transitions_to_failed() -> None:
+    app = create_app(
+        config=AppConfig(
+            stub_mode=True,
+            openai_api_key=None,
+            admin_token=None,
+            database_url="sqlite:///:memory:",
+            model_name="gpt-5-nano",
+            project_id="api-test",
+            operator_id="tester",
+        ),
+        store=InMemoryStore(),
+    )
+    client = TestClient(app)
+
+    project = client.post(
+        "/api/projects",
+        json={"name": "超时测试", "default_user_brief": {"title": "测试"}, "default_target_chapters": 1},
+    ).json()
+    stale_updated_at = (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat()
+    run = app.state.store.save_run(
+        project_id=project["project_id"],
+        status="running",
+        request={"user_brief": {"title": "测试"}, "target_chapters": 1, "operator_id": "tester"},
+        result={
+            "progress": {
+                "current_node": "chapter_planner",
+                "latest_event": "chapter_card_ready:1",
+                "event_log_tail": ["chapter_card_ready:1"],
+                "chapter_no": 1,
+                "rewrite_count": 0,
+                "phase_decision": "replan",
+                "updated_at": stale_updated_at,
+                "stage_goal": "重新规划第 1 章章卡。",
+                "possible_cause": "等待上游返回",
+            }
+        },
+        error=None,
+    )
+
+    response = client.get(f"/api/runs/{run.run_id}")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "failed"
+    assert "自动判定该运行已超时" in payload["error"]
+    assert payload["result"]["manual_intervention"]["action"] == "auto_timeout"

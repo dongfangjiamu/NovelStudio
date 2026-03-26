@@ -1,4 +1,5 @@
 from __future__ import annotations
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from pathlib import Path
@@ -45,6 +46,7 @@ LIVE_ARTIFACT_TYPES = [
     "blockers",
     "event_log",
 ]
+RUN_STALE_TIMEOUT_SECONDS = 900
 
 
 def run_requires_human_approval(result: dict[str, object]) -> bool:
@@ -140,6 +142,37 @@ def create_app(
         }
         return result
 
+    def parse_timestamp(value: str | None) -> datetime | None:
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            return None
+
+    def build_stale_failure_result(run, *, stale_seconds: int) -> dict[str, object]:
+        result = dict(run.result or {})
+        progress = dict(result.get("progress") or {})
+        event_log_tail = list(progress.get("event_log_tail") or [])
+        event_log_tail.append("auto_timeout")
+        reason = f"系统自动判定该运行已超时：连续 {stale_seconds // 60} 分钟没有新进度。"
+        result["progress"] = {
+            **progress,
+            "latest_event": "auto_timeout",
+            "event_log_tail": event_log_tail[-5:],
+            "updated_at": utc_now_iso(),
+            "possible_cause": reason,
+            "stage_goal": progress.get("stage_goal") or "当前运行已被自动收口，请决定是否重试。",
+            "stalled_for_seconds": stale_seconds,
+        }
+        result["manual_intervention"] = {
+            "action": "auto_timeout",
+            "operator_id": "system",
+            "reason": reason,
+            "at": utc_now_iso(),
+        }
+        return result
+
     def initial_progress_snapshot(*, current_node: str) -> dict[str, object]:
         return {
             "progress": {
@@ -206,9 +239,35 @@ def create_app(
                     phase_decision=phase_decision,
                 ),
             )
+            updated_at = parse_timestamp(progress.get("updated_at")) or parse_timestamp(run.created_at)
+            if updated_at is not None:
+                progress["stalled_for_seconds"] = max(
+                    0,
+                    int((datetime.now(timezone.utc) - updated_at).total_seconds()),
+                )
             result["progress"] = progress
             payload["result"] = result
         return payload
+
+    def maybe_finalize_stale_run(run):
+        if run.status != "running":
+            return run
+        progress = (run.result or {}).get("progress") or {}
+        last_activity = parse_timestamp(progress.get("updated_at")) or parse_timestamp(run.created_at)
+        if last_activity is None:
+            return run
+        stale_seconds = int((datetime.now(timezone.utc) - last_activity).total_seconds())
+        if stale_seconds < RUN_STALE_TIMEOUT_SECONDS:
+            return run
+        reason = f"系统自动判定该运行已超时：连续 {stale_seconds // 60} 分钟没有新进度。"
+        updated_run = app.state.store.update_run(
+            run_id=run.run_id,
+            status="failed",
+            result=build_stale_failure_result(run, stale_seconds=stale_seconds),
+            error=reason,
+            only_if_status_in={"running"},
+        )
+        return updated_run or app.state.store.get_run(run.run_id) or run
 
     def finalize_run_success(*, run_id: str, result: dict[str, object]) -> None:
         existing_run = app.state.store.get_run(run_id)
@@ -499,6 +558,7 @@ def create_app(
         run = app.state.store.get_run(run_id)
         if not run:
             raise HTTPException(status_code=404, detail="run_not_found")
+        run = maybe_finalize_stale_run(run)
         return RunResponse.model_validate(enrich_run_payload(run))
 
     @app.get("/api/projects/{project_id}/runs", response_model=list[RunResponse])
@@ -506,7 +566,10 @@ def create_app(
         project = app.state.store.get_project(project_id)
         if not project:
             raise HTTPException(status_code=404, detail="project_not_found")
-        return [RunResponse.model_validate(enrich_run_payload(item)) for item in app.state.store.list_runs(project_id)]
+        return [
+            RunResponse.model_validate(enrich_run_payload(maybe_finalize_stale_run(item)))
+            for item in app.state.store.list_runs(project_id)
+        ]
 
     @app.get("/api/projects/{project_id}/chapters", response_model=list[ChapterResponse])
     async def list_chapters(project_id: str) -> list[ChapterResponse]:
@@ -520,6 +583,7 @@ def create_app(
         run = app.state.store.get_run(run_id)
         if not run:
             raise HTTPException(status_code=404, detail="run_not_found")
+        run = maybe_finalize_stale_run(run)
         stored = [ArtifactResponse.model_validate(item.__dict__) for item in app.state.store.list_artifacts(run_id)]
         if run.status != "running":
             return stored

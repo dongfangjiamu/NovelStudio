@@ -104,6 +104,21 @@ const ARTIFACT_ORDER = [
   "event_log",
 ];
 
+const EVENT_LABELS = {
+  run_started: "开始运行",
+  creative_contract_ready: "创作契约已生成",
+  story_bible_ready: "故事设定已生成",
+  arc_plan_ready: "卷纲已生成",
+  chapter_card_ready: "章卡已生成",
+  chapter_draft_ready: "正文草稿已生成",
+  review_ready: "审校结果已返回",
+  release_ready: "发布包已整理",
+  canon_updated: "Canon 已更新",
+  feedback_ingested: "结果已回收",
+  manual_fail: "人工标记失败",
+  auto_timeout: "系统自动判定超时",
+};
+
 function setStatus(text, kind = "ready") {
   el.statusPill.textContent = text;
   el.statusPill.style.color = kind === "error" ? "#9b1c1c" : kind === "warn" ? "#8d5b00" : "#1f6b44";
@@ -184,6 +199,53 @@ function artifactLabel(value) {
   return ARTIFACT_LABELS[value] || value;
 }
 
+function eventLabel(value) {
+  if (!value) return "暂无事件";
+  const [kind, detail, extra] = String(value).split(":");
+  if (kind === "chapter_card_ready" && detail) return `第 ${detail} 章章卡已生成`;
+  if (kind === "review_ready" && detail && extra) return `${nodeLabel(`${detail}_reviewer`)}：${extra === "pass" ? "通过" : extra === "rewrite" ? "建议重写" : extra}`;
+  return EVENT_LABELS[kind] || value;
+}
+
+function buildTimelineEntries(run) {
+  const progress = run.result?.progress || {};
+  const entries = [];
+  entries.push({
+    title: "开始生成",
+    meta: formatTimestamp(run.created_at),
+    status: "done",
+  });
+  (progress.event_log_tail || []).forEach((item) => {
+    entries.push({
+      title: eventLabel(item),
+      meta: formatTimestamp(progress.updated_at),
+      status: item === progress.latest_event ? "current" : "done",
+    });
+  });
+  if (run.status === "running") {
+    entries.push({
+      title: `正在进行：${nodeLabel(progress.current_node)}`,
+      meta: `已等待 ${formatDuration((progress.stalled_for_seconds || 0) * 1000)}`,
+      status: "current",
+    });
+  }
+  if (run.status === "failed") {
+    entries.push({
+      title: "本次运行已结束为失败",
+      meta: run.error || "已停止",
+      status: "failed",
+    });
+  }
+  if (run.status === "completed") {
+    entries.push({
+      title: "本次运行已完成",
+      meta: formatTimestamp(run.finished_at),
+      status: "done",
+    });
+  }
+  return entries;
+}
+
 function parseListField(value) {
   return String(value || "")
     .split(/\n|,/)
@@ -227,6 +289,7 @@ function deriveSummary(project, snapshot) {
   const updatedAt = progress.updated_at ? formatTimestamp(progress.updated_at) : "未记录";
   const stageGoal = progress.stage_goal || "等待下一步目标。";
   const possibleCause = progress.possible_cause || null;
+  const interventionAction = focusRun?.result?.manual_intervention?.action || null;
 
   if (!project) {
     return {
@@ -302,8 +365,12 @@ function deriveSummary(project, snapshot) {
       goal: `重新尝试生成第 ${progress.chapter_no || latestChapter + 1 || 1} 章。`,
       system: "上一条 Run 已失败，系统目前空闲。",
       event: focusRun.error ? `失败原因：${focusRun.error}` : `失败 Run：${focusRun.run_id}`,
-      next: "优先处理这条最新失败记录。先查看工件确认问题，再决定是否点“重新尝试”。更老的失败记录默认只作参考。",
-      heroNote: "你不需要把所有失败记录都重新点一遍。通常只处理最新那条失败记录。",
+      next: interventionAction === "auto_timeout"
+        ? "系统已经自动把长时间无进度的运行收口成失败。先看过程材料，再决定是否点“重新尝试”。"
+        : "优先处理这条最新失败记录。先查看工件确认问题，再决定是否点“重新尝试”。更老的失败记录默认只作参考。",
+      heroNote: interventionAction === "auto_timeout"
+        ? "这条运行不是你手动终止的，而是系统自动判定它超时并收口。现在你只需要决定是否重试。"
+        : "你不需要把所有失败记录都重新点一遍。通常只处理最新那条失败记录。",
       pill: "上一条 Run 失败",
       kind: "error",
       focusRun,
@@ -396,11 +463,16 @@ function renderFocusRun(summary) {
   const currentNode = nodeLabel(progress.current_node);
   const stageGoal = progress.stage_goal || "未记录";
   const possibleCause = progress.possible_cause;
+  const intervention = run.result?.manual_intervention || null;
+  const timelineEntries = buildTimelineEntries(run);
   const errorBlock = run.error
     ? `<div class="focus-metric"><strong class="error-copy">错误</strong><div class="meta">${run.error}</div></div>`
     : "";
   const causeBlock = possibleCause
     ? `<div class="focus-metric"><strong>可能原因</strong><div class="meta warning-copy">${possibleCause}</div></div>`
+    : "";
+  const interventionBlock = intervention
+    ? `<div class="focus-metric"><strong>系统处理</strong><div class="meta">${intervention.action === "auto_timeout" ? "系统已自动收口这条超时运行" : "这条运行已被人工收口"}</div></div>`
     : "";
   const actionButtons = [
     `<button class="button ghost" data-action="view-run" data-id="${run.run_id}">查看工件</button>`,
@@ -455,8 +527,30 @@ function renderFocusRun(summary) {
         <strong>当前目标</strong>
         <div class="meta">${stageGoal}</div>
       </div>
+      ${interventionBlock}
       ${causeBlock}
       ${errorBlock}
+    </div>
+    <div class="card">
+      <div class="card-head">
+        <h4>阶段时间线</h4>
+        ${statusChip(run.status)}
+      </div>
+      <div class="timeline">
+        ${timelineEntries
+          .map(
+            (entry) => `
+              <div class="timeline-item timeline-${entry.status}">
+                <div class="timeline-dot"></div>
+                <div>
+                  <div class="timeline-title">${entry.title}</div>
+                  <div class="meta">${entry.meta}</div>
+                </div>
+              </div>
+            `
+          )
+          .join("")}
+      </div>
     </div>
     <div class="card">
       <div class="card-head">
@@ -552,7 +646,9 @@ function renderRuns(runs, focusRunId) {
     const caption = recommendedCard
       ? "这是当前最值得处理的一条运行记录。"
       : item.status === "failed"
-        ? "历史失败记录，默认只用于参考，不建议优先再次重试。"
+        ? (item.result?.manual_intervention?.action === "auto_timeout"
+            ? "历史超时记录，系统已经自动收口，默认只用于参考。"
+            : "历史失败记录，默认只用于参考，不建议优先再次重试。")
         : "历史记录，可随时查看过程材料。";
     return `
       <div class="${classes.join(" ")}">
