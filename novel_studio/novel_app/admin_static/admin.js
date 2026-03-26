@@ -94,6 +94,17 @@ function formatTimestamp(value) {
   });
 }
 
+function formatDuration(ms) {
+  if (!Number.isFinite(ms) || ms <= 0) return "刚刚";
+  const totalSeconds = Math.floor(ms / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}小时${minutes}分`;
+  if (minutes > 0) return `${minutes}分${seconds}秒`;
+  return `${seconds}秒`;
+}
+
 function selectedProject() {
   return state.projects.find((item) => item.project_id === state.selectedProjectId) || null;
 }
@@ -156,9 +167,9 @@ function deriveSummary(project, snapshot) {
     return {
       goal: `完成第 ${targetChapter} 章的生成。`,
       system: `系统正在后台执行，当前节点是 ${currentNode}。`,
-      event: `最近事件：${latestEvent}；最近更新时间：${updatedAt}。`,
+      event: `最近事件：${latestEvent}；最近更新时间：${updatedAt}；当前重写次数：${progress.rewrite_count ?? 0}。`,
       next: stale
-        ? `这条 Run 已较久没有新进度。先等待 1 到 2 分钟，再点“刷新”确认；如果仍不动，查看这条 Run 是否转为 failed。`
+        ? `这条 Run 已经 ${formatDuration(staleMs)} 没有新进度。它更像是卡住，而不是一直重写。先点“刷新”确认；如果仍不动，就不要再等，按失败 Run 处理。`
         : `当前已经有 Run 在执行，不要重复点击“生成章节”。等待自动刷新，或点“查看工件”跟踪当前 Run。`,
       pill: stale ? `Run 可能卡住: ${focusRun.run_id}` : `Run 执行中: ${currentNode}`,
       kind: "warn",
@@ -258,6 +269,9 @@ function renderFocusRun(summary) {
   const progress = run.result?.progress || {};
   const logTail = progress.event_log_tail || [];
   const latestEvent = progress.latest_event || "暂无事件";
+  const updatedAt = progress.updated_at || run.created_at;
+  const staleMs = updatedAt ? Date.now() - new Date(updatedAt).getTime() : 0;
+  const staleLabel = staleMs > 0 ? formatDuration(staleMs) : "未记录";
   const currentNode = progress.current_node || "未记录";
   const errorBlock = run.error
     ? `<div class="focus-metric"><strong class="error-copy">错误</strong><div class="meta">${run.error}</div></div>`
@@ -280,7 +294,7 @@ function renderFocusRun(summary) {
       </div>
       <div class="focus-metric">
         <strong>最近更新时间</strong>
-        <div class="meta">${formatTimestamp(progress.updated_at || run.created_at)}</div>
+        <div class="meta">${formatTimestamp(updatedAt)}</div>
       </div>
       <div class="focus-metric">
         <strong>最新事件</strong>
@@ -289,6 +303,18 @@ function renderFocusRun(summary) {
       <div class="focus-metric">
         <strong>目标章节</strong>
         <div class="meta">第 ${progress.chapter_no || latestChapterNo(state.projectSnapshot.chapters) + 1 || 1} 章</div>
+      </div>
+      <div class="focus-metric">
+        <strong>重写次数</strong>
+        <div class="meta">${progress.rewrite_count ?? 0}</div>
+      </div>
+      <div class="focus-metric">
+        <strong>静止时长</strong>
+        <div class="meta">${staleLabel}</div>
+      </div>
+      <div class="focus-metric">
+        <strong>阶段决策</strong>
+        <div class="meta">${progress.phase_decision || "未记录"}</div>
       </div>
       ${errorBlock}
     </div>
@@ -350,6 +376,7 @@ function renderRuns(runs, focusRunId) {
     ? runs
         .map((item) => {
           const progress = item.result?.progress || {};
+          const updatedAt = progress.updated_at || item.created_at;
           const marker = item.status === "running"
             ? progress.latest_event || progress.current_node || "waiting"
             : item.error || progress.latest_event || "无附加信息";
@@ -360,7 +387,8 @@ function renderRuns(runs, focusRunId) {
                 <h4>${item.run_id}</h4>
                 ${statusChip(item.status)}
               </div>
-              <div class="meta">${formatTimestamp(item.created_at)}</div>
+              <div class="meta">创建于 ${formatTimestamp(item.created_at)}</div>
+              <div class="meta">最近更新 ${formatTimestamp(updatedAt)} · 重写 ${progress.rewrite_count ?? 0} 次</div>
               <div class="meta">${marker}</div>
               <div class="actions">
                 <button class="button ghost" data-action="view-run" data-id="${item.run_id}">查看工件</button>
