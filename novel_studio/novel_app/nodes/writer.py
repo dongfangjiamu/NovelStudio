@@ -48,6 +48,63 @@ def _patch_stub(state: NovelState) -> ChapterDraft:
     )
 
 
+def _pending_issue_summary(state: NovelState) -> list[dict[str, Any]]:
+    issue_ledger = state.get("issue_ledger") or {}
+    return [
+        {
+            "issue_id": issue.get("issue_id"),
+            "reviewer": issue.get("reviewer"),
+            "severity": issue.get("severity"),
+            "category": issue.get("category"),
+            "attempts": issue.get("attempts", 1),
+            "fix_instruction": issue.get("fix_instruction"),
+            "evidence": issue.get("evidence"),
+        }
+        for issue in issue_ledger.get("issues", [])
+        if issue.get("status") in {"open", "recurring"}
+    ]
+
+
+def _draft_guardrails(state: NovelState) -> list[str]:
+    current_card = state.get("current_card") or {}
+    writer_playbook = state.get("writer_playbook") or {}
+    chapter_lesson = state.get("chapter_lesson") or {}
+    pending_issues = _pending_issue_summary(state)
+
+    values: list[str] = []
+    for item in current_card.get("must_include", [])[:4]:
+        normalized = str(item).strip()
+        if normalized:
+            values.append(f"本章必须出现：{normalized}")
+    for item in current_card.get("must_not_change", [])[:4]:
+        normalized = str(item).strip()
+        if normalized:
+            values.append(f"严禁改动：{normalized}")
+    for item in writer_playbook.get("always_apply", [])[:6]:
+        normalized = str(item).strip()
+        if normalized:
+            values.append(normalized)
+    for item in chapter_lesson.get("carry_forward_rules", [])[:4]:
+        normalized = str(item).strip()
+        if normalized:
+            values.append(normalized)
+    for issue in pending_issues[:6]:
+        fix_instruction = str(issue.get("fix_instruction", "")).strip()
+        if not fix_instruction:
+            continue
+        prefix = "优先规避顽固问题" if int(issue.get("attempts", 1) or 1) >= 2 else "提前规避已知问题"
+        values.append(f"{prefix}：{fix_instruction}")
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in values:
+        if item in seen:
+            continue
+        seen.add(item)
+        deduped.append(item)
+    return deduped[:12]
+
+
 def draft_writer(state: NovelState, runtime: Any = None) -> dict:
     payload = {
         "creative_contract": state.get("creative_contract", {}),
@@ -56,6 +113,9 @@ def draft_writer(state: NovelState, runtime: Any = None) -> dict:
         "current_card": state.get("current_card", {}),
         "writer_playbook": state.get("writer_playbook", {}),
         "latest_chapter_lesson": state.get("chapter_lesson", {}),
+        "issue_ledger": state.get("issue_ledger", {}),
+        "pending_issues_summary": _pending_issue_summary(state),
+        "draft_guardrails": _draft_guardrails(state),
         "human_instruction": state.get("human_instruction", {}),
     }
     runtime_context = getattr(runtime, "context", None)
