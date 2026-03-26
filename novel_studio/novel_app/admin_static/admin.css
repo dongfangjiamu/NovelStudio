@@ -85,6 +85,67 @@ body {
   margin-top: 16px;
 }
 
+.run-brief {
+  margin-top: 18px;
+  display: grid;
+  gap: 14px;
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+.summary-card {
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(255, 252, 246, 0.98), rgba(248, 242, 231, 0.92));
+}
+
+.summary-card.accent {
+  background: linear-gradient(180deg, rgba(255, 244, 235, 0.98), rgba(251, 236, 224, 0.92));
+  border-color: rgba(138, 59, 18, 0.28);
+}
+
+.summary-label {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 8px;
+}
+
+.summary-value {
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.focus-run-panel {
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: rgba(255, 250, 244, 0.9);
+}
+
+.focus-run-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+
+.focus-metric {
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+
+.focus-metric .meta {
+  margin-top: 4px;
+}
+
 .panel {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -194,6 +255,13 @@ textarea {
   margin: 0;
 }
 
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .card .meta {
   margin-top: 6px;
   font-size: 12px;
@@ -215,6 +283,60 @@ textarea {
   text-align: center;
 }
 
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  border: 1px solid transparent;
+}
+
+.status-running {
+  background: rgba(141, 91, 0, 0.12);
+  color: var(--warning);
+  border-color: rgba(141, 91, 0, 0.2);
+}
+
+.status-failed {
+  background: rgba(155, 28, 28, 0.12);
+  color: #9b1c1c;
+  border-color: rgba(155, 28, 28, 0.2);
+}
+
+.status-awaiting_approval {
+  background: rgba(96, 77, 20, 0.12);
+  color: #6f5312;
+  border-color: rgba(96, 77, 20, 0.2);
+}
+
+.status-completed {
+  background: rgba(31, 107, 68, 0.12);
+  color: var(--success);
+  border-color: rgba(31, 107, 68, 0.2);
+}
+
+.status-pending,
+.status-approved,
+.status-rejected {
+  background: rgba(64, 66, 88, 0.08);
+  color: #404258;
+  border-color: rgba(64, 66, 88, 0.12);
+}
+
+.active-run {
+  border-color: rgba(138, 59, 18, 0.4);
+  box-shadow: 0 0 0 2px rgba(138, 59, 18, 0.08);
+}
+
+.warning-copy {
+  color: var(--warning);
+}
+
+.error-copy {
+  color: #9b1c1c;
+}
+
 pre {
   margin: 8px 0 0;
   white-space: pre-wrap;
@@ -230,7 +352,9 @@ pre {
   .shell,
   .grid,
   .lower-grid,
-  .columns {
+  .columns,
+  .summary-grid,
+  .focus-run-grid {
     grid-template-columns: 1fr;
   }
 }

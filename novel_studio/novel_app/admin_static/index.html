@@ -77,6 +77,33 @@
               </div>
               <button id="create-run" class="button primary" disabled>生成章节</button>
             </div>
+            <section class="run-brief">
+              <div class="summary-grid">
+                <article class="summary-card">
+                  <div class="summary-label">当前目标</div>
+                  <div id="summary-goal" class="summary-value">先选择项目或创建一个新项目。</div>
+                </article>
+                <article class="summary-card">
+                  <div class="summary-label">系统正在做什么</div>
+                  <div id="summary-system" class="summary-value">系统空闲。</div>
+                </article>
+                <article class="summary-card">
+                  <div class="summary-label">刚刚发生了什么</div>
+                  <div id="summary-event" class="summary-value">暂无最新事件。</div>
+                </article>
+                <article class="summary-card accent">
+                  <div class="summary-label">你现在应该怎么做</div>
+                  <div id="summary-next" class="summary-value">先选择项目，再决定是否创建章节。</div>
+                </article>
+              </div>
+              <div class="focus-run-panel">
+                <div class="panel-head">
+                  <h3>当前焦点 Run</h3>
+                  <div id="focus-run-caption" class="muted">暂无活跃 Run</div>
+                </div>
+                <div id="focus-run" class="stack compact"></div>
+              </div>
+            </section>
             <div class="columns">
               <div>
                 <h3>章节</h3>
