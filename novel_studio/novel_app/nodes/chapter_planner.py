@@ -41,6 +41,59 @@ def _stub_card(state: NovelState) -> ChapterCard:
     )
 
 
+def _pending_issue_summary(state: NovelState) -> list[dict[str, Any]]:
+    issue_ledger = state.get("issue_ledger") or {}
+    issues = []
+    for issue in issue_ledger.get("issues", []):
+        if issue.get("status") not in {"open", "recurring"}:
+            continue
+        issues.append(
+            {
+                "issue_id": issue.get("issue_id"),
+                "reviewer": issue.get("reviewer"),
+                "severity": issue.get("severity"),
+                "category": issue.get("category"),
+                "attempts": issue.get("attempts", 1),
+                "fix_instruction": issue.get("fix_instruction"),
+                "evidence": issue.get("evidence"),
+            }
+        )
+    return issues
+
+
+def _planning_guardrails(state: NovelState) -> list[str]:
+    writer_playbook = state.get("writer_playbook") or {}
+    chapter_lesson = state.get("chapter_lesson") or {}
+    pending_issues = _pending_issue_summary(state)
+
+    guardrails: list[str] = []
+    for item in writer_playbook.get("always_apply", [])[:6]:
+        normalized = str(item).strip()
+        if normalized:
+            guardrails.append(normalized)
+    for item in chapter_lesson.get("carry_forward_rules", [])[:4]:
+        normalized = str(item).strip()
+        if normalized:
+            guardrails.append(normalized)
+    for issue in pending_issues:
+        fix_instruction = str(issue.get("fix_instruction", "")).strip()
+        if not fix_instruction:
+            continue
+        if int(issue.get("attempts", 1) or 1) >= 2:
+            guardrails.append(f"优先从章卡层规避顽固问题：{fix_instruction}")
+        else:
+            guardrails.append(f"提前规避已知问题：{fix_instruction}")
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in guardrails:
+        if item in seen:
+            continue
+        seen.add(item)
+        deduped.append(item)
+    return deduped[:10]
+
+
 def chapter_planner(state: NovelState, runtime: Any = None) -> dict:
     payload = {
         "creative_contract": state.get("creative_contract", {}),
@@ -49,6 +102,9 @@ def chapter_planner(state: NovelState, runtime: Any = None) -> dict:
         "canon_state": state.get("canon_state", {}),
         "writer_playbook": state.get("writer_playbook", {}),
         "latest_chapter_lesson": state.get("chapter_lesson", {}),
+        "issue_ledger": state.get("issue_ledger", {}),
+        "pending_issues_summary": _pending_issue_summary(state),
+        "planning_guardrails": _planning_guardrails(state),
         "human_instruction": state.get("human_instruction", {}),
     }
     runtime_context = getattr(runtime, "context", None)
