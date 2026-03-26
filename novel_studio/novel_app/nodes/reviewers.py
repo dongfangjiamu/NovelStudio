@@ -145,9 +145,24 @@ def _stub_report(reviewer: str, state: NovelState) -> ReviewReport:
 
 def _review_payload(state: NovelState, reviewer: str) -> dict[str, Any]:
     config = REVIEWER_CONFIG[reviewer]
+    issue_ledger = state.get("issue_ledger") or {}
+    pending_issues = [
+        {
+            "issue_id": issue.get("issue_id"),
+            "severity": issue.get("severity"),
+            "category": issue.get("category"),
+            "evidence": issue.get("evidence"),
+            "fix_instruction": issue.get("fix_instruction"),
+            "attempts": issue.get("attempts", 1),
+        }
+        for issue in issue_ledger.get("issues", [])
+        if issue.get("reviewer") == reviewer and issue.get("status") in {"open", "recurring"}
+    ]
     return {
         "reviewer": reviewer,
         "review_focus": config["review_focus"],
+        "review_goal": "先核对待关闭旧问题是否已解决，再补充真正新的关键问题。",
+        "pending_issues_for_reviewer": pending_issues,
         "creative_contract": state.get("creative_contract", {}),
         "story_bible": state.get("story_bible", {}),
         "arc_plan": state.get("arc_plan", {}),

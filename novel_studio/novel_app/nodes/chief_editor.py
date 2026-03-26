@@ -68,6 +68,11 @@ def _normalize_issue(
 def _build_issue_ledger(state: NovelState, reports: list[dict], *, chapter_no: int | None) -> dict:
     previous_ledger = state.get("issue_ledger") or {}
     previous_issues = previous_ledger.get("issues") or []
+    previous_by_id = {
+        str(item.get("issue_id", "")).strip(): item
+        for item in previous_issues
+        if str(item.get("issue_id", "")).strip() and item.get("status") in {"open", "recurring"}
+    }
     previous_open = {
         _issue_fingerprint(
             str(item.get("reviewer", "unknown")),
@@ -86,10 +91,19 @@ def _build_issue_ledger(state: NovelState, reports: list[dict], *, chapter_no: i
             issue_type = str(issue.get("type", "general")).strip() or "general"
             fix_instruction = str(issue.get("fix_instruction", "")).strip()
             evidence = str(issue.get("evidence", "")).strip()
+            related_issue_id = str(issue.get("related_issue_id", "")).strip()
             fingerprint = _issue_fingerprint(reviewer, issue_type, fix_instruction, evidence)
-            existing_issue = previous_open.get(fingerprint)
+            existing_issue = previous_by_id.get(related_issue_id) if related_issue_id else None
+            if existing_issue is None:
+                existing_issue = previous_open.get(fingerprint)
             if existing_issue:
-                matched_previous.add(fingerprint)
+                existing_fingerprint = _issue_fingerprint(
+                    str(existing_issue.get("reviewer", "unknown")),
+                    str(existing_issue.get("category", existing_issue.get("type", "general"))),
+                    str(existing_issue.get("fix_instruction", "")),
+                    str(existing_issue.get("evidence", "")),
+                )
+                matched_previous.add(existing_fingerprint)
             issues.append(_normalize_issue(reviewer, issue, chapter_no, existing_issue=existing_issue))
 
     resolved_issues = []

@@ -243,6 +243,77 @@ def test_chief_editor_marks_repeated_issue_as_recurring() -> None:
     assert result["issue_ledger"]["issues"][0]["attempts"] == 2
 
 
+def test_chief_editor_matches_recurring_issue_by_related_issue_id() -> None:
+    previous_issue = {
+        "issue_id": "iss_prev_exact",
+        "chapter_no": 1,
+        "reviewer": "continuity",
+        "severity": "major",
+        "category": "canon",
+        "evidence": "关键判断缺少执事异常反应。",
+        "fix_instruction": "补一个执事听到旧案后的失态细节。",
+        "status": "open",
+        "attempts": 1,
+    }
+    state = {
+        "issue_ledger": {
+            "chapter_no": 1,
+            "status": "needs_revision",
+            "open_count": 1,
+            "new_count": 1,
+            "recurring_count": 0,
+            "resolved_count": 0,
+            "issues": [previous_issue],
+        },
+        "review_reports": [
+            {
+                "reviewer": "continuity",
+                "decision": "rewrite",
+                "scores": {"continuity": 78, "pacing": 80, "style": 80, "hook": 79, "total": 79},
+                "hard_violations": [],
+                "issues": [
+                    {
+                        "severity": "major",
+                        "type": "canon",
+                        "evidence": "虽然补了描写，但执事异常反应仍不足以支撑主角判断。",
+                        "fix_instruction": "把执事失态动作再写得更可验证。",
+                        "related_issue_id": "iss_prev_exact",
+                    }
+                ],
+            },
+            {
+                "reviewer": "pacing",
+                "decision": "pass",
+                "scores": {"continuity": 84, "pacing": 88, "style": 81, "hook": 86, "total": 85},
+                "hard_violations": [],
+                "issues": [],
+            },
+            {
+                "reviewer": "style",
+                "decision": "pass",
+                "scores": {"continuity": 82, "pacing": 82, "style": 86, "hook": 82, "total": 83},
+                "hard_violations": [],
+                "issues": [],
+            },
+            {
+                "reviewer": "reader_sim",
+                "decision": "pass",
+                "scores": {"continuity": 82, "pacing": 84, "style": 80, "hook": 90, "total": 84},
+                "hard_violations": [],
+                "issues": [],
+            },
+        ],
+    }
+
+    result = chief_editor(state)
+
+    assert result["issue_ledger"]["open_count"] == 1
+    assert result["issue_ledger"]["recurring_count"] == 1
+    assert result["issue_ledger"]["issues"][0]["issue_id"] == "iss_prev_exact"
+    assert result["issue_ledger"]["issues"][0]["status"] == "recurring"
+    assert result["issue_ledger"]["issues"][0]["attempts"] == 2
+
+
 def test_chief_editor_routes_to_human_check_when_reviewer_requests_it() -> None:
     state = {
         "review_reports": [

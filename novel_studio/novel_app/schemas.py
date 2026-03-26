@@ -117,6 +117,7 @@ class ReviewIssue(StrictModel):
     type: str
     evidence: str
     fix_instruction: str
+    related_issue_id: str | None = None
 
 
 class ReviewScores(StrictModel):
