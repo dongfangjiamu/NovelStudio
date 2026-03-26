@@ -171,7 +171,7 @@ function deriveSummary(project, snapshot) {
       system: `系统正在后台执行，当前节点是 ${currentNode}；当前目标是：${stageGoal}`,
       event: `最近事件：${latestEvent}；最近更新时间：${updatedAt}；当前重写次数：${progress.rewrite_count ?? 0}。`,
       next: stale
-        ? `这条 Run 已经 ${formatDuration(staleMs)} 没有新进度。它更像是卡住，而不是一直重写。先点“刷新”确认；如果仍不动，就不要再等，按失败 Run 处理。`
+        ? `这条 Run 已经 ${formatDuration(staleMs)} 没有新进度。它更像是卡住，而不是一直重写。先点“刷新”确认；如果仍不动，就点“标记失败”，然后再“重新尝试”。`
         : `当前已经有 Run 在执行，不要重复点击“生成章节”。等待自动刷新，或点“查看工件”跟踪当前 Run。`,
       pill: stale ? `Run 可能卡住: ${focusRun.run_id}` : `Run 执行中: ${currentNode}`,
       kind: "warn",
@@ -283,6 +283,15 @@ function renderFocusRun(summary) {
   const causeBlock = possibleCause
     ? `<div class="focus-metric"><strong>可能原因</strong><div class="meta warning-copy">${possibleCause}</div></div>`
     : "";
+  const actionButtons = [
+    `<button class="button ghost" data-action="view-run" data-id="${run.run_id}">查看工件</button>`,
+  ];
+  if (run.status === "running") {
+    actionButtons.push(`<button class="button ghost" data-action="mark-failed" data-id="${run.run_id}">标记失败</button>`);
+  }
+  if (run.status === "failed") {
+    actionButtons.push(`<button class="button ghost" data-action="retry-run" data-id="${run.run_id}">重新尝试</button>`);
+  }
 
   el.focusRunCaption.textContent = `${run.run_id} · ${run.status}`;
   el.focusRun.innerHTML = `
@@ -337,12 +346,12 @@ function renderFocusRun(summary) {
       </div>
       <div class="meta">${logTail.length ? logTail.join(" -> ") : "暂无事件日志"}</div>
       <div class="actions">
-        <button class="button ghost" data-action="view-run" data-id="${run.run_id}">查看工件</button>
+        ${actionButtons.join("")}
       </div>
     </div>
   `;
-  el.focusRun.querySelectorAll("[data-action='view-run']").forEach((node) => {
-    node.addEventListener("click", () => loadArtifacts(node.dataset.id));
+  el.focusRun.querySelectorAll("[data-action]").forEach((node) => {
+    node.addEventListener("click", () => handleRunAction(node.dataset.action, node.dataset.id));
   });
 }
 
@@ -404,14 +413,16 @@ function renderRuns(runs, focusRunId) {
               <div class="meta">${marker}</div>
               <div class="actions">
                 <button class="button ghost" data-action="view-run" data-id="${item.run_id}">查看工件</button>
+                ${item.status === "running" ? `<button class="button ghost" data-action="mark-failed" data-id="${item.run_id}">标记失败</button>` : ""}
+                ${item.status === "failed" ? `<button class="button ghost" data-action="retry-run" data-id="${item.run_id}">重新尝试</button>` : ""}
               </div>
             </div>
           `;
         })
         .join("")
     : `<div class="empty">暂无 Run</div>`;
-  el.runsList.querySelectorAll("[data-action='view-run']").forEach((node) => {
-    node.addEventListener("click", () => loadArtifacts(node.dataset.id));
+  el.runsList.querySelectorAll("[data-action]").forEach((node) => {
+    node.addEventListener("click", () => handleRunAction(node.dataset.action, node.dataset.id));
   });
 }
 
@@ -507,6 +518,49 @@ async function loadArtifacts(runId) {
   const artifacts = await api(`/api/runs/${runId}/artifacts`);
   renderArtifacts(artifacts);
   renderProjectState();
+}
+
+async function handleRunAction(action, runId) {
+  if (action === "view-run") {
+    await loadArtifacts(runId);
+    return;
+  }
+
+  if (action === "mark-failed") {
+    if (!window.confirm(`确认把 ${runId} 标记为失败吗？这不会强杀上游请求，但会停止把它当成有效 Run。`)) {
+      return;
+    }
+    try {
+      await api(`/api/runs/${runId}/mark-failed`, { method: "POST" });
+      await selectProject(state.selectedProjectId);
+      await loadAudit();
+      if (state.selectedRunId === runId) {
+        await loadArtifacts(runId);
+      }
+      setStatus(`已将 ${runId} 标记为失败，可重新尝试。`, "warn");
+    } catch (error) {
+      setStatus(String(error.message || error), "error");
+    }
+    return;
+  }
+
+  if (action === "retry-run") {
+    try {
+      const payload = await api(`/api/runs/${runId}/retry`, { method: "POST" });
+      state.selectedRunId = payload.run_id;
+      await selectProject(state.selectedProjectId);
+      const completedRun = await waitForRunCompletion(payload.run_id);
+      await selectProject(state.selectedProjectId);
+      await loadAudit();
+      if (completedRun) {
+        setStatus(`重试 Run 已完成: ${payload.run_id}`);
+      } else {
+        setStatus(`重试 Run 仍在后台执行，可稍后刷新查看: ${payload.run_id}`, "warn");
+      }
+    } catch (error) {
+      setStatus(String(error.message || error), "error");
+    }
+  }
 }
 
 async function loadAudit() {

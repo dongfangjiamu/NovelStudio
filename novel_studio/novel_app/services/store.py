@@ -161,10 +161,13 @@ class InMemoryStore:
         status: str,
         result: dict[str, Any] | None,
         error: str | None,
+        only_if_status_in: set[str] | None = None,
     ) -> RunRecord | None:
         with self._lock:
             current = self._runs.get(run_id)
             if current is None:
+                return None
+            if only_if_status_in is not None and current.status not in only_if_status_in:
                 return None
             updated = RunRecord(
                 run_id=current.run_id,

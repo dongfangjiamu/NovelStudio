@@ -120,6 +120,26 @@ def create_app(
             )
         return artifacts
 
+    def build_manual_failure_result(run, *, reason: str, operator_id: str) -> dict[str, object]:
+        result = dict(run.result or {})
+        progress = dict(result.get("progress") or {})
+        event_log_tail = list(progress.get("event_log_tail") or [])
+        event_log_tail.append("manual_fail")
+        result["progress"] = {
+            **progress,
+            "latest_event": "manual_fail",
+            "event_log_tail": event_log_tail[-5:],
+            "updated_at": utc_now_iso(),
+            "possible_cause": reason,
+        }
+        result["manual_intervention"] = {
+            "action": "mark_failed",
+            "operator_id": operator_id,
+            "reason": reason,
+            "at": utc_now_iso(),
+        }
+        return result
+
     def initial_progress_snapshot(*, current_node: str) -> dict[str, object]:
         return {
             "progress": {
@@ -200,6 +220,7 @@ def create_app(
             status=run_status,
             result=result,
             error=None,
+            only_if_status_in={"running"},
         )
         if not updated_run:
             return
@@ -222,6 +243,7 @@ def create_app(
             status="failed",
             result=None,
             error=str(error),
+            only_if_status_in={"running"},
         )
 
     def launch_background_run(*, run_id: str, work) -> None:
@@ -231,6 +253,7 @@ def create_app(
                 status="running",
                 result=build_progress_snapshot(state=state, current_node=current_node),
                 error=None,
+                only_if_status_in={"running"},
             )
 
         def runner() -> None:
@@ -392,6 +415,82 @@ def create_app(
                 "operator_id": run.request["operator_id"],
                 "status": run.status,
             },
+        )
+        return RunResponse.model_validate(run.__dict__)
+
+    @app.post("/api/runs/{run_id}/mark-failed", response_model=RunResponse)
+    async def mark_run_failed(run_id: str, request: Request, response: Response) -> RunResponse:
+        run = app.state.store.get_run(run_id)
+        if not run:
+            raise HTTPException(status_code=404, detail="run_not_found")
+        if run.status != "running":
+            raise HTTPException(status_code=409, detail="run_not_running")
+
+        reason = "人工标记失败；建议忽略该 Run 并重新尝试。"
+        updated_run = app.state.store.update_run(
+            run_id=run_id,
+            status="failed",
+            result=build_manual_failure_result(run, reason=reason, operator_id=request.state.actor),
+            error=reason,
+        )
+        if not updated_run:
+            raise HTTPException(status_code=409, detail="run_state_changed")
+
+        audit(
+            request=request,
+            response=response,
+            status_code=200,
+            action="run.mark_failed",
+            resource_type="run",
+            resource_id=run_id,
+            project_id=run.project_id,
+            run_id=run_id,
+            approval_id=None,
+            payload={"reason": reason},
+        )
+        return RunResponse.model_validate(enrich_run_payload(updated_run))
+
+    @app.post("/api/runs/{run_id}/retry", response_model=RunResponse, status_code=201)
+    async def retry_run(run_id: str, request: Request, response: Response) -> RunResponse:
+        previous_run = app.state.store.get_run(run_id)
+        if not previous_run:
+            raise HTTPException(status_code=404, detail="run_not_found")
+        if previous_run.status == "running":
+            raise HTTPException(status_code=409, detail="run_still_running")
+
+        project = app.state.store.get_project(previous_run.project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="project_not_found")
+
+        request_payload = dict(previous_run.request)
+        request_payload["operator_id"] = request.state.actor
+        run = app.state.store.save_run(
+            project_id=project.project_id,
+            status="running",
+            request=request_payload,
+            result=initial_progress_snapshot(current_node="interviewer_contract"),
+            error=None,
+        )
+        launch_background_run(
+            run_id=run.run_id,
+            work=lambda on_update: app.state.workflow.run_project(
+                project=project,
+                request_payload=request_payload,
+                on_update=on_update,
+            ),
+        )
+
+        audit(
+            request=request,
+            response=response,
+            status_code=201,
+            action="run.retry",
+            resource_type="run",
+            resource_id=run.run_id,
+            project_id=project.project_id,
+            run_id=run.run_id,
+            approval_id=None,
+            payload={"source_run_id": previous_run.run_id},
         )
         return RunResponse.model_validate(run.__dict__)
 

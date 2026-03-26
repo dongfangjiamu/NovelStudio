@@ -297,3 +297,136 @@ def test_running_run_exposes_live_artifacts() -> None:
     release_run.set()
     completed_run = wait_for_run(client, run["run_id"])
     assert completed_run["status"] == "completed"
+
+
+def test_mark_failed_prevents_late_background_overwrite() -> None:
+    app = create_app(
+        config=AppConfig(
+            stub_mode=True,
+            openai_api_key=None,
+            admin_token=None,
+            database_url="sqlite:///:memory:",
+            model_name="gpt-5-nano",
+            project_id="api-test",
+            operator_id="tester",
+        ),
+        store=InMemoryStore(),
+    )
+    release_run = Event()
+
+    class FakeWorkflow:
+        def prepare_project_request(self, *, project, user_brief, target_chapters, operator_id):
+            return {
+                "user_brief": user_brief or project.default_user_brief,
+                "target_chapters": target_chapters or project.default_target_chapters,
+                "operator_id": operator_id or "tester",
+            }
+
+        def run_project(self, *, project, request_payload, on_update=None):
+            state = {
+                "creative_contract": {"working_title": "测试标题"},
+                "current_card": {"chapter_no": 1, "purpose": "测试章卡"},
+                "event_log": ["creative_contract_ready"],
+                "rewrite_count": 0,
+            }
+            if on_update is not None:
+                on_update("chapter_planner", state)
+            release_run.wait(timeout=2)
+            return {
+                **state,
+                "publish_package": {"chapter_no": 1, "title": "第1章", "full_text": "正文"},
+            }
+
+    app.state.workflow = FakeWorkflow()
+    client = TestClient(app)
+
+    project = client.post(
+        "/api/projects",
+        json={"name": "手动失败测试", "default_user_brief": {"title": "测试"}, "default_target_chapters": 1},
+    ).json()
+    run = client.post(f"/api/projects/{project['project_id']}/runs", json={}).json()
+
+    deadline = time.time() + 2
+    while time.time() < deadline:
+        current = client.get(f"/api/runs/{run['run_id']}").json()
+        if current["result"] and current["result"].get("progress", {}).get("latest_event"):
+            break
+        time.sleep(0.02)
+
+    mark_failed = client.post(f"/api/runs/{run['run_id']}/mark-failed")
+    assert mark_failed.status_code == 200
+    assert mark_failed.json()["status"] == "failed"
+    assert "人工标记失败" in mark_failed.json()["error"]
+
+    release_run.set()
+    time.sleep(0.1)
+
+    still_failed = client.get(f"/api/runs/{run['run_id']}").json()
+    assert still_failed["status"] == "failed"
+    assert "manual_fail" == still_failed["result"]["progress"]["latest_event"]
+
+
+def test_retry_failed_run_creates_new_background_run() -> None:
+    app = create_app(
+        config=AppConfig(
+            stub_mode=True,
+            openai_api_key=None,
+            admin_token=None,
+            database_url="sqlite:///:memory:",
+            model_name="gpt-5-nano",
+            project_id="api-test",
+            operator_id="tester",
+        ),
+        store=InMemoryStore(),
+    )
+
+    class FakeWorkflow:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def prepare_project_request(self, *, project, user_brief, target_chapters, operator_id):
+            return {
+                "user_brief": user_brief or project.default_user_brief,
+                "target_chapters": target_chapters or project.default_target_chapters,
+                "operator_id": operator_id or "tester",
+            }
+
+        def run_project(self, *, project, request_payload, on_update=None):
+            self.calls += 1
+            if self.calls == 1:
+                raise ValueError("boom")
+            return {
+                "creative_contract": {"working_title": request_payload["user_brief"]["title"]},
+                "current_card": {"chapter_no": 1, "purpose": "retry"},
+                "publish_package": {"chapter_no": 1, "title": "第1章", "full_text": "正文"},
+                "feedback_summary": {"chapter_no": 1},
+                "event_log": ["retry_success"],
+            }
+
+    app.state.workflow = FakeWorkflow()
+    client = TestClient(app)
+
+    project = client.post(
+        "/api/projects",
+        json={"name": "重试测试", "default_user_brief": {"title": "重试标题"}, "default_target_chapters": 1},
+    ).json()
+
+    initial_run = client.post(
+        f"/api/projects/{project['project_id']}/runs",
+        json={"operator_id": "starter"},
+    ).json()
+    failed_run = wait_for_run(client, initial_run["run_id"])
+    assert failed_run["status"] == "failed"
+
+    retry_response = client.post(
+        f"/api/runs/{initial_run['run_id']}/retry",
+        headers={"x-operator-id": "retrier"},
+    )
+    assert retry_response.status_code == 201
+    retry_run = retry_response.json()
+    assert retry_run["run_id"] != initial_run["run_id"]
+    assert retry_run["request"]["user_brief"]["title"] == "重试标题"
+    assert retry_run["request"]["operator_id"] == "retrier"
+
+    completed_retry = wait_for_run(client, retry_run["run_id"])
+    assert completed_retry["status"] == "completed"

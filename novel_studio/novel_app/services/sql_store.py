@@ -192,10 +192,13 @@ class SqlAlchemyStore:
         status: str,
         result: dict | None,
         error: str | None,
+        only_if_status_in: set[str] | None = None,
     ) -> RunRecord | None:
         with session_scope(self.session_factory) as session:
             row = session.get(RunModel, run_id)
             if row is None:
+                return None
+            if only_if_status_in is not None and row.status not in only_if_status_in:
                 return None
             row.status = status
             row.result = result
