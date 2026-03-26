@@ -62,6 +62,9 @@ def _build_chapter_lesson(state: NovelState, chapter_no: int) -> dict[str, Any]:
     issue_ledger = state.get("issue_ledger") or {}
     issues = list(issue_ledger.get("issues") or []) or _review_issues(state)
     rewrite_count = int(state.get("rewrite_count", 0) or 0)
+    resolved_issue_count = int(issue_ledger.get("resolved_count", 0) or 0)
+    recurring_issue_count = int(issue_ledger.get("recurring_count", 0) or 0)
+    new_issue_count = int(issue_ledger.get("new_count", 0) or 0)
     fix_rules = _dedupe_preserve_order([issue.get("fix_instruction", "") for issue in issues if issue.get("fix_instruction")])
     fail_reasons = _dedupe_preserve_order([issue.get("evidence", "") for issue in issues if issue.get("evidence")])
     pass_reasons = []
@@ -73,6 +76,8 @@ def _build_chapter_lesson(state: NovelState, chapter_no: int) -> dict[str, Any]:
         pass_reasons.append("章末驱动已经明确落地，保留了继续阅读的牵引。")
     if current_card.get("purpose"):
         pass_reasons.append(f"本章核心目的已经实现：{current_card['purpose']}")
+    if resolved_issue_count:
+        pass_reasons.append(f"本轮关闭了 {resolved_issue_count} 个旧问题，修稿方向是有效的。")
 
     discarded_patterns = []
     for issue in issues:
@@ -99,6 +104,10 @@ def _build_chapter_lesson(state: NovelState, chapter_no: int) -> dict[str, Any]:
         "rewrite_count": rewrite_count,
         "issue_ledger_status": issue_ledger.get("status", "cleared"),
         "open_issue_count": int(issue_ledger.get("open_count", 0) or 0),
+        "resolved_issue_count": resolved_issue_count,
+        "recurring_issue_count": recurring_issue_count,
+        "new_issue_count": new_issue_count,
+        "issue_progress_summary": issue_ledger.get("progress_summary", ""),
         "pass_reasons": _dedupe_preserve_order(pass_reasons),
         "fail_reasons": fail_reasons,
         "carry_forward_rules": carry_forward_rules,

@@ -103,6 +103,144 @@ def test_chief_editor_passes_when_no_major_issues_exist() -> None:
     assert result["phase_decision"]["next_owner"] == "release_prepare"
     assert result["issue_ledger"]["status"] == "cleared"
     assert result["issue_ledger"]["open_count"] == 0
+    assert result["issue_ledger"]["resolved_count"] == 0
+
+
+def test_chief_editor_marks_previous_open_issues_as_resolved() -> None:
+    previous_issue = {
+        "issue_id": "iss_old_1",
+        "chapter_no": 1,
+        "reviewer": "pacing",
+        "severity": "major",
+        "category": "pacing",
+        "evidence": "主角主动试探来得偏晚。",
+        "fix_instruction": "让主角更早做出一次带风险的小试探。",
+        "status": "open",
+        "attempts": 1,
+    }
+    state = {
+        "issue_ledger": {
+            "chapter_no": 1,
+            "status": "needs_revision",
+            "open_count": 1,
+            "new_count": 1,
+            "recurring_count": 0,
+            "resolved_count": 0,
+            "issues": [previous_issue],
+        },
+        "review_reports": [
+            {
+                "reviewer": "continuity",
+                "decision": "pass",
+                "scores": {"continuity": 90, "pacing": 84, "style": 82, "hook": 84, "total": 85},
+                "hard_violations": [],
+                "issues": [],
+            },
+            {
+                "reviewer": "pacing",
+                "decision": "pass",
+                "scores": {"continuity": 84, "pacing": 88, "style": 81, "hook": 86, "total": 85},
+                "hard_violations": [],
+                "issues": [],
+            },
+            {
+                "reviewer": "style",
+                "decision": "pass",
+                "scores": {"continuity": 82, "pacing": 82, "style": 86, "hook": 82, "total": 83},
+                "hard_violations": [],
+                "issues": [],
+            },
+            {
+                "reviewer": "reader_sim",
+                "decision": "pass",
+                "scores": {"continuity": 82, "pacing": 84, "style": 80, "hook": 90, "total": 84},
+                "hard_violations": [],
+                "issues": [],
+            },
+        ],
+    }
+
+    result = chief_editor(state)
+
+    assert result["phase_decision"]["final_decision"] == "pass"
+    assert result["issue_ledger"]["status"] == "cleared"
+    assert result["issue_ledger"]["open_count"] == 0
+    assert result["issue_ledger"]["resolved_count"] == 1
+    assert result["issue_ledger"]["issues"][0]["issue_id"] == "iss_old_1"
+    assert result["issue_ledger"]["issues"][0]["status"] == "resolved"
+
+
+def test_chief_editor_marks_repeated_issue_as_recurring() -> None:
+    previous_issue = {
+        "issue_id": "iss_old_1",
+        "chapter_no": 1,
+        "reviewer": "pacing",
+        "severity": "major",
+        "category": "pacing",
+        "evidence": "主角主动试探来得偏晚。",
+        "fix_instruction": "让主角更早做出一次带风险的小试探。",
+        "status": "open",
+        "attempts": 1,
+    }
+    state = {
+        "issue_ledger": {
+            "chapter_no": 1,
+            "status": "needs_revision",
+            "open_count": 1,
+            "new_count": 1,
+            "recurring_count": 0,
+            "resolved_count": 0,
+            "issues": [previous_issue],
+        },
+        "review_reports": [
+            {
+                "reviewer": "continuity",
+                "decision": "pass",
+                "scores": {"continuity": 90, "pacing": 84, "style": 82, "hook": 84, "total": 85},
+                "hard_violations": [],
+                "issues": [],
+            },
+            {
+                "reviewer": "pacing",
+                "decision": "rewrite",
+                "scores": {"continuity": 84, "pacing": 76, "style": 81, "hook": 80, "total": 78},
+                "hard_violations": [],
+                "issues": [
+                    {
+                        "severity": "major",
+                        "type": "pacing",
+                        "evidence": "主角主动试探来得偏晚。",
+                        "fix_instruction": "让主角更早做出一次带风险的小试探。",
+                    }
+                ],
+            },
+            {
+                "reviewer": "style",
+                "decision": "pass",
+                "scores": {"continuity": 82, "pacing": 82, "style": 86, "hook": 82, "total": 83},
+                "hard_violations": [],
+                "issues": [],
+            },
+            {
+                "reviewer": "reader_sim",
+                "decision": "pass",
+                "scores": {"continuity": 82, "pacing": 84, "style": 80, "hook": 90, "total": 84},
+                "hard_violations": [],
+                "issues": [],
+            },
+        ],
+    }
+
+    result = chief_editor(state)
+
+    assert result["phase_decision"]["final_decision"] == "rewrite"
+    assert result["issue_ledger"]["open_count"] == 1
+    assert result["issue_ledger"]["recurring_count"] == 1
+    assert result["issue_ledger"]["new_count"] == 0
+    assert result["issue_ledger"]["resolved_count"] == 0
+    assert result["issue_ledger"]["issues"][0]["issue_id"] == "iss_old_1"
+    assert result["issue_ledger"]["issues"][0]["status"] == "recurring"
+    assert result["issue_ledger"]["issues"][0]["attempts"] == 2
 
 
 def test_chief_editor_routes_to_human_check_when_reviewer_requests_it() -> None:

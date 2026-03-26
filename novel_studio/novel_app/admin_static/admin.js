@@ -409,9 +409,10 @@ function summarizeArtifact(item) {
     return {
       lead: `第 ${payload.chapter_no || "?"} 章经验卡 · 重写 ${payload.rewrite_count ?? 0} 次`,
       bullets: [
+        payload.issue_progress_summary ? `账本进展：${payload.issue_progress_summary}` : null,
         ...(payload.pass_reasons || []).slice(0, 2).map((entry) => `通过原因：${entry}`),
         ...(payload.carry_forward_rules || []).slice(0, 3).map((entry) => `延续规则：${entry}`),
-      ],
+      ].filter(Boolean),
       excerpt: (payload.discarded_patterns || []).slice(0, 3).join("\n"),
     };
   }
@@ -429,12 +430,20 @@ function summarizeArtifact(item) {
     const issues = payload.issues || [];
     return {
       lead: `问题账本 · ${payload.status || "unknown"} · 未关闭 ${payload.open_count ?? issues.length} 项`,
-      bullets: issues.slice(0, 4).map((issue) => {
-        const reviewer = issue.reviewer || "unknown";
-        const severity = issue.severity || "minor";
-        return `${reviewer} / ${severity}：${issue.fix_instruction || issue.evidence || issue.issue_id}`;
-      }),
-      excerpt: issues.slice(0, 3).map((issue) => `${issue.category || "general"}：${issue.evidence || ""}`).join("\n"),
+      bullets: [
+        payload.progress_summary
+          || `已解决 ${payload.resolved_count ?? 0} 项，复发 ${payload.recurring_count ?? 0} 项，新增 ${payload.new_count ?? 0} 项。`,
+        ...issues.slice(0, 4).map((issue) => {
+          const reviewer = issue.reviewer || "unknown";
+          const severity = issue.severity || "minor";
+          const status = issue.status || "open";
+          return `${status} / ${reviewer} / ${severity}：${issue.fix_instruction || issue.evidence || issue.issue_id}`;
+        }),
+      ].filter(Boolean),
+      excerpt: issues
+        .slice(0, 3)
+        .map((issue) => `${issue.category || "general"} / ${issue.status || "open"}：${issue.evidence || ""}`)
+        .join("\n"),
     };
   }
   if (item.artifact_type === "canon_state") {

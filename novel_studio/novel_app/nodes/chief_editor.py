@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from hashlib import sha1
+import re
 from typing import Any
 
 from novel_app.schemas import PhaseDecision
@@ -15,12 +16,42 @@ def _latest_reports(state: NovelState) -> list[dict]:
     return list(latest.values())
 
 
-def _normalize_issue(reviewer: str, issue: dict, chapter_no: int | None) -> dict:
+def _normalize_text(value: str) -> str:
+    return re.sub(r"\s+", " ", value.strip().lower())
+
+
+def _issue_fingerprint(reviewer: str, issue_type: str, fix_instruction: str, evidence: str) -> str:
+    return "|".join(
+        [
+            _normalize_text(reviewer),
+            _normalize_text(issue_type),
+            _normalize_text(fix_instruction),
+            _normalize_text(evidence),
+        ]
+    )
+
+
+def _issue_id(chapter_no: int | None, reviewer: str, issue_type: str, fix_instruction: str, evidence: str) -> str:
+    raw_key = "|".join([str(chapter_no or 0), reviewer, issue_type, fix_instruction or evidence])
+    return f"iss_{sha1(raw_key.encode('utf-8')).hexdigest()[:10]}"
+
+
+def _normalize_issue(
+    reviewer: str,
+    issue: dict,
+    chapter_no: int | None,
+    *,
+    existing_issue: dict | None = None,
+) -> dict:
     issue_type = str(issue.get("type", "general")).strip() or "general"
     fix_instruction = str(issue.get("fix_instruction", "")).strip()
     evidence = str(issue.get("evidence", "")).strip()
-    raw_key = "|".join([str(chapter_no or 0), reviewer, issue_type, fix_instruction or evidence])
-    issue_id = f"iss_{sha1(raw_key.encode('utf-8')).hexdigest()[:10]}"
+    issue_id = (
+        str(existing_issue.get("issue_id", "")).strip()
+        if existing_issue
+        else _issue_id(chapter_no, reviewer, issue_type, fix_instruction, evidence)
+    ) or _issue_id(chapter_no, reviewer, issue_type, fix_instruction, evidence)
+    attempts = int((existing_issue or {}).get("attempts", 0) or 0) + 1
     return {
         "issue_id": issue_id,
         "chapter_no": chapter_no,
@@ -29,24 +60,64 @@ def _normalize_issue(reviewer: str, issue: dict, chapter_no: int | None) -> dict
         "category": issue_type,
         "evidence": evidence,
         "fix_instruction": fix_instruction,
-        "status": "open",
+        "status": "recurring" if existing_issue else "open",
+        "attempts": attempts,
     }
 
 
 def _build_issue_ledger(state: NovelState, reports: list[dict], *, chapter_no: int | None) -> dict:
+    previous_ledger = state.get("issue_ledger") or {}
+    previous_issues = previous_ledger.get("issues") or []
+    previous_open = {
+        _issue_fingerprint(
+            str(item.get("reviewer", "unknown")),
+            str(item.get("category", item.get("type", "general"))),
+            str(item.get("fix_instruction", "")),
+            str(item.get("evidence", "")),
+        ): item
+        for item in previous_issues
+        if item.get("status") in {"open", "recurring"}
+    }
+    matched_previous: set[str] = set()
     issues = []
     for report in reports:
         reviewer = report.get("reviewer", "unknown")
         for issue in report.get("issues", []):
-            issues.append(_normalize_issue(reviewer, issue, chapter_no))
+            issue_type = str(issue.get("type", "general")).strip() or "general"
+            fix_instruction = str(issue.get("fix_instruction", "")).strip()
+            evidence = str(issue.get("evidence", "")).strip()
+            fingerprint = _issue_fingerprint(reviewer, issue_type, fix_instruction, evidence)
+            existing_issue = previous_open.get(fingerprint)
+            if existing_issue:
+                matched_previous.add(fingerprint)
+            issues.append(_normalize_issue(reviewer, issue, chapter_no, existing_issue=existing_issue))
 
-    open_issues = [item for item in issues if item["status"] == "open"]
+    resolved_issues = []
+    for fingerprint, issue in previous_open.items():
+        if fingerprint in matched_previous:
+            continue
+        resolved_issues.append(
+            {
+                **issue,
+                "status": "resolved",
+                "resolved_in_chapter": chapter_no,
+            }
+        )
+
+    all_issues = issues + resolved_issues
+    open_issues = [item for item in all_issues if item["status"] in {"open", "recurring"}]
+    recurring_issues = [item for item in all_issues if item["status"] == "recurring"]
+    new_issues = [item for item in all_issues if item["status"] == "open"]
+    resolved_count = len(resolved_issues)
     return {
         "chapter_no": chapter_no,
         "status": "needs_revision" if open_issues else "cleared",
         "open_count": len(open_issues),
-        "resolved_count": 0,
-        "issues": issues,
+        "new_count": len(new_issues),
+        "recurring_count": len(recurring_issues),
+        "resolved_count": resolved_count,
+        "progress_summary": f"已解决 {resolved_count} 项，复发 {len(recurring_issues)} 项，新增 {len(new_issues)} 项。",
+        "issues": all_issues,
     }
 
 
@@ -68,7 +139,10 @@ def chief_editor(state: NovelState, runtime: Any = None) -> dict:
                 "chapter_no": chapter_no,
                 "status": "needs_human_review",
                 "open_count": 1,
+                "new_count": 1,
+                "recurring_count": 0,
                 "resolved_count": 0,
+                "progress_summary": "审校报告不完整，需人工确认。",
                 "issues": [
                     {
                         "issue_id": "iss_missing_reports",
@@ -79,6 +153,7 @@ def chief_editor(state: NovelState, runtime: Any = None) -> dict:
                         "evidence": "审校报告数量不足，无法可靠汇总。",
                         "fix_instruction": "补齐缺失审校报告或转人工确认。",
                         "status": "open",
+                        "attempts": 1,
                     }
                 ],
             },
@@ -99,7 +174,10 @@ def chief_editor(state: NovelState, runtime: Any = None) -> dict:
                 "chapter_no": chapter_no,
                 "status": "needs_human_review",
                 "open_count": len(human_review_requests),
+                "new_count": len(human_review_requests),
+                "recurring_count": 0,
                 "resolved_count": 0,
+                "progress_summary": "审校要求人工确认，自动修订暂不继续。",
                 "issues": [
                     {
                         "issue_id": f"iss_human_{reviewer}",
@@ -110,6 +188,7 @@ def chief_editor(state: NovelState, runtime: Any = None) -> dict:
                         "evidence": f"{reviewer} 审校要求人工确认。",
                         "fix_instruction": "由人工确认后决定继续、重写或重规划。",
                         "status": "open",
+                        "attempts": 1,
                     }
                     for reviewer in human_review_requests
                 ],
@@ -132,7 +211,10 @@ def chief_editor(state: NovelState, runtime: Any = None) -> dict:
                 "chapter_no": chapter_no,
                 "status": "needs_replan",
                 "open_count": len(hard_violations),
+                "new_count": len(hard_violations),
+                "recurring_count": 0,
                 "resolved_count": 0,
+                "progress_summary": "存在硬违规，必须回到章卡层重规划。",
                 "issues": [
                     {
                         "issue_id": f"iss_hard_{index + 1}",
@@ -143,6 +225,7 @@ def chief_editor(state: NovelState, runtime: Any = None) -> dict:
                         "evidence": violation,
                         "fix_instruction": violation,
                         "status": "open",
+                        "attempts": 1,
                     }
                     for index, violation in enumerate(hard_violations)
                 ],

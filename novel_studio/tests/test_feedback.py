@@ -45,6 +45,10 @@ def test_feedback_ingest_generates_chapter_lesson_and_writer_playbook() -> None:
                 "chapter_no": 1,
                 "status": "needs_revision",
                 "open_count": 2,
+                "new_count": 1,
+                "recurring_count": 1,
+                "resolved_count": 0,
+                "progress_summary": "已解决 0 项，复发 1 项，新增 1 项。",
                 "issues": [
                     {
                         "issue_id": "iss_1",
@@ -73,6 +77,9 @@ def test_feedback_ingest_generates_chapter_lesson_and_writer_playbook() -> None:
     assert lesson["rewrite_count"] == 1
     assert lesson["issue_ledger_status"] == "needs_revision"
     assert lesson["open_issue_count"] == 2
+    assert lesson["new_issue_count"] == 1
+    assert lesson["recurring_issue_count"] == 1
+    assert lesson["issue_progress_summary"] == "已解决 0 项，复发 1 项，新增 1 项。"
     assert any("带风险的小试探" in item for item in lesson["carry_forward_rules"])
     assert any("升级风险" in item for item in lesson["discarded_patterns"])
 
