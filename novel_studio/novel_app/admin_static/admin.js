@@ -143,6 +143,8 @@ function deriveSummary(project, snapshot) {
   const latestChapter = latestChapterNo(chapters);
   const progress = focusRun?.result?.progress || {};
   const updatedAt = progress.updated_at ? formatTimestamp(progress.updated_at) : "未记录";
+  const stageGoal = progress.stage_goal || "等待下一步目标。";
+  const possibleCause = progress.possible_cause || null;
 
   if (!project) {
     return {
@@ -166,7 +168,7 @@ function deriveSummary(project, snapshot) {
     const stale = staleMs > 180000;
     return {
       goal: `完成第 ${targetChapter} 章的生成。`,
-      system: `系统正在后台执行，当前节点是 ${currentNode}。`,
+      system: `系统正在后台执行，当前节点是 ${currentNode}；当前目标是：${stageGoal}`,
       event: `最近事件：${latestEvent}；最近更新时间：${updatedAt}；当前重写次数：${progress.rewrite_count ?? 0}。`,
       next: stale
         ? `这条 Run 已经 ${formatDuration(staleMs)} 没有新进度。它更像是卡住，而不是一直重写。先点“刷新”确认；如果仍不动，就不要再等，按失败 Run 处理。`
@@ -273,8 +275,13 @@ function renderFocusRun(summary) {
   const staleMs = updatedAt ? Date.now() - new Date(updatedAt).getTime() : 0;
   const staleLabel = staleMs > 0 ? formatDuration(staleMs) : "未记录";
   const currentNode = progress.current_node || "未记录";
+  const stageGoal = progress.stage_goal || "未记录";
+  const possibleCause = progress.possible_cause;
   const errorBlock = run.error
     ? `<div class="focus-metric"><strong class="error-copy">错误</strong><div class="meta">${run.error}</div></div>`
+    : "";
+  const causeBlock = possibleCause
+    ? `<div class="focus-metric"><strong>可能原因</strong><div class="meta warning-copy">${possibleCause}</div></div>`
     : "";
 
   el.focusRunCaption.textContent = `${run.run_id} · ${run.status}`;
@@ -316,6 +323,11 @@ function renderFocusRun(summary) {
         <strong>阶段决策</strong>
         <div class="meta">${progress.phase_decision || "未记录"}</div>
       </div>
+      <div class="focus-metric">
+        <strong>当前目标</strong>
+        <div class="meta">${stageGoal}</div>
+      </div>
+      ${causeBlock}
       ${errorBlock}
     </div>
     <div class="card">
@@ -509,6 +521,9 @@ async function waitForRunCompletion(runId, timeoutMs = 480000) {
     if (run.project_id === state.selectedProjectId) {
       upsertRunSnapshot(run);
       renderProjectState();
+      if (state.selectedRunId === runId) {
+        await loadArtifacts(runId);
+      }
     }
     if (run.status !== "running") {
       return run;

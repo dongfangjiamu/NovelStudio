@@ -30,6 +30,23 @@ from novel_app.services.workflow import WorkflowService
 from novel_app.services.store import utc_now_iso
 
 
+LIVE_ARTIFACT_TYPES = [
+    "creative_contract",
+    "story_bible",
+    "arc_plan",
+    "current_card",
+    "current_draft",
+    "phase_decision",
+    "publish_package",
+    "canon_state",
+    "feedback_summary",
+    "latest_review_reports",
+    "human_guidance",
+    "blockers",
+    "event_log",
+]
+
+
 def run_requires_human_approval(result: dict[str, object]) -> bool:
     phase_decision = result.get("phase_decision") or {}
     blockers = result.get("blockers") or []
@@ -58,6 +75,51 @@ def create_app(
     app.state.workflow = WorkflowService(app.state.config)
     app.mount("/admin-static", StaticFiles(directory=static_dir), name="admin-static")
 
+    def infer_stage_goal(*, current_node: str | None, phase_decision: str | None, chapter_no: int | None) -> str:
+        if phase_decision == "replan":
+            return f"重新规划第 {chapter_no or 1} 章章卡。"
+        mapping = {
+            "interviewer_contract": "整理创作约束与小说契约。",
+            "lore_builder": "生成故事设定与世界观骨架。",
+            "arc_planner": "规划主线卷纲与阶段目标。",
+            "chapter_planner": f"生成第 {chapter_no or 1} 章章卡。",
+            "draft_writer": f"撰写第 {chapter_no or 1} 章初稿。",
+            "patch_writer": f"修补第 {chapter_no or 1} 章稿件。",
+            "continuity_reviewer": "检查连续性与设定一致性。",
+            "pacing_reviewer": "检查节奏与推进速度。",
+            "style_reviewer": "检查文风和可读性。",
+            "reader_simulator": "模拟读者感受与追读欲望。",
+            "chief_editor": "汇总审校意见并决定下一步。",
+            "release_prepare": "整理发布包与对外可读内容。",
+            "canon_commit": "回写 Canon 与连载状态。",
+            "feedback_ingest": "落库反馈与章节完成状态。",
+            "human_gate": "等待人工处理。",
+        }
+        return mapping.get(current_node, "等待下一步节点执行。")
+
+    def infer_possible_cause(*, current_node: str | None, phase_decision: str | None) -> str | None:
+        if current_node in {"chapter_planner", "draft_writer", "patch_writer"}:
+            return "当前节点依赖外部模型生成，长时间无更新通常意味着上游请求过慢或挂起。"
+        if current_node in {"continuity_reviewer", "pacing_reviewer", "style_reviewer", "reader_simulator"}:
+            return "当前节点依赖外部模型审校，长时间无更新通常意味着审校请求没有返回。"
+        if current_node == "chief_editor" and phase_decision == "replan":
+            return "系统已判定需要重规划；如果后续长时间无更新，通常是重新生成章卡的模型调用挂住。"
+        return None
+
+    def build_live_artifacts(state: dict[str, object]) -> list[dict[str, object]]:
+        artifacts: list[dict[str, object]] = []
+        for artifact_type in LIVE_ARTIFACT_TYPES:
+            payload = state.get(artifact_type)
+            if payload is None:
+                continue
+            artifacts.append(
+                {
+                    "artifact_type": artifact_type,
+                    "payload": payload,
+                }
+            )
+        return artifacts
+
     def initial_progress_snapshot(*, current_node: str) -> dict[str, object]:
         return {
             "progress": {
@@ -68,6 +130,8 @@ def create_app(
                 "rewrite_count": 0,
                 "phase_decision": None,
                 "updated_at": utc_now_iso(),
+                "stage_goal": infer_stage_goal(current_node=current_node, phase_decision=None, chapter_no=None),
+                "possible_cause": None,
             }
         }
 
@@ -77,6 +141,7 @@ def create_app(
         publish_package = state.get("publish_package") or {}
         phase_decision = state.get("phase_decision") or {}
         chapter_no = publish_package.get("chapter_no") or current_card.get("chapter_no")
+        final_decision = phase_decision.get("final_decision")
         return {
             "progress": {
                 "current_node": current_node,
@@ -84,10 +149,46 @@ def create_app(
                 "event_log_tail": event_log[-5:],
                 "chapter_no": chapter_no,
                 "rewrite_count": state.get("rewrite_count", 0),
-                "phase_decision": phase_decision.get("final_decision"),
+                "phase_decision": final_decision,
                 "updated_at": utc_now_iso(),
-            }
+                "stage_goal": infer_stage_goal(
+                    current_node=current_node,
+                    phase_decision=final_decision,
+                    chapter_no=chapter_no,
+                ),
+                "possible_cause": infer_possible_cause(
+                    current_node=current_node,
+                    phase_decision=final_decision,
+                ),
+            },
+            "live_artifacts": build_live_artifacts(state),
         }
+
+    def enrich_run_payload(run) -> dict[str, object]:
+        payload = dict(run.__dict__)
+        result = dict(payload.get("result") or {})
+        progress = dict(result.get("progress") or {})
+        if progress:
+            chapter_no = progress.get("chapter_no")
+            phase_decision = progress.get("phase_decision")
+            progress.setdefault(
+                "stage_goal",
+                infer_stage_goal(
+                    current_node=progress.get("current_node"),
+                    phase_decision=phase_decision,
+                    chapter_no=chapter_no,
+                ),
+            )
+            progress.setdefault(
+                "possible_cause",
+                infer_possible_cause(
+                    current_node=progress.get("current_node"),
+                    phase_decision=phase_decision,
+                ),
+            )
+            result["progress"] = progress
+            payload["result"] = result
+        return payload
 
     def finalize_run_success(*, run_id: str, result: dict[str, object]) -> None:
         existing_run = app.state.store.get_run(run_id)
@@ -299,14 +400,14 @@ def create_app(
         run = app.state.store.get_run(run_id)
         if not run:
             raise HTTPException(status_code=404, detail="run_not_found")
-        return RunResponse.model_validate(run.__dict__)
+        return RunResponse.model_validate(enrich_run_payload(run))
 
     @app.get("/api/projects/{project_id}/runs", response_model=list[RunResponse])
     async def list_runs(project_id: str) -> list[RunResponse]:
         project = app.state.store.get_project(project_id)
         if not project:
             raise HTTPException(status_code=404, detail="project_not_found")
-        return [RunResponse.model_validate(item.__dict__) for item in app.state.store.list_runs(project_id)]
+        return [RunResponse.model_validate(enrich_run_payload(item)) for item in app.state.store.list_runs(project_id)]
 
     @app.get("/api/projects/{project_id}/chapters", response_model=list[ChapterResponse])
     async def list_chapters(project_id: str) -> list[ChapterResponse]:
@@ -320,7 +421,33 @@ def create_app(
         run = app.state.store.get_run(run_id)
         if not run:
             raise HTTPException(status_code=404, detail="run_not_found")
-        return [ArtifactResponse.model_validate(item.__dict__) for item in app.state.store.list_artifacts(run_id)]
+        stored = [ArtifactResponse.model_validate(item.__dict__) for item in app.state.store.list_artifacts(run_id)]
+        if run.status != "running":
+            return stored
+
+        live_artifacts = (run.result or {}).get("live_artifacts") or []
+        if not live_artifacts:
+            return stored
+
+        seen_types = {item.artifact_type for item in stored}
+        synthetic: list[ArtifactResponse] = []
+        created_at = ((run.result or {}).get("progress") or {}).get("updated_at") or run.created_at
+        for index, item in enumerate(live_artifacts):
+            artifact_type = item.get("artifact_type")
+            if artifact_type in seen_types:
+                continue
+            synthetic.append(
+                ArtifactResponse(
+                    artifact_id=f"live_{run_id}_{index}",
+                    run_id=run.run_id,
+                    project_id=run.project_id,
+                    chapter_no=((run.result or {}).get("progress") or {}).get("chapter_no"),
+                    artifact_type=str(artifact_type),
+                    payload=item.get("payload"),
+                    created_at=created_at,
+                )
+            )
+        return synthetic + stored
 
     @app.post("/api/runs/{run_id}/approval-requests", response_model=ApprovalRequestResponse, status_code=201)
     async def create_approval_request(

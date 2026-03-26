@@ -1,4 +1,5 @@
 import time
+from threading import Event
 
 from fastapi.testclient import TestClient
 
@@ -221,3 +222,78 @@ def test_admin_page_routes() -> None:
     assert admin_response.status_code == 200
     assert "NovelStudio Admin" in root_response.text
     assert "NovelStudio Admin" in admin_response.text
+
+
+def test_running_run_exposes_live_artifacts() -> None:
+    app = create_app(
+        config=AppConfig(
+            stub_mode=True,
+            openai_api_key=None,
+            admin_token=None,
+            database_url="sqlite:///:memory:",
+            model_name="gpt-5-nano",
+            project_id="api-test",
+            operator_id="tester",
+        ),
+        store=InMemoryStore(),
+    )
+    release_run = Event()
+
+    class FakeWorkflow:
+        def prepare_project_request(self, *, project, user_brief, target_chapters, operator_id):
+            return {
+                "user_brief": user_brief or project.default_user_brief,
+                "target_chapters": target_chapters or project.default_target_chapters,
+                "operator_id": operator_id or "tester",
+            }
+
+        def run_project(self, *, project, request_payload, on_update=None):
+            state = {
+                "creative_contract": {"working_title": "测试标题"},
+                "story_bible": {"premise": "测试世界"},
+                "current_card": {"chapter_no": 1, "purpose": "测试章卡"},
+                "phase_decision": {"final_decision": "rewrite"},
+                "event_log": ["creative_contract_ready", "chapter_card_ready:1"],
+                "rewrite_count": 0,
+            }
+            if on_update is not None:
+                on_update("chapter_planner", state)
+            release_run.wait(timeout=2)
+            return {
+                **state,
+                "current_draft": {"title": "第1章", "content": "正文"},
+                "publish_package": {"chapter_no": 1, "title": "第1章", "full_text": "正文"},
+                "canon_state": {"story_clock": {"current_chapter": 1}},
+                "feedback_summary": {"chapter_no": 1},
+                "latest_review_reports": [],
+            }
+
+    app.state.workflow = FakeWorkflow()
+    client = TestClient(app)
+
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "实时工件测试",
+            "default_user_brief": {"title": "测试"},
+            "default_target_chapters": 1,
+        },
+    ).json()
+
+    run = client.post(f"/api/projects/{project['project_id']}/runs", json={}).json()
+
+    deadline = time.time() + 2
+    live_artifacts = []
+    while time.time() < deadline:
+        live_artifacts = client.get(f"/api/runs/{run['run_id']}/artifacts").json()
+        if any(item["artifact_type"] == "current_card" for item in live_artifacts):
+            break
+        time.sleep(0.02)
+
+    assert any(item["artifact_type"] == "creative_contract" for item in live_artifacts)
+    assert any(item["artifact_type"] == "current_card" for item in live_artifacts)
+    assert any(item["artifact_type"] == "phase_decision" for item in live_artifacts)
+
+    release_run.set()
+    completed_run = wait_for_run(client, run["run_id"])
+    assert completed_run["status"] == "completed"
