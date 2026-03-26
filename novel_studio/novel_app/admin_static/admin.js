@@ -235,7 +235,8 @@ async function handleApprovalAction(action, approvalId) {
 
 async function createProject(event) {
   event.preventDefault();
-  const formData = new FormData(event.currentTarget);
+  const form = event.currentTarget;
+  const formData = new FormData(form);
   try {
     await api("/api/projects", {
       method: "POST",
@@ -246,7 +247,7 @@ async function createProject(event) {
         default_user_brief: JSON.parse(String(formData.get("default_user_brief") || "{}")),
       }),
     });
-    event.currentTarget.reset();
+    form.reset();
     await loadProjects();
     await loadAudit();
     setStatus("项目已创建");
