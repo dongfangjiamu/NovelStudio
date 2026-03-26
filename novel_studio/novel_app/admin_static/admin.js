@@ -4,6 +4,7 @@ const state = {
   selectedRunId: null,
   artifactRunId: null,
   artifactFingerprint: "",
+  artifactItems: [],
   projectSnapshot: {
     chapters: [],
     runs: [],
@@ -36,6 +37,8 @@ const el = {
   summaryNext: document.getElementById("summary-next"),
   focusRunCaption: document.getElementById("focus-run-caption"),
   focusRun: document.getElementById("focus-run"),
+  learningCaption: document.getElementById("learning-caption"),
+  learningPanel: document.getElementById("learning-panel"),
   selectedRunLabel: document.getElementById("selected-run-label"),
   statusPill: document.getElementById("status-pill"),
   heroNote: document.getElementById("hero-note"),
@@ -497,6 +500,91 @@ function parseListField(value) {
     .filter(Boolean);
 }
 
+function artifactPayload(items, artifactType) {
+  return (items || []).find((item) => item.artifact_type === artifactType)?.payload || null;
+}
+
+function buildLearningSummary(items) {
+  const chapterLesson = artifactPayload(items, "chapter_lesson") || {};
+  const writerPlaybook = artifactPayload(items, "writer_playbook") || {};
+  const issueLedger = artifactPayload(items, "issue_ledger") || {};
+  const pendingIssues = (issueLedger.issues || []).filter((issue) => ["open", "recurring"].includes(issue.status));
+  const recurringIssues = pendingIssues.filter((issue) => issue.status === "recurring");
+
+  return {
+    learnedLead: chapterLesson.pass_reasons?.[0] || "系统还没有沉淀出明确的通过经验。",
+    learnedItems: [
+      ...(writerPlaybook.validated_patterns || []).slice(0, 2),
+      ...(chapterLesson.pass_reasons || []).slice(0, 2),
+    ].filter(Boolean),
+    guardLead: pendingIssues.length
+      ? `这次已提前纳入 ${pendingIssues.length} 个未关闭问题的规避要求。`
+      : "当前没有未关闭旧问题需要额外规避。",
+    guardItems: [
+      ...(chapterLesson.carry_forward_rules || []).slice(0, 2),
+      ...pendingIssues.slice(0, 3).map((issue) => issue.fix_instruction || issue.evidence || issue.issue_id),
+    ].filter(Boolean),
+    riskLead: recurringIssues.length
+      ? `仍有 ${recurringIssues.length} 个问题在反复出现，需要重点盯住。`
+      : "当前没有明显反复出现的问题。",
+    riskItems: [
+      ...(writerPlaybook.watch_out || []).slice(0, 2),
+      ...recurringIssues.slice(0, 3).map((issue) => `${issue.reviewer || "unknown"}：${issue.fix_instruction || issue.evidence || issue.issue_id}`),
+      ...(chapterLesson.discarded_patterns || []).slice(0, 2),
+    ].filter(Boolean),
+    progressSummary: chapterLesson.issue_progress_summary || issueLedger.progress_summary || "",
+  };
+}
+
+function renderLearningPanel(run) {
+  if (!run) {
+    el.learningCaption.textContent = "需要先选中一个项目";
+    el.learningPanel.innerHTML = `<div class="empty">当前没有可解释的学习结果。</div>`;
+    return;
+  }
+
+  if (state.artifactRunId !== run.run_id) {
+    el.learningCaption.textContent = `还没有加载第 ${chapterForRun(run)} 章的过程材料`;
+    el.learningPanel.innerHTML = `<div class="empty">点击“查看工件”后，这里会告诉你系统学到了什么、规避了什么、还在担心什么。</div>`;
+    return;
+  }
+
+  const learning = buildLearningSummary(state.artifactItems);
+  el.learningCaption.textContent = learning.progressSummary || `当前对应第 ${chapterForRun(run)} 章的学习结果`;
+  const cards = [
+    {
+      title: "系统学到了什么",
+      lead: learning.learnedLead,
+      items: learning.learnedItems,
+    },
+    {
+      title: "这次主动规避什么",
+      lead: learning.guardLead,
+      items: learning.guardItems,
+    },
+    {
+      title: "仍要警惕什么",
+      lead: learning.riskLead,
+      items: learning.riskItems,
+    },
+  ];
+  el.learningPanel.innerHTML = cards
+    .map(
+      (section) => `
+        <article class="learning-card">
+          <h4>${section.title}</h4>
+          <div class="learning-lead">${escapeHtml(section.lead)}</div>
+          ${
+            section.items.length
+              ? `<ul class="learning-list">${section.items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+              : `<div class="meta">当前没有更多细节。</div>`
+          }
+        </article>
+      `
+    )
+    .join("");
+}
+
 function latestChapterNo(chapters) {
   return chapters.reduce((max, item) => Math.max(max, item.chapter_no || 0), 0);
 }
@@ -839,6 +927,7 @@ function renderProjectState() {
   renderApprovals(snapshot.approvals || []);
   renderSummary(summary);
   renderFocusRun(summary);
+  renderLearningPanel(summary.focusRun || null);
 }
 
 function renderProjects() {
@@ -972,6 +1061,7 @@ function renderApprovals(items) {
 
 function renderArtifacts(items) {
   if (!items.length) {
+    state.artifactItems = [];
     el.artifactsList.innerHTML = `<div class="empty">当前还没有可展示的过程材料</div>`;
     return;
   }
@@ -982,6 +1072,7 @@ function renderArtifacts(items) {
     return (leftRank === -1 ? 999 : leftRank) - (rightRank === -1 ? 999 : rightRank);
   });
 
+  state.artifactItems = sorted;
   el.artifactsList.innerHTML = sorted
     .map((item) => {
       const summary = summarizeArtifact(item);
@@ -1090,6 +1181,7 @@ async function selectProject(projectId) {
     el.selectedRunLabel.textContent = "未选择 Run";
     state.artifactRunId = null;
     state.artifactFingerprint = "";
+    state.artifactItems = [];
     renderArtifacts([]);
   }
 }
@@ -1118,6 +1210,7 @@ async function loadArtifacts(
       renderArtifacts(artifacts);
       state.artifactRunId = runId;
       state.artifactFingerprint = fingerprint;
+      renderLearningPanel(state.projectSnapshot.runs.find((item) => item.run_id === runId) || null);
     }
     const run = state.projectSnapshot.runs.find((item) => item.run_id === runId);
     const chapterText = run ? `第 ${chapterForRun(run)} 章` : runId;
@@ -1136,6 +1229,7 @@ async function loadArtifacts(
   } catch (error) {
     state.artifactRunId = runId;
     state.artifactFingerprint = "";
+    state.artifactItems = [];
     el.selectedRunLabel.textContent = `${runId} · 加载失败`;
     el.artifactsList.innerHTML = `<div class="empty">过程材料加载失败：${escapeHtml(String(error.message || error))}</div>`;
     setStatus(`加载 ${runId} 的过程材料失败：${String(error.message || error)}`, "error");

@@ -189,6 +189,46 @@ body {
   background: rgba(255, 250, 244, 0.9);
 }
 
+.learning-panel {
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(255, 249, 240, 0.96), rgba(248, 242, 231, 0.9));
+}
+
+.learning-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.learning-card {
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: rgba(255, 253, 249, 0.96);
+}
+
+.learning-card h4 {
+  margin: 0 0 8px;
+}
+
+.learning-lead {
+  font-size: 14px;
+  line-height: 1.6;
+  margin-bottom: 8px;
+}
+
+.learning-list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+}
+
+.learning-list li + li {
+  margin-top: 6px;
+}
+
 .focus-run-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
