@@ -53,6 +53,7 @@ const el = {
 const STATUS_LABELS = {
   running: "生成中",
   awaiting_approval: "等待审批",
+  awaiting_execution: "等待执行",
   failed: "已失败",
   completed: "已完成",
   pending: "待处理",
@@ -317,10 +318,43 @@ function buildTimelineEntries(run) {
 function chapterForRun(run) {
   const progress = run.result?.progress || {};
   const publish = run.result?.publish_package || {};
-  return progress.chapter_no || publish.chapter_no || 1;
+  const currentCard = run.result?.current_card || {};
+  const feedbackSummary = run.result?.feedback_summary || {};
+  return (
+    progress.chapter_no
+    || publish.chapter_no
+    || currentCard.chapter_no
+    || feedbackSummary.chapter_no
+    || run.request?.target_chapters
+    || 1
+  );
+}
+
+function latestApprovalForRun(runId, approvals = state.projectSnapshot.approvals || []) {
+  return approvals
+    .filter((item) => item.run_id === runId)
+    .sort((left, right) => right.created_at.localeCompare(left.created_at))[0] || null;
+}
+
+function runDisplayStatus(run, approvals = state.projectSnapshot.approvals || []) {
+  if (run.status !== "awaiting_approval") {
+    return run.status;
+  }
+  const approval = latestApprovalForRun(run.run_id, approvals);
+  if (!approval) {
+    return run.status;
+  }
+  if (approval.status === "approved") {
+    return approval.executed_run_id ? "approved" : "awaiting_execution";
+  }
+  if (approval.status === "rejected") {
+    return "rejected";
+  }
+  return run.status;
 }
 
 function summarizeRunCard(run) {
+  const displayStatus = runDisplayStatus(run);
   const progress = run.result?.progress || {};
   const reviewProgress = progress.review_progress || {};
   const publish = run.result?.publish_package || {};
@@ -330,7 +364,16 @@ function summarizeRunCard(run) {
     }
     return `系统正在 ${nodeLabel(progress.current_node)}。`;
   }
-  if (run.status === "awaiting_approval") {
+  if (displayStatus === "awaiting_execution") {
+    return "这一章已经审批通过，等待你执行继续写下一章。";
+  }
+  if (displayStatus === "approved") {
+    return "这一章已经审批通过，后续续写运行已启动或已完成。";
+  }
+  if (displayStatus === "rejected") {
+    return "这一章的审批已驳回，建议先看工件再决定是否重试。";
+  }
+  if (displayStatus === "awaiting_approval") {
     return "这一章已经生成，正在等你决定是否继续。";
   }
   if (run.status === "failed") {
@@ -1031,6 +1074,7 @@ function renderFocusRun(summary) {
   const stageGoal = progress.stage_goal || "未记录";
   const possibleCause = progress.possible_cause;
   const intervention = run.result?.manual_intervention || null;
+  const displayStatus = runDisplayStatus(run);
   const timelineEntries = buildTimelineEntries(run);
   const errorBlock = run.error
     ? `<div class="focus-metric"><strong class="error-copy">错误</strong><div class="meta">${run.error}</div></div>`
@@ -1051,7 +1095,7 @@ function renderFocusRun(summary) {
     actionButtons.push(`<button class="button ghost" data-action="retry-run" data-id="${run.run_id}">重新尝试</button>`);
   }
 
-  el.focusRunCaption.textContent = `第 ${chapterForRun(run)} 章 · ${STATUS_LABELS[run.status] || run.status}`;
+  el.focusRunCaption.textContent = `第 ${chapterForRun(run)} 章 · ${STATUS_LABELS[displayStatus] || displayStatus}`;
   el.focusRun.innerHTML = `
     <div class="focus-run-grid">
       <div class="focus-metric">
@@ -1060,7 +1104,7 @@ function renderFocusRun(summary) {
       </div>
       <div class="focus-metric">
         <strong>状态</strong>
-        <div class="meta">${statusChip(run.status)}</div>
+        <div class="meta">${statusChip(displayStatus)}</div>
       </div>
       <div class="focus-metric">
         <strong>当前节点</strong>
@@ -1101,7 +1145,7 @@ function renderFocusRun(summary) {
     <div class="card">
       <div class="card-head">
         <h4>阶段时间线</h4>
-        ${statusChip(run.status)}
+        ${statusChip(displayStatus)}
       </div>
       <div class="timeline">
         ${timelineEntries
@@ -1123,7 +1167,7 @@ function renderFocusRun(summary) {
     <div class="card">
       <div class="card-head">
         <h4>最近事件尾部</h4>
-        ${statusChip(run.status)}
+        ${statusChip(displayStatus)}
       </div>
       <div class="meta">${logTail.length ? logTail.join(" -> ") : "暂无事件日志"}</div>
       <div class="actions">
@@ -1196,6 +1240,7 @@ function renderRuns(runs, focusRunId) {
   });
 
   const renderRunCard = (item, { recommendedCard = false } = {}) => {
+    const displayStatus = runDisplayStatus(item);
     const progress = item.result?.progress || {};
     const updatedAt = progress.updated_at || item.created_at;
     const marker = item.status === "running"
@@ -1223,8 +1268,8 @@ function renderRuns(runs, focusRunId) {
     return `
       <div class="${classes.join(" ")}">
         <div class="card-head">
-          <h4>第 ${chapterNo} 章 · ${STATUS_LABELS[item.status] || item.status}</h4>
-          ${statusChip(item.status)}
+          <h4>第 ${chapterNo} 章 · ${STATUS_LABELS[displayStatus] || displayStatus}</h4>
+          ${statusChip(displayStatus)}
         </div>
         <div class="meta">创建于 ${formatTimestamp(item.created_at)} · ${item.run_id}</div>
         <div class="meta">最近更新 ${formatTimestamp(updatedAt)} · 重写 ${progress.rewrite_count ?? 0} 次 · 工件 ${item.artifact_count ?? 0} 个</div>
