@@ -133,60 +133,116 @@
 
         <section class="workspace-page" data-workspace-page="project">
           <section class="panel">
-            <h2>新建项目</h2>
-            <div class="muted panel-tip">先填基础创作信息。只有在你想手动覆盖结构时，才需要用高级 JSON。</div>
-            <form id="project-form" class="stack">
-              <label>
-                <span>项目名</span>
-                <input name="name" type="text" required />
-              </label>
-              <label>
-                <span>简介</span>
-                <textarea name="description" rows="2"></textarea>
-              </label>
-              <label>
-                <span>默认章节数</span>
-                <input name="default_target_chapters" type="number" min="1" value="1" />
-              </label>
-              <div class="form-block">
-                <div class="form-block-title">基础创作设定</div>
-                <label>
-                  <span>作品标题</span>
-                  <input name="brief_title" type="text" value="长夜炉火" />
-                </label>
-                <label>
-                  <span>题材</span>
-                  <input name="brief_genre" type="text" value="东方玄幻" />
-                </label>
-                <label>
-                  <span>平台</span>
-                  <input name="brief_platform" type="text" value="起点中文网" />
-                </label>
-                <label>
-                  <span>核心钩子</span>
-                  <textarea name="brief_hook" rows="4">一个被逐出山门的外门弟子，靠偷听禁地炉火中的古老对话逆天改命。</textarea>
-                </label>
-                <label>
-                  <span>必须包含</span>
-                  <textarea name="brief_must_have" rows="4">稳步升级
+            <h2>项目设定</h2>
+            <div class="muted panel-tip">默认从模糊灵感开始。只有在你已经想清楚时，才需要直接填写完整表单。</div>
+            <div class="columns two-up project-setup-grid">
+              <section class="setup-card">
+                <div class="panel-head">
+                  <div>
+                    <h3>从灵感开始</h3>
+                    <div class="muted">哪怕你现在只有一个片段、一个人物感觉或一句设定，也可以先开题。</div>
+                  </div>
+                </div>
+                <form id="idea-capture-form" class="stack">
+                  <label>
+                    <span>暂定书名或项目代号</span>
+                    <input name="title" type="text" placeholder="可以先随便起个名字，后面再改" />
+                  </label>
+                  <label>
+                    <span>你现在脑子里最清楚的一点点想法</span>
+                    <textarea
+                      name="idea_seed"
+                      rows="6"
+                      required
+                      placeholder="可以只写一个画面、一个人物印象、一句设定、一个冲突，或者你最想保住的那种感觉。"
+                    ></textarea>
+                  </label>
+                  <label>
+                    <span>这段灵感更像什么</span>
+                    <select name="idea_seed_type">
+                      <option value="scene">一个画面</option>
+                      <option value="character">一个角色</option>
+                      <option value="conflict">一个冲突</option>
+                      <option value="setup">一句设定</option>
+                      <option value="mood">一种氛围</option>
+                      <option value="reference">一个参考作品印象</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>你现在最想保住的感觉</span>
+                    <select name="reader_pull">
+                      <option value="">先不确定，后面对话再聊</option>
+                      <option value="爽感往上冲">爽感往上冲</option>
+                      <option value="情绪拉扯">情绪拉扯</option>
+                      <option value="悬念感">悬念感</option>
+                      <option value="人物关系">人物关系</option>
+                    </select>
+                  </label>
+                  <div class="meta">创建后，系统会自动进入“立项共创”线程，用更低门槛的小问题帮你逐步把方向问清。</div>
+                  <button class="button primary" type="submit">开始共创澄清</button>
+                </form>
+              </section>
+              <section class="setup-card">
+                <div class="panel-head">
+                  <div>
+                    <h3>我已经想清楚了</h3>
+                    <div class="muted">适合已经能直接填写题材、钩子和创作约束的情况。</div>
+                  </div>
+                </div>
+                <form id="project-form" class="stack">
+                  <label>
+                    <span>项目名</span>
+                    <input name="name" type="text" required />
+                  </label>
+                  <label>
+                    <span>简介</span>
+                    <textarea name="description" rows="2"></textarea>
+                  </label>
+                  <label>
+                    <span>默认章节数</span>
+                    <input name="default_target_chapters" type="number" min="1" value="1" />
+                  </label>
+                  <div class="form-block">
+                    <div class="form-block-title">基础创作设定</div>
+                    <label>
+                      <span>作品标题</span>
+                      <input name="brief_title" type="text" value="长夜炉火" />
+                    </label>
+                    <label>
+                      <span>题材</span>
+                      <input name="brief_genre" type="text" value="东方玄幻" />
+                    </label>
+                    <label>
+                      <span>平台</span>
+                      <input name="brief_platform" type="text" value="起点中文网" />
+                    </label>
+                    <label>
+                      <span>核心钩子</span>
+                      <textarea name="brief_hook" rows="4">一个被逐出山门的外门弟子，靠偷听禁地炉火中的古老对话逆天改命。</textarea>
+                    </label>
+                    <label>
+                      <span>必须包含</span>
+                      <textarea name="brief_must_have" rows="4">稳步升级
 师门阴谋
 章末钩子强</textarea>
-                </label>
-                <label>
-                  <span>必须避免</span>
-                  <textarea name="brief_must_not_have" rows="3">后宫泛滥
+                    </label>
+                    <label>
+                      <span>必须避免</span>
+                      <textarea name="brief_must_not_have" rows="3">后宫泛滥
 无代价外挂</textarea>
-                </label>
-              </div>
-              <details class="advanced-box">
-                <summary>高级：直接编辑 Brief JSON</summary>
-                <label>
-                  <span>若填写这里，将覆盖上面的基础创作设定</span>
-                  <textarea name="default_user_brief" rows="8" placeholder='{"title":"长夜炉火","genre":"东方玄幻"}'></textarea>
-                </label>
-              </details>
-              <button class="button primary" type="submit">创建项目</button>
-            </form>
+                    </label>
+                  </div>
+                  <details class="advanced-box">
+                    <summary>高级：直接编辑 Brief JSON</summary>
+                    <label>
+                      <span>若填写这里，将覆盖上面的基础创作设定</span>
+                      <textarea name="default_user_brief" rows="8" placeholder='{"title":"长夜炉火","genre":"东方玄幻"}'></textarea>
+                    </label>
+                  </details>
+                  <button class="button primary" type="submit">按完整设定创建项目</button>
+                </form>
+              </section>
+            </div>
           </section>
         </section>
 

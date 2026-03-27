@@ -35,6 +35,7 @@ const el = {
   auditList: document.getElementById("audit-list"),
   createRun: document.getElementById("create-run"),
   createRunQuick: document.getElementById("create-run-quick"),
+  ideaCaptureForm: document.getElementById("idea-capture-form"),
   projectForm: document.getElementById("project-form"),
   projectTitle: document.getElementById("project-title"),
   projectMeta: document.getElementById("project-meta"),
@@ -658,7 +659,7 @@ function conversationInputPlaceholder(thread) {
     return "例如：这章我想保留主角克制的气质，但请把冲突前置，不要拖到中段。";
   }
   if (thread.scope === "project_bootstrap") {
-    return "例如：我想写一个被流放的铸器师，在王朝边境靠禁忌炉火翻身，卖点是废柴逆袭和门阀阴谋。";
+    return "例如：我脑子里现在最清楚的是，一个被逐出山门的人，靠偷听禁地里的古老声音翻身，但我还没想清楚它更偏爽感还是悬念。";
   }
   if (thread.scope === "character_room") {
     return "例如：主角表面克制冷硬，实则极怕再失去亲近之人，所以宁可先承担风险也不会让同伴顶上。";
@@ -932,6 +933,17 @@ function renderInterviewSummary(thread) {
   const adopted = interview.adopted_highlights?.length
     ? `<div class="meta">${interview.adopted_highlights.map((item) => escapeHtml(compactDecisionText(item, 36))).join(" / ")}</div>`
     : `<div class="meta">当前线程还没有采纳结论。</div>`;
+  const optionButtons = interview.next_options?.length
+    ? `
+      <div class="interview-options">
+        ${interview.next_options
+          .map((item, index) => `<button class="button ghost interview-option" type="button" data-interview-option="${index}">${escapeHtml(item)}</button>`)
+          .join("")}
+        <button class="button ghost interview-option ghost" type="button" data-interview-helper="unsure">我还不确定</button>
+        <button class="button ghost interview-option ghost" type="button" data-interview-helper="skip">先跳过</button>
+      </div>
+    `
+    : "";
   el.conversationInterviewSummary.innerHTML = `
     <section class="interview-card">
       <div class="card-head">
@@ -939,6 +951,7 @@ function renderInterviewSummary(thread) {
         <span class="status-chip status-approved">已确认 ${interview.completion_label}</span>
       </div>
       <div class="meta">${escapeHtml(interview.goal || "")}</div>
+      <div class="meta">${escapeHtml(interview.reflection_summary || "")}</div>
       ${basis}
       <div class="interview-grid">
         <div class="interview-block">
@@ -954,6 +967,7 @@ function renderInterviewSummary(thread) {
         <div class="interview-block">
           <strong>系统下一问</strong>
           <div class="meta">${escapeHtml(interview.next_prompt || "继续补充你认为最关键的信息。")}</div>
+          ${optionButtons}
         </div>
         <div class="interview-block">
           <strong>当前已采纳</strong>
@@ -963,6 +977,26 @@ function renderInterviewSummary(thread) {
       </div>
     </section>
   `;
+  el.conversationInterviewSummary.querySelectorAll("[data-interview-option]").forEach((node) => {
+    node.addEventListener("click", () => {
+      const choice = interview.next_options?.[Number(node.dataset.interviewOption)] || "";
+      if (!choice) return;
+      el.conversationInput.value = choice;
+      el.conversationInput.focus();
+      setStatus("已把候选回答带入输入框，你可以直接发送或再补一句。", "ready");
+    });
+  });
+  el.conversationInterviewSummary.querySelectorAll("[data-interview-helper]").forEach((node) => {
+    node.addEventListener("click", () => {
+      const helper =
+        node.dataset.interviewHelper === "skip"
+          ? "先跳过这个问题，继续问下一个。"
+          : "我还不确定，先给我几个更具体的方向。";
+      el.conversationInput.value = helper;
+      el.conversationInput.focus();
+      setStatus("已把辅助回答带入输入框，你可以直接发送。", "ready");
+    });
+  });
 }
 
 function scopeNeedsRunContext(scope) {
@@ -2971,6 +3005,70 @@ async function createConversationThread(scope) {
   setStatus(`已创建${conversationScopeLabel(scope)}线程`, "ready");
 }
 
+function inferIdeaProjectName(title, seed) {
+  const cleanTitle = String(title || "").trim();
+  if (cleanTitle) return cleanTitle;
+  const excerpt = compactDecisionText(seed || "", 18).replace(/[：:，。,.\s]/g, "");
+  if (excerpt) {
+    return `灵感_${excerpt}`;
+  }
+  return `新书灵感_${new Date().toISOString().slice(0, 10)}`;
+}
+
+async function createIdeaProject(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const formData = new FormData(form);
+  const title = String(formData.get("title") || "").trim();
+  const ideaSeed = String(formData.get("idea_seed") || "").trim();
+  const ideaSeedType = String(formData.get("idea_seed_type") || "scene").trim();
+  const readerPull = String(formData.get("reader_pull") || "").trim();
+  if (!ideaSeed) {
+    setStatus("请先写下你脑子里最清楚的一点点想法。", "error");
+    return;
+  }
+  try {
+    const projectName = inferIdeaProjectName(title, ideaSeed);
+    const defaultUserBrief = {
+      title: title || projectName,
+      idea_seed: ideaSeed,
+      idea_seed_type: ideaSeedType,
+      capture_stage: "seed",
+      hook: "",
+      genre: "",
+      platform: "",
+      must_have: [],
+      must_not_have: [],
+    };
+    if (readerPull) {
+      defaultUserBrief.intent_profile = { reader_pull: readerPull };
+    }
+    const project = await api("/api/projects", {
+      method: "POST",
+      body: JSON.stringify({
+        name: projectName,
+        description: compactDecisionText(ideaSeed, 120) || null,
+        default_target_chapters: 1,
+        default_user_brief: defaultUserBrief,
+      }),
+    });
+    const thread = await api(`/api/projects/${project.project_id}/conversation-threads`, {
+      method: "POST",
+      body: JSON.stringify({ scope: "project_bootstrap" }),
+    });
+    form.reset();
+    await loadProjects();
+    await selectProject(project.project_id);
+    state.selectedThreadId = thread.thread_id;
+    await loadConversationMessages(thread.thread_id, { activateTab: true });
+    await loadAudit();
+    setWorkspaceTab("conversation");
+    setStatus("项目已从灵感创建，并已进入立项共创线程。", "ready");
+  } catch (error) {
+    setStatus(String(error.message || error), "error");
+  }
+}
+
 async function ensureThreadForDecisionType(decisionType) {
   setWorkspaceTab("conversation");
   const current = selectedThread();
@@ -2999,8 +3097,11 @@ async function ensureThreadForDecisionType(decisionType) {
 
 async function sendConversationMessage(event) {
   event.preventDefault();
+  await submitConversationMessage(el.conversationInput.value.trim());
+}
+
+async function submitConversationMessage(content) {
   if (!state.selectedThreadId) return;
-  const content = el.conversationInput.value.trim();
   if (!content) return;
   try {
     await api(`/api/conversation-threads/${state.selectedThreadId}/messages`, {
@@ -3435,6 +3536,7 @@ async function boot() {
   el.saveAuth.addEventListener("click", saveAuth);
   el.refreshProjects.addEventListener("click", () => loadProjects().catch((error) => setStatus(error.message, "error")));
   el.refreshAudit.addEventListener("click", () => loadAudit().catch((error) => setStatus(error.message, "error")));
+  el.ideaCaptureForm.addEventListener("submit", createIdeaProject);
   el.projectForm.addEventListener("submit", createProject);
   el.createRun.addEventListener("click", () => createRun({ quickMode: false }));
   el.createRunQuick.addEventListener("click", () => createRun({ quickMode: true }));

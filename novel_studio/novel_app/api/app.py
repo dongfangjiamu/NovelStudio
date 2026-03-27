@@ -664,72 +664,96 @@ def create_app(
     def interview_blueprint(scope: str) -> dict | None:
         if scope == "project_bootstrap":
             return {
-                "goal": "把项目方向问清楚，形成可执行的立项基础。",
+                "goal": "先接住模糊灵感，再把项目方向逐步问清楚，形成可执行的立项基础。",
                 "decision_types": ["writer_playbook_rule", "character_note", "outline_constraint"],
                 "topics": [
                     {
-                        "title": "一句话卖点",
-                        "prompt": "请先只用一句话回答：这本书最想卖给读者的核心爽点是什么？",
+                        "title": "最想保住的吸引力",
+                        "prompt": "先别急着定义卖点。你现在最想保住的，是下面哪种吸引力？也可以自己补一句。",
+                        "options": ["爽感往上冲", "情绪拉扯", "悬念感", "人物关系", "我还说不清"],
+                        "answer_mode": "choice_or_short_text",
                     },
                     {
-                        "title": "主角核心欲望",
-                        "prompt": "主角最想得到什么？如果拿不到，他会失去什么？",
+                        "title": "主角行动方式",
+                        "prompt": "如果主角一出场就要让人记住，你更想让他像哪一类人？",
+                        "options": ["主动争", "被迫卷入", "隐忍反击", "外冷内烈", "我还没想清"],
+                        "answer_mode": "choice_or_short_text",
                     },
                     {
-                        "title": "第一卷卖点",
-                        "prompt": "第一卷最想让读者追下去的东西是什么：阴谋、升级、关系、复仇，还是别的？",
+                        "title": "故事推进方式",
+                        "prompt": "这本书往前推时，你更希望主要靠什么力量？",
+                        "options": ["升级推进", "阴谋推进", "关系推进", "生存推进", "混合推进"],
+                        "answer_mode": "choice_or_short_text",
                     },
                     {
-                        "title": "写作禁区",
-                        "prompt": "这本书最不能写歪的地方是什么？有没有你明确不接受的套路、人物走向或文风？",
+                        "title": "不能写歪的边界",
+                        "prompt": "最后再补一个边界：这本书最不能写歪的地方是什么？也可以直接说你明确不接受什么。",
+                        "options": ["不要套路化打脸", "不要无代价外挂", "不要人物性格突然变形", "不要文风油腻", "先跳过这个问题"],
+                        "answer_mode": "short_text_with_choices",
                     },
                 ],
-                "closing_prompt": "这四项已经基本问清。下一步建议把已形成的稳定结论采纳为人物设定、卷纲约束或长期规则。",
+                "closing_prompt": "这几项已经足够形成第一版立项草案。下一步建议先把稳定结论采纳为人物设定、卷纲约束或长期规则，再继续细化。",
             }
         if scope == "character_room":
             return {
-                "goal": "把主角驱动、人物关系和行为边界收紧成人物设定。",
+                "goal": "把人物感觉逐步收紧成稳定的人物设定，而不是一开始就逼出完整小传。",
                 "decision_types": ["character_note"],
                 "topics": [
                     {
-                        "title": "主角缺陷",
-                        "prompt": "主角最关键的缺陷是什么？这个缺陷会在故事前期造成什么代价？",
+                        "title": "主角第一印象",
+                        "prompt": "如果只用一个感觉描述主角，你更希望他给人的第一印象是下面哪种？",
+                        "options": ["克制", "危险", "倔强", "聪明", "讨喜", "还没想清"],
+                        "answer_mode": "choice_or_short_text",
                     },
                     {
-                        "title": "主角真正想要什么",
-                        "prompt": "主角表面上想要什么，内里真正想要什么？这两者是否冲突？",
+                        "title": "主角真正想摆脱什么",
+                        "prompt": "主角最想摆脱的是什么？可以是处境、关系、身份、命运，或别的东西。",
+                        "options": ["弱小处境", "被控制的人生", "错误身份", "失败命运", "我想自己补充"],
+                        "answer_mode": "choice_or_short_text",
                     },
                     {
                         "title": "关键关系张力",
-                        "prompt": "谁是最关键的配角或对手？他和主角之间最大的关系张力是什么？",
+                        "prompt": "最关键的关系张力更像哪一种？",
+                        "options": ["师徒/前辈压迫", "宿敌对抗", "同伴互相拉扯", "亲密关系试探", "我自己描述"],
+                        "answer_mode": "choice_or_short_text",
                     },
                     {
                         "title": "角色边界",
-                        "prompt": "主角有哪些事绝不会做？哪些行为一旦出现，就会让你觉得人物写崩了？",
+                        "prompt": "什么行为一旦出现，你会立刻觉得这个主角写崩了？",
+                        "options": ["突然圣母", "突然莽撞", "突然油腻", "突然降智", "我自己描述"],
+                        "answer_mode": "choice_or_short_text",
                     },
                 ],
                 "closing_prompt": "人物核心边界已经基本清楚。下一步建议把关键结论采纳为人物设定，进入后续写作。",
             }
         if scope == "outline_room":
             return {
-                "goal": "把第一卷主线和推进结构收紧成可执行的大纲约束。",
+                "goal": "把第一卷怎么往前推逐步聊清楚，收紧成可执行的大纲约束。",
                 "decision_types": ["outline_constraint"],
                 "topics": [
                     {
-                        "title": "第一卷主线冲突",
-                        "prompt": "第一卷最核心的主线冲突是什么？它为什么足以支撑读者持续追更？",
+                        "title": "第一卷主推动力",
+                        "prompt": "第一卷最主要靠什么把读者往下带？",
+                        "options": ["一层层升级", "阴谋逐步揭开", "人物关系变化", "逃生与生存压力", "混合推进"],
+                        "answer_mode": "choice_or_short_text",
                     },
                     {
                         "title": "升级路径",
-                        "prompt": "主角在第一卷里会怎样一步步升级或逼近目标？中间至少经过哪几次关键推进？",
+                        "prompt": "主角在第一卷里更像怎样逼近目标？",
+                        "options": ["一次次小胜推进", "先被压制再反打", "边查真相边成长", "靠关系变化推进", "我自己描述"],
+                        "answer_mode": "choice_or_short_text",
                     },
                     {
                         "title": "阶段反转",
-                        "prompt": "第一卷中段最重要的一次反转是什么？它会怎样改变局势或认知？",
+                        "prompt": "第一卷中段最值得期待的变化更像什么？",
+                        "options": ["身份反转", "阵营反转", "认知反转", "力量反转", "我自己描述"],
+                        "answer_mode": "choice_or_short_text",
                     },
                     {
                         "title": "卷末高潮",
-                        "prompt": "卷末必须兑现的高潮是什么？读者看到卷末时最应该得到哪种情绪回报？",
+                        "prompt": "卷末最该兑现给读者的感觉是什么？",
+                        "options": ["爽到扬眉吐气", "真相揭开一角", "关系彻底翻转", "危险升级忍不住追更", "我自己描述"],
+                        "answer_mode": "choice_or_short_text",
                     },
                 ],
                 "closing_prompt": "第一卷方向已经足够清楚。下一步建议把这些结论采纳为卷纲约束，再驱动章卡和正文。",
@@ -746,11 +770,13 @@ def create_app(
         completed_count = min(len(user_messages), len(topics))
         confirmed_topics = [item["title"] for item in topics[:completed_count]]
         unresolved_topics = [item["title"] for item in topics[completed_count:]]
+        next_topic = topics[completed_count] if completed_count < len(topics) else None
         next_prompt = (
-            topics[completed_count]["prompt"]
-            if completed_count < len(topics)
+            next_topic["prompt"]
+            if next_topic is not None
             else blueprint["closing_prompt"]
         )
+        next_options = list(next_topic.get("options") or []) if next_topic is not None else []
         relevant_types = set(blueprint["decision_types"])
         adopted = [
             item
@@ -766,8 +792,17 @@ def create_app(
             basis.append(f"书名：{brief['title']}")
         if brief.get("genre"):
             basis.append(f"题材：{brief['genre']}")
+        if brief.get("idea_seed_type"):
+            basis.append(f"灵感类型：{brief['idea_seed_type']}")
+        if brief.get("idea_seed"):
+            basis.append(f"原始灵感：{str(brief['idea_seed'])[:60]}")
         if brief.get("hook"):
             basis.append(f"当前钩子：{brief['hook']}")
+        reflection_summary = (
+            f"目前已确认 {completed_count} 项：{'、'.join(confirmed_topics)}。"
+            if confirmed_topics
+            else "当前还在捕获原始意图，系统会继续用小问题帮你把方向问清。"
+        )
         return {
             "goal": blueprint["goal"],
             "completion_count": completed_count,
@@ -775,10 +810,14 @@ def create_app(
             "completion_label": f"{completed_count}/{len(topics)}",
             "confirmed_topics": confirmed_topics,
             "unresolved_topics": unresolved_topics,
+            "next_topic_title": next_topic["title"] if next_topic else None,
             "next_prompt": next_prompt,
+            "next_options": next_options,
+            "answer_mode": next_topic.get("answer_mode", "short_text") if next_topic else "review",
             "basis": basis,
             "adopted_count": len(adopted),
             "adopted_highlights": [item.summary for item in adopted[:3]],
+            "reflection_summary": reflection_summary,
         }
 
     def latest_artifact_payloads(run_id: str) -> dict[str, dict]:
@@ -950,12 +989,14 @@ def create_app(
             interview_state = build_interview_state(thread=thread_stub, project=project)
             brief = project.default_user_brief or {}
             title = brief.get("title") or project.name
-            genre = brief.get("genre") or "未定题材"
+            seed = str(brief.get("idea_seed") or "").strip()
             content = (
-                f"我们先把《{title}》的立项方向问清楚。当前已知题材是 {genre}。\n\n"
+                f"我们先从《{title}》最原始的灵感开始，不要求你现在就回答完整的立项问题。\n\n"
+                f"我先接住你现在手里这点材料：{seed or '你还没有写下原始灵感，可以直接用一句话告诉我脑中最清楚的画面、人物、冲突或感觉。'}\n\n"
                 f"本线程目标：{interview_state['goal']}\n"
                 f"当前进度：{interview_state['completion_label']}\n\n"
-                f"先回答第 1 问：{interview_state['next_prompt']}"
+                f"先回答第 1 问：{interview_state['next_prompt']}\n"
+                f"可直接从这些方向里选：{' / '.join(interview_state['next_options']) if interview_state['next_options'] else '也可以直接用一两句话回答。'}"
             )
             return "assistant_question", content, {"interview_state": interview_state}
 
@@ -968,7 +1009,8 @@ def create_app(
                 f"这是《{title}》的人物讨论线程。\n\n"
                 f"本线程目标：{interview_state['goal']}\n"
                 f"当前进度：{interview_state['completion_label']}\n\n"
-                f"先回答第 1 问：{interview_state['next_prompt']}"
+                f"先回答第 1 问：{interview_state['next_prompt']}\n"
+                f"可直接选：{' / '.join(interview_state['next_options']) if interview_state['next_options'] else '也可以直接补一句。'}"
             )
             return "assistant_question", content, {"interview_state": interview_state}
 
@@ -981,7 +1023,8 @@ def create_app(
                 f"这是《{title}》的大纲讨论线程。\n\n"
                 f"本线程目标：{interview_state['goal']}\n"
                 f"当前进度：{interview_state['completion_label']}\n\n"
-                f"先回答第 1 问：{interview_state['next_prompt']}"
+                f"先回答第 1 问：{interview_state['next_prompt']}\n"
+                f"可直接选：{' / '.join(interview_state['next_options']) if interview_state['next_options'] else '也可以直接补一句。'}"
             )
             return "assistant_question", content, {"interview_state": interview_state}
 
@@ -1024,7 +1067,9 @@ def create_app(
                 f"已记录你的方向：{excerpt}\n\n"
                 f"当前采访进度：{interview_state['completion_label']}。\n"
                 f"已确认：{'、'.join(interview_state['confirmed_topics']) if interview_state['confirmed_topics'] else '暂未形成稳定结论'}。\n"
+                f"当前理解：{interview_state['reflection_summary']}\n"
                 f"下一问：{interview_state['next_prompt']}\n"
+                f"可直接选：{' / '.join(interview_state['next_options']) if interview_state['next_options'] else '也可以继续自由补充。'}\n"
                 f"仍待明确：{'、'.join(interview_state['unresolved_topics']) if interview_state['unresolved_topics'] else '已基本问清，可开始采纳结论。'}"
             )
             payload = {"interview_state": interview_state}
@@ -1035,7 +1080,9 @@ def create_app(
                 f"已记录人物方向：{excerpt}\n\n"
                 f"当前采访进度：{interview_state['completion_label']}。\n"
                 f"已确认：{'、'.join(interview_state['confirmed_topics']) if interview_state['confirmed_topics'] else '暂未形成稳定结论'}。\n"
+                f"当前理解：{interview_state['reflection_summary']}\n"
                 f"下一问：{interview_state['next_prompt']}\n"
+                f"可直接选：{' / '.join(interview_state['next_options']) if interview_state['next_options'] else '也可以继续自由补充。'}\n"
                 f"仍待明确：{'、'.join(interview_state['unresolved_topics']) if interview_state['unresolved_topics'] else '已可以采纳为人物设定。'}"
             )
             payload = {"interview_state": interview_state}
@@ -1046,7 +1093,9 @@ def create_app(
                 f"已记录大纲方向：{excerpt}\n\n"
                 f"当前采访进度：{interview_state['completion_label']}。\n"
                 f"已确认：{'、'.join(interview_state['confirmed_topics']) if interview_state['confirmed_topics'] else '暂未形成稳定结论'}。\n"
+                f"当前理解：{interview_state['reflection_summary']}\n"
                 f"下一问：{interview_state['next_prompt']}\n"
+                f"可直接选：{' / '.join(interview_state['next_options']) if interview_state['next_options'] else '也可以继续自由补充。'}\n"
                 f"仍待明确：{'、'.join(interview_state['unresolved_topics']) if interview_state['unresolved_topics'] else '已可以采纳为卷纲约束。'}"
             )
             payload = {"interview_state": interview_state}

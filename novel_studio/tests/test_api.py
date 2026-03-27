@@ -94,7 +94,8 @@ def test_conversation_thread_flow() -> None:
     assert thread["message_count"] == 1
     assert "立项共创" in thread["title"]
     assert thread["interview_state"]["completion_label"] == "0/4"
-    assert thread["interview_state"]["unresolved_topics"][0] == "一句话卖点"
+    assert thread["interview_state"]["unresolved_topics"][0] == "最想保住的吸引力"
+    assert thread["interview_state"]["next_options"][0] == "爽感往上冲"
 
     list_threads = client.get(f"/api/projects/{project['project_id']}/conversation-threads")
     assert list_threads.status_code == 200
@@ -103,6 +104,7 @@ def test_conversation_thread_flow() -> None:
     initial_messages = client.get(f"/api/conversation-threads/{thread['thread_id']}/messages")
     assert initial_messages.status_code == 200
     assert initial_messages.json()[0]["role"] == "assistant"
+    assert "先别急着定义卖点" in initial_messages.json()[0]["content"]
 
     reply = client.post(
         f"/api/conversation-threads/{thread['thread_id']}/messages",
@@ -118,8 +120,36 @@ def test_conversation_thread_flow() -> None:
     assert refreshed_thread.status_code == 200
     assert refreshed_thread.json()["message_count"] == 3
     assert refreshed_thread.json()["interview_state"]["completion_label"] == "1/4"
-    assert refreshed_thread.json()["interview_state"]["confirmed_topics"] == ["一句话卖点"]
-    assert refreshed_thread.json()["interview_state"]["unresolved_topics"][0] == "主角核心欲望"
+    assert refreshed_thread.json()["interview_state"]["confirmed_topics"] == ["最想保住的吸引力"]
+    assert refreshed_thread.json()["interview_state"]["unresolved_topics"][0] == "主角行动方式"
+
+
+def test_project_bootstrap_opening_uses_idea_seed() -> None:
+    client = make_client()
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "灵感立项项目",
+            "default_user_brief": {
+                "title": "炉火残卷",
+                "idea_seed": "我先只抓住一个感觉：一个被逐出山门的人，在禁地炉火前偷听到不该听见的古老声音。",
+                "idea_seed_type": "scene",
+                "capture_stage": "seed",
+            },
+            "default_target_chapters": 1,
+        },
+    ).json()
+
+    thread = client.post(
+        f"/api/projects/{project['project_id']}/conversation-threads",
+        json={"scope": "project_bootstrap"},
+    ).json()
+    messages = client.get(f"/api/conversation-threads/{thread['thread_id']}/messages")
+
+    assert messages.status_code == 200
+    assert "我先接住你现在手里这点材料" in messages.json()[0]["content"]
+    assert "被逐出山门的人" in messages.json()[0]["content"]
+    assert thread["interview_state"]["basis"][1].startswith("灵感类型：scene")
 
 
 def test_conversation_scene_scopes_seed_targeted_opening_messages() -> None:
@@ -146,17 +176,17 @@ def test_conversation_scene_scopes_seed_targeted_opening_messages() -> None:
     assert outline_thread.status_code == 201
     assert character_thread.json()["title"] == "人物讨论"
     assert outline_thread.json()["title"] == "大纲讨论"
-    assert character_thread.json()["interview_state"]["goal"].startswith("把主角驱动")
-    assert outline_thread.json()["interview_state"]["goal"].startswith("把第一卷主线")
+    assert character_thread.json()["interview_state"]["goal"].startswith("把人物感觉逐步收紧")
+    assert outline_thread.json()["interview_state"]["goal"].startswith("把第一卷怎么往前推逐步聊清楚")
 
     character_messages = client.get(f"/api/conversation-threads/{character_thread.json()['thread_id']}/messages")
     outline_messages = client.get(f"/api/conversation-threads/{outline_thread.json()['thread_id']}/messages")
 
     assert "人物讨论线程" in character_messages.json()[0]["content"]
     assert "先回答第 1 问" in character_messages.json()[0]["content"]
-    assert "主角最关键的缺陷" in character_messages.json()[0]["content"]
+    assert "如果只用一个感觉描述主角" in character_messages.json()[0]["content"]
     assert "大纲讨论线程" in outline_messages.json()[0]["content"]
-    assert "第一卷最核心的主线冲突" in outline_messages.json()[0]["content"]
+    assert "第一卷最主要靠什么把读者往下带" in outline_messages.json()[0]["content"]
 
 
 def test_conversation_decision_is_persisted_and_applied_to_run_request() -> None:
