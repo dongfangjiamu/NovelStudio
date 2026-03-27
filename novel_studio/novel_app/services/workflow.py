@@ -79,8 +79,7 @@ class WorkflowService:
         for item in artifacts:
             latest_by_type[item["artifact_type"]] = item["payload"]
 
-        last_publish = latest_by_type.get("publish_package") or {}
-        last_chapter_no = int(last_publish.get("chapter_no") or 0)
+        last_chapter_no = self._last_generated_chapter_no(latest_by_type=latest_by_type, approval=approval)
         if requested_action == "continue":
             chapters_completed = last_chapter_no
             target_chapters = last_chapter_no + 1
@@ -103,7 +102,10 @@ class WorkflowService:
             "creative_contract": latest_by_type.get("creative_contract"),
             "story_bible": latest_by_type.get("story_bible"),
             "arc_plan": latest_by_type.get("arc_plan"),
-            "canon_state": latest_by_type.get("canon_state"),
+            "canon_state": self._normalize_canon_state_for_followup(
+                canon_state=latest_by_type.get("canon_state"),
+                chapters_completed=chapters_completed,
+            ),
             "writer_playbook": latest_by_type.get("writer_playbook"),
             "chapter_lesson": latest_by_type.get("chapter_lesson"),
             "issue_ledger": latest_by_type.get("issue_ledger"),
@@ -111,6 +113,40 @@ class WorkflowService:
             "chapters_completed": chapters_completed,
         }
         return request_payload
+
+    @staticmethod
+    def _last_generated_chapter_no(*, latest_by_type: dict[str, Any], approval: ApprovalRequestRecord) -> int:
+        candidates = [
+            ((latest_by_type.get("publish_package") or {}).get("chapter_no")),
+            ((latest_by_type.get("current_card") or {}).get("chapter_no")),
+            ((latest_by_type.get("planning_context") or {}).get("chapter_no")),
+            ((latest_by_type.get("drafting_context") or {}).get("chapter_no")),
+            ((latest_by_type.get("chapter_lesson") or {}).get("chapter_no")),
+            ((latest_by_type.get("feedback_summary") or {}).get("chapter_no")),
+            approval.chapter_no,
+        ]
+        for candidate in candidates:
+            try:
+                value = int(candidate or 0)
+            except (TypeError, ValueError):
+                value = 0
+            if value > 0:
+                return value
+        return 0
+
+    @staticmethod
+    def _normalize_canon_state_for_followup(*, canon_state: dict[str, Any] | None, chapters_completed: int) -> dict[str, Any]:
+        base = dict(canon_state or {})
+        story_clock = dict(base.get("story_clock") or {})
+        current_chapter = int(story_clock.get("current_chapter") or 0)
+        if chapters_completed > current_chapter:
+            story_clock["current_chapter"] = chapters_completed
+        story_clock.setdefault("current_arc", 1)
+        story_clock.setdefault("in_story_time", "day_0")
+        base["story_clock"] = story_clock
+        base.setdefault("character_states", {})
+        base.setdefault("open_loops", [])
+        return base
 
     def run_followup(
         self,

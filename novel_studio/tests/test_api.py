@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from novel_app.api.app import create_app
 from novel_app.config import AppConfig
 from novel_app.services.store import InMemoryStore
+from novel_app.services.workflow import WorkflowService
 
 
 def make_client() -> TestClient:
@@ -239,6 +240,115 @@ def test_execute_approved_followup_run_continues_to_next_chapter() -> None:
     assert completed_followup["result"]["publish_package"]["chapter_no"] == 2
     assert execute_payload["approval"]["executed_run_id"] == execute_payload["run"]["run_id"]
     assert completed_followup["request"]["human_instruction"]["comment"] == "延续当前悬念，但把主角主动试探前置"
+
+
+def test_execute_approved_followup_from_human_check_continues_next_chapter() -> None:
+    app = create_app(
+        config=AppConfig(
+            stub_mode=True,
+            openai_api_key=None,
+            admin_token=None,
+            database_url="sqlite:///:memory:",
+            model_name="gpt-5-nano",
+            project_id="api-test",
+            operator_id="tester",
+        ),
+        store=InMemoryStore(),
+    )
+
+    class FakeWorkflow:
+        def prepare_project_request(self, *, project, user_brief, target_chapters, operator_id, quick_mode=False):
+            return {
+                "user_brief": user_brief or project.default_user_brief,
+                "target_chapters": target_chapters or project.default_target_chapters,
+                "operator_id": operator_id or "tester",
+                "quick_mode": quick_mode,
+                "human_instruction": None,
+            }
+
+        def prepare_followup_request(self, *, project, original_request, artifacts, approval, requested_action):
+            service = WorkflowService(
+                AppConfig(
+                    stub_mode=True,
+                    openai_api_key=None,
+                    admin_token=None,
+                    database_url="sqlite:///:memory:",
+                    model_name="gpt-5-nano",
+                    project_id="api-test",
+                    operator_id="tester",
+                )
+            )
+            return service.prepare_followup_request(
+                project=project,
+                original_request=original_request,
+                artifacts=artifacts,
+                approval=approval,
+                requested_action=requested_action,
+            )
+
+        def run_followup(self, *, project, request_payload, on_update=None):
+            return {
+                "current_card": {"chapter_no": 2, "purpose": "第2章章卡"},
+                "publish_package": {"chapter_no": 2, "title": "第2章", "full_text": "正文"},
+                "canon_state": {"story_clock": {"current_chapter": 2}},
+                "feedback_summary": {"chapter_no": 2},
+                "event_log": ["chapter_card_ready:2", "release_package_ready:2", "feedback_ingested:2"],
+            }
+
+    app.state.workflow = FakeWorkflow()
+    client = TestClient(app)
+
+    project = client.post(
+        "/api/projects",
+        json={"name": "人工审批续写", "default_user_brief": {"title": "测试"}, "default_target_chapters": 1},
+    ).json()
+    source_run = app.state.store.save_run(
+        project_id=project["project_id"],
+        status="awaiting_approval",
+        request={"user_brief": {"title": "测试"}, "target_chapters": 1, "operator_id": "tester"},
+        result={
+            "current_card": {"chapter_no": 1, "purpose": "第1章章卡"},
+            "phase_decision": {"final_decision": "human_check"},
+            "event_log": ["chapter_card_ready:1", "phase_decision:human_check"],
+        },
+        error=None,
+    )
+    app.state.store.save_run_outputs(
+        run=source_run,
+        result={
+            "current_card": {"chapter_no": 1, "purpose": "第1章章卡"},
+            "canon_state": {"story_clock": {"current_arc": 1, "current_chapter": 0}},
+            "phase_decision": {"final_decision": "human_check"},
+            "human_guidance": {"chapter_no": 1},
+            "event_log": ["chapter_card_ready:1", "phase_decision:human_check"],
+        },
+    )
+    approval = app.state.store.create_approval_request(
+        project_id=project["project_id"],
+        run_id=source_run.run_id,
+        chapter_no=1,
+        requested_action="continue",
+        reason="人工确认后继续下一章",
+        payload={"source": "test"},
+    )
+    app.state.store.resolve_approval_request(
+        approval_id=approval.approval_id,
+        decision="approved",
+        operator_id="editor-1",
+        comment="继续下一章",
+    )
+
+    execute_response = client.post(f"/api/approval-requests/{approval.approval_id}/execute")
+
+    assert execute_response.status_code == 200
+    payload = execute_response.json()
+    assert payload["run"]["request"]["target_chapters"] == 2
+    stored_run = app.state.store.get_run(payload["run"]["run_id"])
+    assert stored_run is not None
+    assert stored_run.request["chapters_completed"] == 1
+
+    completed = wait_for_run(client, payload["run"]["run_id"])
+    assert completed["result"]["publish_package"]["chapter_no"] == 2
 
 
 def test_admin_page_routes() -> None:
