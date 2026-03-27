@@ -83,11 +83,15 @@ class WorkflowService:
         requested_action: str,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         human_instruction = {
-            "requested_action": approval.requested_action,
+            "requested_action": requested_action,
             "reason": approval.reason,
             "operator_id": approval.resolution_operator_id,
             "comment": approval.resolution_comment,
-            "payload": approval.payload,
+            "payload": {
+                **dict(approval.payload or {}),
+                "original_requested_action": approval.requested_action,
+                "executed_requested_action": requested_action,
+            },
         }
         return self._prepare_continuation_request(
             project=project,

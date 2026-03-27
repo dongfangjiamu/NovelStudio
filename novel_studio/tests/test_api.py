@@ -821,6 +821,119 @@ def test_execute_approved_followup_run_continues_to_next_chapter() -> None:
     assert completed_followup["request"]["human_instruction"]["comment"] == "延续当前悬念，但把主角主动试探前置"
 
 
+def test_execute_approved_followup_run_respects_recovery_override() -> None:
+    app = create_app(
+        config=AppConfig(
+            stub_mode=True,
+            openai_api_key=None,
+            admin_token=None,
+            database_url="sqlite:///:memory:",
+            model_name="gpt-5-nano",
+            project_id="api-test",
+            operator_id="tester",
+        ),
+        store=InMemoryStore(),
+    )
+
+    class FakeWorkflow:
+        def prepare_project_request(self, *, project, user_brief, target_chapters, operator_id, quick_mode=False):
+            return {
+                "user_brief": user_brief or project.default_user_brief,
+                "target_chapters": target_chapters or project.default_target_chapters,
+                "operator_id": operator_id or "tester",
+                "quick_mode": quick_mode,
+                "human_instruction": None,
+            }
+
+        def prepare_followup_request(self, *, project, original_request, artifacts, approval, requested_action):
+            service = WorkflowService(
+                AppConfig(
+                    stub_mode=True,
+                    openai_api_key=None,
+                    admin_token=None,
+                    database_url="sqlite:///:memory:",
+                    model_name="gpt-5-nano",
+                    project_id="api-test",
+                    operator_id="tester",
+                )
+            )
+            return service.prepare_followup_request(
+                project=project,
+                original_request=original_request,
+                artifacts=artifacts,
+                approval=approval,
+                requested_action=requested_action,
+            )
+
+        def run_followup(self, *, project, request_payload, on_update=None):
+            chapter_no = request_payload["target_chapters"]
+            return {
+                "current_card": {"chapter_no": chapter_no, "purpose": f"第{chapter_no}章章卡"},
+                "publish_package": {"chapter_no": chapter_no, "title": f"第{chapter_no}章", "full_text": "正文"},
+                "canon_state": {"story_clock": {"current_chapter": chapter_no}},
+                "feedback_summary": {"chapter_no": chapter_no},
+                "event_log": [f"chapter_card_ready:{chapter_no}", f"release_package_ready:{chapter_no}", f"feedback_ingested:{chapter_no}"],
+            }
+
+    app.state.workflow = FakeWorkflow()
+    client = TestClient(app)
+
+    project = client.post(
+        "/api/projects",
+        json={"name": "恢复路径覆盖", "default_user_brief": {"title": "测试"}, "default_target_chapters": 1},
+    ).json()
+    source_run = app.state.store.save_run(
+        project_id=project["project_id"],
+        status="completed",
+        request={"user_brief": {"title": "测试"}, "target_chapters": 1, "operator_id": "tester"},
+        result={
+            "current_card": {"chapter_no": 1, "purpose": "第1章章卡"},
+            "publish_package": {"chapter_no": 1, "title": "第1章", "full_text": "正文"},
+            "canon_state": {"story_clock": {"current_chapter": 1}},
+            "feedback_summary": {"chapter_no": 1},
+        },
+        error=None,
+    )
+    app.state.store.save_run_outputs(
+        run=source_run,
+        result={
+            "current_card": {"chapter_no": 1, "purpose": "第1章章卡"},
+            "publish_package": {"chapter_no": 1, "title": "第1章", "full_text": "正文"},
+            "canon_state": {"story_clock": {"current_chapter": 1}},
+            "feedback_summary": {"chapter_no": 1},
+            "event_log": ["release_package_ready:1", "feedback_ingested:1"],
+        },
+    )
+    approval = app.state.store.create_approval_request(
+        project_id=project["project_id"],
+        run_id=source_run.run_id,
+        chapter_no=1,
+        requested_action="continue",
+        reason="默认是继续，但这次改为重做章卡",
+        payload={"source": "test"},
+    )
+    app.state.store.resolve_approval_request(
+        approval_id=approval.approval_id,
+        decision="approved",
+        operator_id="editor-1",
+        comment="先重做章卡，再重写同章",
+    )
+
+    execute_response = client.post(
+        f"/api/approval-requests/{approval.approval_id}/execute",
+        json={"requested_action_override": "replan"},
+    )
+
+    assert execute_response.status_code == 200
+    payload = execute_response.json()
+    assert payload["run"]["request"]["target_chapters"] == 1
+    assert payload["run"]["request"]["human_instruction"]["requested_action"] == "replan"
+    assert payload["run"]["request"]["human_instruction"]["payload"]["executed_requested_action"] == "replan"
+    stored_run = app.state.store.get_run(payload["run"]["run_id"])
+    assert stored_run is not None
+    assert stored_run.request["chapters_completed"] == 0
+
+
 def test_execute_approved_followup_from_human_check_continues_next_chapter() -> None:
     app = create_app(
         config=AppConfig(

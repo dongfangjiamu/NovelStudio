@@ -6,12 +6,13 @@ from uuid import uuid4
 from pathlib import Path
 from threading import Thread
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import Body, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from novel_app.api.schemas import (
     ApiErrorResponse,
+    ApprovalExecuteRequest,
     ApprovalExecuteResponse,
     ApprovalRequestCreateRequest,
     ApprovalRequestResponse,
@@ -76,6 +77,22 @@ def run_requires_human_approval(result: dict[str, object]) -> bool:
     phase_decision = result.get("phase_decision") or {}
     blockers = result.get("blockers") or []
     return bool(blockers) or phase_decision.get("final_decision") == "human_check"
+
+
+def suggested_recovery_mode(
+    *,
+    human_guidance: dict[str, object] | None = None,
+    requested_action: str | None = None,
+) -> str:
+    if requested_action in {"continue", "rewrite", "replan"}:
+        return requested_action
+    guidance = human_guidance or {}
+    suggested_actions = " ".join(str(item) for item in (guidance.get("suggested_actions") or []))
+    if "章卡" in suggested_actions or "重做章卡" in suggested_actions or "重规划" in suggested_actions:
+        return "replan"
+    if guidance.get("must_fix") or guidance.get("stubborn_issues"):
+        return "rewrite"
+    return "continue"
 
 
 def infer_run_chapter(run) -> int | None:
@@ -795,6 +812,10 @@ def create_app(
                 if issue.get("fix_instruction") or issue.get("evidence") or issue.get("issue_id")
             ]
             must_fix = list(human_guidance.get("must_fix") or [])[:4]
+            recovery_mode = suggested_recovery_mode(
+                human_guidance=human_guidance,
+                requested_action=latest_approval.requested_action if latest_approval else None,
+            )
             return {
                 "chapter_no": human_guidance.get("chapter_no"),
                 "checkpoint_reason": human_guidance.get("reason") or "系统已暂停，等待人工判断。",
@@ -804,7 +825,8 @@ def create_app(
                 "stubborn_issues": stubborn,
                 "approval_id": latest_approval.approval_id if latest_approval else None,
                 "approval_status": latest_approval.status if latest_approval else None,
-                "recommendation": "先在这条会诊线程里明确保留项、优先修章卡还是正文，再去审批或执行。",
+                "recommended_recovery_mode": recovery_mode,
+                "recommendation": "先在这条会诊线程里明确保留项，再选择“继续当前流程 / 重做章卡 / 重写正文”中的恢复路径。",
             }
         current_card = result.get("current_card") or latest_by_type.get("current_card") or {}
         planning_context = result.get("planning_context") or latest_by_type.get("planning_context") or {}
@@ -901,6 +923,10 @@ def create_app(
         human_guidance = result.get("human_guidance") or {}
         issue_ledger = result.get("issue_ledger") or {}
         blockers = result.get("blockers") or []
+        recovery_mode = suggested_recovery_mode(
+            human_guidance=human_guidance,
+            requested_action=approval.requested_action if approval else None,
+        )
         return {
             "run_id": run.run_id,
             "chapter_no": infer_run_chapter(run),
@@ -913,6 +939,7 @@ def create_app(
             "blockers": blockers,
             "approval_id": approval.approval_id if approval else None,
             "approval_status": approval.status if approval else None,
+            "recommended_recovery_mode": recovery_mode,
             "thread_id": thread.thread_id if thread else None,
             "thread_title": thread.title if thread else None,
         }
@@ -969,7 +996,8 @@ def create_app(
                 f"当前运行状态：{run.status}\n"
                 f"问题账本摘要：{progress_summary}\n"
                 f"当前建议优先处理：{'; '.join(must_fix) if must_fix else '先明确这次优先改章卡还是改正文。'}\n\n"
-                "请直接告诉我：哪些内容必须保留、这次优先修什么、哪些改法不能接受。"
+                "请直接告诉我：哪些内容必须保留、这次优先修什么、哪些改法不能接受。\n"
+                "等会诊信息明确后，再决定是继续当前流程、重做章卡，还是直接重写正文。"
             )
             return "assistant_diagnosis", content, {"must_fix": must_fix, "progress_summary": progress_summary}
 
@@ -1595,6 +1623,7 @@ def create_app(
         approval_id: str,
         request: Request,
         response: Response,
+        payload: ApprovalExecuteRequest | None = Body(default=None),
     ) -> ApprovalExecuteResponse:
         approval = app.state.store.get_approval_request(approval_id)
         if not approval:
@@ -1616,13 +1645,14 @@ def create_app(
         project = app.state.store.get_project(approval.project_id)
         if not project:
             raise HTTPException(status_code=404, detail="project_not_found")
+        effective_requested_action = payload.requested_action_override if payload and payload.requested_action_override else approval.requested_action
         artifacts = [item.__dict__ for item in app.state.store.list_artifacts(approval.run_id)]
         request_payload = app.state.workflow.prepare_followup_request(
             project=project,
             original_request=original_run.request,
             artifacts=artifacts,
             approval=approval,
-            requested_action=approval.requested_action,
+            requested_action=effective_requested_action,
         )
         request_payload = merge_conversation_decisions_into_request(
             project_id=project.project_id,
@@ -1657,7 +1687,10 @@ def create_app(
             project_id=project.project_id,
             run_id=followup_run.run_id,
             approval_id=approval_id,
-            payload={"requested_action": approval.requested_action},
+            payload={
+                "requested_action": approval.requested_action,
+                "executed_requested_action": effective_requested_action,
+            },
         )
         if updated_approval is None:
             raise HTTPException(status_code=500, detail="approval_request_execution_persist_failed")

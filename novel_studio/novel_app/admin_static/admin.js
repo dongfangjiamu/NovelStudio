@@ -7,6 +7,7 @@ const state = {
   artifactFingerprint: "",
   artifactItems: [],
   decisionDrafts: [],
+  conversationRecoveryModes: {},
   conversationMessages: [],
   projectSnapshot: {
     chapters: [],
@@ -101,6 +102,12 @@ const CONVERSATION_SCENE_CONFIG = [
   { scope: "rewrite_intervention", element: "conversationCreateRewrite" },
   { scope: "chapter_retro", element: "conversationCreateRetro" },
 ];
+
+const RECOVERY_MODE_LABELS = {
+  continue: "继续当前流程",
+  replan: "重做章卡",
+  rewrite: "重写正文",
+};
 
 const NODE_LABELS = {
   interviewer_contract: "整理创作约束",
@@ -292,6 +299,67 @@ function humanCheckpoint(run) {
   return run?.result?.human_checkpoint || null;
 }
 
+function isRecoveryMode(value) {
+  return ["continue", "replan", "rewrite"].includes(value);
+}
+
+function recoveryModeLabel(value) {
+  return RECOVERY_MODE_LABELS[value] || value || "未指定";
+}
+
+function recoveryModeExecuteLabel(value) {
+  if (value === "replan") return "按会诊结论重做章卡";
+  if (value === "rewrite") return "按会诊结论重写正文";
+  return "按会诊结论继续当前流程";
+}
+
+function recoveryModeDescription(value) {
+  if (value === "replan") return "这次会先重做同一章的章卡，再按新的写前方向重写该章。";
+  if (value === "rewrite") return "这次会保留当前章卡方向，但直接重写同一章正文并优先处理会诊意见。";
+  return "这次会沿用当前流程结论继续执行，通常用于已经确认可直接续写下一步。";
+}
+
+function latestApprovalForThread(thread) {
+  if (!thread?.linked_run_id) return null;
+  return latestApprovalForRun(thread.linked_run_id, state.projectSnapshot.approvals || []);
+}
+
+function inferRecoveryModeForThread(thread) {
+  if (!thread || thread.scope !== "rewrite_intervention") {
+    return "continue";
+  }
+  const selected = state.conversationRecoveryModes[thread.thread_id];
+  if (isRecoveryMode(selected)) {
+    return selected;
+  }
+  const decisions = (state.projectSnapshot.conversationDecisions || []).filter((item) => item.thread_id === thread.thread_id);
+  if (decisions.some((item) => item.decision_type === "chapter_card_patch")) {
+    return "replan";
+  }
+  if (decisions.some((item) => item.decision_type === "human_instruction")) {
+    return "rewrite";
+  }
+  const contextMode = threadContext(thread)?.recommended_recovery_mode;
+  if (isRecoveryMode(contextMode)) {
+    return contextMode;
+  }
+  const checkpointMode = humanCheckpoint(state.projectSnapshot.runs.find((item) => item.run_id === thread.linked_run_id))?.recommended_recovery_mode;
+  if (isRecoveryMode(checkpointMode)) {
+    return checkpointMode;
+  }
+  const approvalMode = latestApprovalForThread(thread)?.requested_action;
+  if (isRecoveryMode(approvalMode)) {
+    return approvalMode;
+  }
+  return "continue";
+}
+
+function setRecoveryModeForThread(threadId, mode) {
+  if (!threadId || !isRecoveryMode(mode)) return;
+  state.conversationRecoveryModes[threadId] = mode;
+  renderProjectState();
+}
+
 function nodeLabel(value) {
   return NODE_LABELS[value] || value || "未记录";
 }
@@ -334,6 +402,8 @@ function renderThreadContext(thread) {
     return;
   }
   if (thread.scope === "rewrite_intervention") {
+    const approval = latestApprovalForThread(thread);
+    const selectedMode = inferRecoveryModeForThread(thread);
     const mustFix = context.must_fix?.length
       ? `<ul class="interview-list">${context.must_fix.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
       : `<div class="meta">当前没有明确的必须先修项。</div>`;
@@ -351,6 +421,32 @@ function renderThreadContext(thread) {
         </div>
         <div class="meta">${escapeHtml(context.recommendation || "")}</div>
         <div class="meta">${escapeHtml(context.checkpoint_reason || "系统已暂停，等待人工判断。")}</div>
+        <div class="recovery-mode-panel">
+          <div class="recovery-mode-head">
+            <strong>恢复路径选择</strong>
+            <div class="meta">${
+              approval?.status === "approved" && !approval.executed_run_id
+                ? "审批已通过，确认路径后即可执行。"
+                : approval?.status === "pending"
+                  ? "先处理审批，再执行你选定的恢复路径。"
+                  : approval?.status === "rejected"
+                    ? "这条审批已驳回。若要继续，请先调整会诊结论或重新提交。"
+                    : "先在这里明确本次是继续、重做章卡，还是重写正文。"
+            }</div>
+          </div>
+          <div class="actions recovery-mode-actions">
+            ${["continue", "replan", "rewrite"]
+              .map(
+                (mode) => `
+                  <button class="button ${selectedMode === mode ? "secondary recovery-selected" : "ghost"}" data-action="set-recovery-mode" data-mode="${mode}">
+                    ${recoveryModeLabel(mode)}
+                  </button>
+                `
+              )
+              .join("")}
+          </div>
+          <div class="meta recovery-mode-copy">当前选择：${recoveryModeLabel(selectedMode)}。${recoveryModeDescription(selectedMode)}</div>
+        </div>
         <div class="interview-grid">
           <div class="interview-block">
             <strong>当前为什么停在这里</strong>
@@ -374,6 +470,9 @@ function renderThreadContext(thread) {
         </div>
       </section>
     `;
+    el.conversationThreadContext.querySelectorAll("[data-action='set-recovery-mode']").forEach((node) => {
+      node.addEventListener("click", () => setRecoveryModeForThread(thread.thread_id, node.dataset.mode));
+    });
     return;
   }
   const mustInclude = context.must_include?.length
@@ -1412,6 +1511,48 @@ function deriveConversationAction() {
   if (focusRun?.status === "running") {
     return { disabled: true, label: "Run 进行中", copy: "当前已有 Run 在执行。等它结束后，再决定是否带着这些结论继续下一步。", action: null };
   }
+  if (thread?.scope === "rewrite_intervention") {
+    const approval = latestApprovalForThread(thread);
+    const selectedMode = inferRecoveryModeForThread(thread);
+    if (!approval) {
+      return {
+        disabled: true,
+        label: recoveryModeExecuteLabel(selectedMode),
+        copy: "当前会诊线程还没有绑定审批单。先等系统进入人工检查点，或从待处理审批进入对应会诊。",
+        action: null,
+      };
+    }
+    if (approval.status === "pending") {
+      return {
+        disabled: true,
+        label: "先处理审批",
+        copy: `当前已选恢复路径是“${recoveryModeLabel(selectedMode)}”，但审批还没通过。先在右侧审批区点“通过”或“驳回”。`,
+        action: null,
+      };
+    }
+    if (approval.status === "rejected") {
+      return {
+        disabled: true,
+        label: "审批已驳回",
+        copy: "这条人工检查点已经被驳回。建议先补充会诊结论，再重新提交新的处理动作。",
+        action: null,
+      };
+    }
+    if (approval.executed_run_id) {
+      return {
+        disabled: true,
+        label: "本次会诊已执行",
+        copy: `这条人工检查点已经按“${recoveryModeLabel(selectedMode)}”进入执行。请回到运行记录查看最新进展。`,
+        action: null,
+      };
+    }
+    return {
+      disabled: false,
+      label: recoveryModeExecuteLabel(selectedMode),
+      copy: recoveryModeDescription(selectedMode),
+      action: { kind: "execute-approval", approvalId: approval.approval_id, recoveryMode: selectedMode },
+    };
+  }
   if (focusDisplayStatus === "awaiting_approval") {
     return { disabled: true, label: "等待审批", copy: "当前章节还在等待你的审批决定。先处理审批，再决定是否按这些结论继续执行。", action: null };
   }
@@ -1591,7 +1732,7 @@ function renderFocusRun(summary) {
     : "";
   const checkpoint = humanCheckpoint(run);
   const checkpointBlock = checkpoint
-    ? `<div class="focus-metric"><strong>人工检查点</strong><div class="meta">${escapeHtml(checkpoint.reason || "流程已暂停。")}${checkpoint.thread_id ? ` 已自动创建会诊线程。` : ""}</div></div>`
+    ? `<div class="focus-metric"><strong>人工检查点</strong><div class="meta">${escapeHtml(checkpoint.reason || "流程已暂停。")}${checkpoint.thread_id ? ` 已自动创建会诊线程。` : ""}</div><div class="meta">建议恢复路径：${recoveryModeLabel(checkpoint.recommended_recovery_mode || "continue")}</div></div>`
     : "";
   const actionButtons = [
     renderViewArtifactsButton(run.run_id, run.artifact_count),
@@ -1847,7 +1988,8 @@ function renderApprovals(items) {
             actions.push({ action: "reject", id: item.approval_id, label: "驳回" });
           }
           if (item.status === "approved" && !item.executed_run_id) {
-            actions.push({ action: "execute", id: item.approval_id, label: "执行" });
+            const recoveryMode = interventionThread ? inferRecoveryModeForThread(interventionThread) : (isRecoveryMode(item.requested_action) ? item.requested_action : "continue");
+            actions.push({ action: `execute-${recoveryMode}`, id: item.approval_id, label: `执行：${recoveryModeLabel(recoveryMode)}` });
           }
           if (interventionThread) {
             actions.push({ action: "open-thread", id: interventionThread.thread_id, label: "进入会诊" });
@@ -2204,6 +2346,7 @@ function renderConversationPanel() {
   el.conversationExecute.dataset.actionKind = actionPlan.action?.kind || "";
   el.conversationExecute.dataset.runId = actionPlan.action?.runId || "";
   el.conversationExecute.dataset.approvalId = actionPlan.action?.approvalId || "";
+  el.conversationExecute.dataset.recoveryMode = actionPlan.action?.recoveryMode || "";
   el.conversationInput.placeholder = conversationInputPlaceholder(thread);
   renderInterviewSummary(thread);
   renderThreadContext(thread);
@@ -2594,7 +2737,7 @@ async function waitForRunCompletion(runId, timeoutMs = 480000) {
   return null;
 }
 
-async function handleApprovalAction(action, approvalId) {
+async function handleApprovalAction(action, approvalId, options = {}) {
   try {
     let backgroundStillRunning = false;
     if (action === "approve" || action === "reject") {
@@ -2607,8 +2750,16 @@ async function handleApprovalAction(action, approvalId) {
         }),
       });
     }
-    if (action === "execute") {
-      const payload = await api(`/api/approval-requests/${approvalId}/execute`, { method: "POST" });
+    if (action === "execute" || action.startsWith("execute-")) {
+      const recoveryMode = isRecoveryMode(options.recoveryMode)
+        ? options.recoveryMode
+        : (action.startsWith("execute-") ? action.replace("execute-", "") : "");
+      const payload = await api(`/api/approval-requests/${approvalId}/execute`, {
+        method: "POST",
+        ...(isRecoveryMode(recoveryMode)
+          ? { body: JSON.stringify({ requested_action_override: recoveryMode }) }
+          : {}),
+      });
       state.selectedRunId = payload.run.run_id;
       await selectProject(state.selectedProjectId);
       const completedRun = await waitForRunCompletion(payload.run.run_id);
@@ -2690,7 +2841,9 @@ async function executeConversationAction() {
   const kind = el.conversationExecute.dataset.actionKind;
   if (!kind || el.conversationExecute.disabled) return;
   if (kind === "execute-approval") {
-    await handleApprovalAction("execute", el.conversationExecute.dataset.approvalId);
+    await handleApprovalAction("execute", el.conversationExecute.dataset.approvalId, {
+      recoveryMode: el.conversationExecute.dataset.recoveryMode,
+    });
     return;
   }
   if (kind === "retry-run") {

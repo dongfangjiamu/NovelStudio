@@ -310,6 +310,30 @@ body {
   margin-top: 4px;
 }
 
+.recovery-mode-panel {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(138, 59, 18, 0.16);
+  background: rgba(255, 251, 245, 0.92);
+}
+
+.recovery-mode-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.recovery-mode-actions {
+  flex-wrap: wrap;
+}
+
+.recovery-mode-copy {
+  margin-top: 10px;
+}
+
 .conversation-messages {
   min-height: 220px;
   max-height: 560px;
@@ -590,6 +614,10 @@ textarea {
 .button.ghost {
   background: transparent;
   border: 1px solid var(--line);
+}
+
+.button.recovery-selected {
+  box-shadow: inset 0 0 0 1px rgba(138, 59, 18, 0.18);
 }
 
 .button:disabled {

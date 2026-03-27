@@ -96,6 +96,10 @@ class ApprovalResolveRequest(BaseModel):
     comment: str | None = Field(default=None, max_length=1000)
 
 
+class ApprovalExecuteRequest(BaseModel):
+    requested_action_override: Literal["continue", "rewrite", "replan"] | None = None
+
+
 class ApprovalRequestResponse(BaseModel):
     approval_id: str
     project_id: str
