@@ -383,6 +383,43 @@ function conversationGuidance(run) {
   return run?.request?.conversation_guidance || null;
 }
 
+function artifactRunRecord() {
+  const runId = state.artifactRunId || state.selectedRunId;
+  if (!runId) return null;
+  return (state.projectSnapshot.runs || []).find((item) => item.run_id === runId) || null;
+}
+
+function groupedRunGuidance(run) {
+  const guidance = conversationGuidance(run);
+  const adopted = guidance?.adopted_decisions || [];
+  const grouped = {
+    characters: [],
+    outline: [],
+    long_term: [],
+    chapter: [],
+  };
+  adopted.forEach((item) => {
+    const text = compactDecisionText(item.summary, 52);
+    if (!text) return;
+    grouped[conversationDecisionGroup(item.decision_type)]?.push(text);
+  });
+  return grouped;
+}
+
+function artifactGuidanceBullets(artifactType) {
+  const run = artifactRunRecord();
+  if (!run) return [];
+  const grouped = groupedRunGuidance(run);
+  const labels = [];
+  if (["current_card", "planning_context", "current_draft", "drafting_context"].includes(artifactType)) {
+    if (grouped.characters[0]) labels.push(`人物设定输入：${grouped.characters[0]}`);
+    if (grouped.outline[0]) labels.push(`卷纲约束输入：${grouped.outline[0]}`);
+    if (grouped.long_term[0]) labels.push(`长期规则输入：${grouped.long_term[0]}`);
+    if (grouped.chapter[0]) labels.push(`本章修订输入：${grouped.chapter[0]}`);
+  }
+  return labels;
+}
+
 function conversationGuidanceSummary(run) {
   const guidance = conversationGuidance(run);
   if (!guidance || !guidance.decision_count) return null;
@@ -559,6 +596,7 @@ function escapeHtml(value) {
 
 function summarizeArtifact(item) {
   const payload = item.payload || {};
+  const guidanceBullets = artifactGuidanceBullets(item.artifact_type);
   if (item.artifact_type === "publish_package") {
     return {
       lead: `${payload.title || "未命名章节"} · 约 ${payload.word_count || 0} 字`,
@@ -573,7 +611,10 @@ function summarizeArtifact(item) {
   if (item.artifact_type === "current_draft") {
     return {
       lead: `${payload.title || "当前正文草稿"} · ${payload.summary_100w || "已生成正文草稿"}`,
-      bullets: (payload.risk_notes || []).slice(0, 4).map((note) => `风险提示：${note}`),
+      bullets: [
+        ...guidanceBullets,
+        ...(payload.risk_notes || []).slice(0, 4).map((note) => `风险提示：${note}`),
+      ],
       excerpt: payload.content || "",
     };
   }
@@ -581,6 +622,7 @@ function summarizeArtifact(item) {
     return {
       lead: `第 ${payload.chapter_no || "?"} 章 · ${payload.purpose || "未记录章卡目的"}`,
       bullets: [
+        ...guidanceBullets,
         payload.pov ? `视角：${payload.pov}` : null,
         ...(payload.must_include || []).slice(0, 3).map((itemValue) => `必须包含：${itemValue}`),
         ...(payload.must_not_change || []).slice(0, 2).map((itemValue) => `不可改动：${itemValue}`),
@@ -655,6 +697,7 @@ function summarizeArtifact(item) {
     return {
       lead: `章卡层已应用 ${(payload.applied_guardrails || []).length} 条防线`,
       bullets: [
+        ...guidanceBullets,
         ...(payload.applied_guardrails || []).slice(0, 4).map((entry) => `已应用：${entry}`),
         ...applications.slice(0, 3).map((entry) => `问题 ${entry.issue_id || "unknown"}：${entry.applied_guardrail || entry.fix_instruction || "已前置规避"}`),
       ],
@@ -666,6 +709,7 @@ function summarizeArtifact(item) {
     return {
       lead: `正文层已应用 ${(payload.applied_guardrails || []).length} 条防线`,
       bullets: [
+        ...guidanceBullets,
         ...(payload.applied_guardrails || []).slice(0, 4).map((entry) => `已应用：${entry}`),
         ...(payload.must_include || []).slice(0, 2).map((entry) => `必须兑现：${entry}`),
         ...(payload.must_not_change || []).slice(0, 2).map((entry) => `不可破坏：${entry}`),
