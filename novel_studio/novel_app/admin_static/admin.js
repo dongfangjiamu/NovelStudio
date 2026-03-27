@@ -297,6 +297,10 @@ function conversationDecisionLabel(value) {
   return value || "已采纳结论";
 }
 
+function editableDecisionContent(item) {
+  return item.payload.comment || item.payload.rule || item.payload.note || item.payload.constraint || item.payload.instruction || item.payload.content || "";
+}
+
 function scopeNeedsRunContext(scope) {
   return ["chapter_planning", "rewrite_intervention", "chapter_retro"].includes(scope);
 }
@@ -1622,16 +1626,29 @@ function renderConversationDecisions(items) {
   }
   el.conversationDecisionList.innerHTML = items
     .map((item) => `
-      <div class="card">
+      <div class="card decision-card">
         <div class="card-head">
           <h4>${conversationDecisionLabel(item.decision_type)}</h4>
           <span class="status-chip status-approved">已采纳</span>
         </div>
         <div class="meta">${formatTimestamp(item.created_at)}</div>
-        <div class="meta">${escapeHtml(item.payload.comment || item.payload.rule || item.payload.instruction || item.payload.content || "已记录")}</div>
+        <label class="decision-editor">
+          <span class="muted">可直接编辑这条结论，保存后会进入后续运行。</span>
+          <textarea data-decision-editor="${item.decision_id}" rows="4">${escapeHtml(editableDecisionContent(item))}</textarea>
+        </label>
+        <div class="actions">
+          <button class="button ghost" data-action="save-decision" data-id="${item.decision_id}">保存修改</button>
+          <button class="button ghost" data-action="delete-decision" data-id="${item.decision_id}">撤销采纳</button>
+        </div>
       </div>
     `)
     .join("");
+  el.conversationDecisionList.querySelectorAll("[data-action='save-decision']").forEach((node) => {
+    node.addEventListener("click", () => updateConversationDecision(node.dataset.id));
+  });
+  el.conversationDecisionList.querySelectorAll("[data-action='delete-decision']").forEach((node) => {
+    node.addEventListener("click", () => deleteConversationDecision(node.dataset.id));
+  });
 }
 
 function renderConversationPanel() {
@@ -1737,6 +1754,44 @@ async function adoptConversationMessage(messageId, decisionType) {
       await loadConversationMessages(state.selectedThreadId);
     }
     setStatus(`已采纳为${conversationDecisionLabel(decisionType)}`, "ready");
+  } catch (error) {
+    setStatus(String(error.message || error), "error");
+  }
+}
+
+async function updateConversationDecision(decisionId) {
+  const editor = el.conversationDecisionList.querySelector(`[data-decision-editor="${decisionId}"]`);
+  const content = editor?.value.trim() || "";
+  if (!content) {
+    setStatus("结论内容不能为空", "error");
+    return;
+  }
+  try {
+    await api(`/api/conversation-decisions/${decisionId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ content }),
+    });
+    await selectProject(state.selectedProjectId);
+    if (state.selectedThreadId) {
+      await loadConversationMessages(state.selectedThreadId);
+    }
+    setStatus("已更新对话结论", "ready");
+  } catch (error) {
+    setStatus(String(error.message || error), "error");
+  }
+}
+
+async function deleteConversationDecision(decisionId) {
+  if (!window.confirm("确认撤销这条已采纳结论吗？撤销后它将不再进入后续运行。")) {
+    return;
+  }
+  try {
+    await api(`/api/conversation-decisions/${decisionId}`, { method: "DELETE" });
+    await selectProject(state.selectedProjectId);
+    if (state.selectedThreadId) {
+      await loadConversationMessages(state.selectedThreadId);
+    }
+    setStatus("已撤销这条采纳结论", "warn");
   } catch (error) {
     setStatus(String(error.message || error), "error");
   }

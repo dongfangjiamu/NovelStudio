@@ -606,6 +606,36 @@ class SqlAlchemyStore:
             rows = session.execute(stmt).scalars().all()
             return [self._conversation_decision_record(row) for row in rows]
 
+    def get_conversation_decision(self, decision_id: str) -> ConversationDecisionRecord | None:
+        with session_scope(self.session_factory) as session:
+            row = session.get(ConversationDecisionModel, decision_id)
+            if row is None:
+                return None
+            return self._conversation_decision_record(row)
+
+    def update_conversation_decision(
+        self,
+        *,
+        decision_id: str,
+        payload: dict,
+    ) -> ConversationDecisionRecord | None:
+        with session_scope(self.session_factory) as session:
+            row = session.get(ConversationDecisionModel, decision_id)
+            if row is None:
+                return None
+            row.payload = payload
+            session.add(row)
+            session.flush()
+            return self._conversation_decision_record(row)
+
+    def delete_conversation_decision(self, decision_id: str) -> bool:
+        with session_scope(self.session_factory) as session:
+            row = session.get(ConversationDecisionModel, decision_id)
+            if row is None:
+                return False
+            session.delete(row)
+            return True
+
     def health_status(self) -> dict[str, str | None]:
         ready, detail = ping_database(self.engine)
         return {

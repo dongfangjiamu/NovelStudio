@@ -296,6 +296,80 @@ def test_structured_conversation_decisions_are_merged_into_user_brief() -> None:
     assert "outline_notes" in completed["result"]["brief_snapshot"]
 
 
+def test_conversation_decision_can_be_updated_and_deleted() -> None:
+    app = create_app(
+        config=AppConfig(
+            stub_mode=True,
+            openai_api_key=None,
+            admin_token=None,
+            database_url="sqlite:///:memory:",
+            model_name="gpt-5-nano",
+            project_id="api-test",
+            operator_id="tester",
+        ),
+        store=InMemoryStore(),
+    )
+
+    class FakeWorkflow:
+        def prepare_project_request(self, *, project, user_brief, target_chapters, operator_id, quick_mode=False):
+            return {
+                "user_brief": user_brief or project.default_user_brief,
+                "target_chapters": target_chapters or project.default_target_chapters,
+                "operator_id": operator_id or "tester",
+                "quick_mode": quick_mode,
+            }
+
+        def run_project(self, *, project, request_payload, on_update=None):
+            return {
+                "current_card": {"chapter_no": 1, "purpose": "第1章章卡"},
+                "publish_package": {"chapter_no": 1, "title": "第1章", "full_text": "正文"},
+                "writer_playbook": request_payload.get("writer_playbook"),
+                "feedback_summary": {"chapter_no": 1},
+                "event_log": ["chapter_card_ready:1", "release_package_ready:1", "feedback_ingested:1"],
+            }
+
+    app.state.workflow = FakeWorkflow()
+    client = TestClient(app)
+    project = client.post(
+        "/api/projects",
+        json={"name": "更新采纳项目", "default_user_brief": {"title": "长夜炉火"}, "default_target_chapters": 1},
+    ).json()
+
+    thread = client.post(
+        f"/api/projects/{project['project_id']}/conversation-threads",
+        json={"scope": "project_bootstrap"},
+    ).json()
+    created_messages = client.post(
+        f"/api/conversation-threads/{thread['thread_id']}/messages",
+        json={"content": "主角的主动动作要在前半章出现。"},
+    ).json()
+    decision = client.post(
+        f"/api/conversation-messages/{created_messages[0]['message_id']}/adopt",
+        json={"decision_type": "writer_playbook_rule"},
+    ).json()
+
+    updated = client.patch(
+        f"/api/conversation-decisions/{decision['decision_id']}",
+        json={"content": "主角的主动动作要在前600字出现。"},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["payload"]["rule"] == "主角的主动动作要在前600字出现。"
+
+    run_response = client.post(f"/api/projects/{project['project_id']}/runs", json={})
+    completed = wait_for_run(client, run_response.json()["run_id"])
+    assert "主角的主动动作要在前600字出现。" in completed["result"]["writer_playbook"]["always_apply"]
+
+    deleted = client.delete(f"/api/conversation-decisions/{decision['decision_id']}")
+    assert deleted.status_code == 204
+
+    run_response_after_delete = client.post(
+        f"/api/projects/{project['project_id']}/runs",
+        json={"target_chapters": 1},
+    )
+    assert run_response_after_delete.status_code == 201
+    assert run_response_after_delete.json()["request"]["conversation_guidance"] is None
+
+
 def test_run_flow() -> None:
     client = make_client()
     project = client.post(

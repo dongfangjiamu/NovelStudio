@@ -313,6 +313,22 @@ body {
   padding-top: 12px;
 }
 
+.decision-card {
+  gap: 10px;
+}
+
+.decision-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.decision-editor textarea {
+  width: 100%;
+  min-height: 92px;
+  resize: vertical;
+}
+
 .learning-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));

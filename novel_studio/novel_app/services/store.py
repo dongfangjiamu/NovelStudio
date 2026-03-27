@@ -587,5 +587,40 @@ class InMemoryStore:
                 items = [item for item in items if item.thread_id == thread_id]
             return sorted(items, key=lambda item: item.created_at, reverse=True)
 
+    def get_conversation_decision(self, decision_id: str) -> ConversationDecisionRecord | None:
+        with self._lock:
+            return self._conversation_decisions.get(decision_id)
+
+    def update_conversation_decision(
+        self,
+        *,
+        decision_id: str,
+        payload: dict[str, Any],
+    ) -> ConversationDecisionRecord | None:
+        with self._lock:
+            current = self._conversation_decisions.get(decision_id)
+            if current is None:
+                return None
+            updated = ConversationDecisionRecord(
+                decision_id=current.decision_id,
+                project_id=current.project_id,
+                thread_id=current.thread_id,
+                message_id=current.message_id,
+                decision_type=current.decision_type,
+                payload=payload,
+                applied_to_run_id=current.applied_to_run_id,
+                applied_to_chapter_no=current.applied_to_chapter_no,
+                created_at=current.created_at,
+            )
+            self._conversation_decisions[decision_id] = updated
+            return updated
+
+    def delete_conversation_decision(self, decision_id: str) -> bool:
+        with self._lock:
+            if decision_id not in self._conversation_decisions:
+                return False
+            del self._conversation_decisions[decision_id]
+            return True
+
     def health_status(self) -> dict[str, str | None]:
         return {"status": "ready", "backend": "inmemory", "detail": None}

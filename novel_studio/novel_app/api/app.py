@@ -21,6 +21,7 @@ from novel_app.api.schemas import (
     ConversationMessageCreateRequest,
     ConversationMessageResponse,
     ConversationDecisionCreateRequest,
+    ConversationDecisionUpdateRequest,
     ConversationDecisionResponse,
     ConversationThreadCreateRequest,
     ConversationThreadResponse,
@@ -766,6 +767,21 @@ def create_app(
             "chapter_no": thread.linked_chapter_no,
         }
 
+    def rewrite_conversation_decision_payload(*, existing_payload: dict, decision_type: str, content: str) -> dict:
+        updated = dict(existing_payload or {})
+        updated["content"] = content
+        if decision_type == "human_instruction":
+            updated["comment"] = content
+        elif decision_type == "writer_playbook_rule":
+            updated["rule"] = content
+        elif decision_type == "character_note":
+            updated["note"] = content
+        elif decision_type == "outline_constraint":
+            updated["constraint"] = content
+        elif decision_type == "chapter_card_patch":
+            updated["instruction"] = content
+        return updated
+
     def merge_conversation_decisions_into_request(*, project_id: str, request_payload: dict[str, object]) -> dict[str, object]:
         decisions = app.state.store.list_conversation_decisions(project_id=project_id)
         if not decisions:
@@ -1460,6 +1476,66 @@ def create_app(
             ConversationDecisionResponse.model_validate(item.__dict__)
             for item in app.state.store.list_conversation_decisions(project_id=project_id)
         ]
+
+    @app.patch("/api/conversation-decisions/{decision_id}", response_model=ConversationDecisionResponse)
+    async def update_conversation_decision(
+        decision_id: str,
+        payload: ConversationDecisionUpdateRequest,
+        request: Request,
+        response: Response,
+    ) -> ConversationDecisionResponse:
+        decision = app.state.store.get_conversation_decision(decision_id)
+        if not decision:
+            raise HTTPException(status_code=404, detail="conversation_decision_not_found")
+        updated = app.state.store.update_conversation_decision(
+            decision_id=decision_id,
+            payload=rewrite_conversation_decision_payload(
+                existing_payload=decision.payload,
+                decision_type=decision.decision_type,
+                content=payload.content.strip(),
+            ),
+        )
+        if not updated:
+            raise HTTPException(status_code=404, detail="conversation_decision_not_found")
+        audit(
+            request=request,
+            response=response,
+            status_code=200,
+            action="conversation_decision.update",
+            resource_type="conversation_decision",
+            resource_id=updated.decision_id,
+            project_id=updated.project_id,
+            run_id=updated.applied_to_run_id,
+            approval_id=None,
+            payload={"decision_type": updated.decision_type},
+        )
+        return ConversationDecisionResponse.model_validate(updated.__dict__)
+
+    @app.delete("/api/conversation-decisions/{decision_id}", status_code=204)
+    async def delete_conversation_decision(
+        decision_id: str,
+        request: Request,
+        response: Response,
+    ) -> Response:
+        decision = app.state.store.get_conversation_decision(decision_id)
+        if not decision:
+            raise HTTPException(status_code=404, detail="conversation_decision_not_found")
+        deleted = app.state.store.delete_conversation_decision(decision_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="conversation_decision_not_found")
+        audit(
+            request=request,
+            response=response,
+            status_code=204,
+            action="conversation_decision.delete",
+            resource_type="conversation_decision",
+            resource_id=decision.decision_id,
+            project_id=decision.project_id,
+            run_id=decision.applied_to_run_id,
+            approval_id=None,
+            payload={"decision_type": decision.decision_type},
+        )
+        return Response(status_code=204)
 
     @app.post("/api/conversation-messages/{message_id}/adopt", response_model=ConversationDecisionResponse, status_code=201)
     async def adopt_conversation_message(

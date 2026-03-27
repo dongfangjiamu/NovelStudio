@@ -202,6 +202,10 @@ class ConversationDecisionCreateRequest(BaseModel):
     ]
 
 
+class ConversationDecisionUpdateRequest(BaseModel):
+    content: str = Field(min_length=1, max_length=4000)
+
+
 class ConversationDecisionResponse(BaseModel):
     decision_id: str
     project_id: str
