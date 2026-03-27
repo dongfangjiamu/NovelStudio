@@ -84,6 +84,38 @@ body {
   margin-bottom: 18px;
 }
 
+.workspace-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.workspace-tab {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 10px 14px;
+  background: rgba(255, 251, 245, 0.84);
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+}
+
+.workspace-tab.active {
+  background: linear-gradient(135deg, rgba(255, 244, 235, 0.98), rgba(251, 236, 224, 0.92));
+  border-color: rgba(138, 59, 18, 0.32);
+  box-shadow: 0 0 0 2px rgba(138, 59, 18, 0.08);
+}
+
+.workspace-page {
+  display: none;
+  margin-bottom: 18px;
+}
+
+.workspace-page.active {
+  display: block;
+}
+
 .lower-grid {
   grid-template-columns: 1.2fr 0.8fr;
 }
@@ -93,6 +125,11 @@ body {
   grid-template-columns: repeat(3, 1fr);
   gap: 16px;
   margin-top: 16px;
+}
+
+.columns.two-up {
+  grid-template-columns: repeat(2, 1fr);
+  margin-top: 0;
 }
 
 .overview-strip {

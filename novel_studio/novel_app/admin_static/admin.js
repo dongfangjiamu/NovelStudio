@@ -3,6 +3,7 @@ const state = {
   selectedProjectId: null,
   selectedRunId: null,
   selectedThreadId: null,
+  activeWorkspaceTab: localStorage.getItem("novelstudio_workspace_tab") || "dashboard",
   artifactRunId: null,
   artifactFingerprint: "",
   artifactItems: [],
@@ -72,6 +73,8 @@ const el = {
   overviewAction: document.getElementById("overview-action"),
   actionTitle: document.getElementById("action-title"),
   actionBody: document.getElementById("action-body"),
+  workspaceTabs: Array.from(document.querySelectorAll("[data-workspace-tab]")),
+  workspacePages: Array.from(document.querySelectorAll("[data-workspace-page]")),
 };
 
 const STATUS_LABELS = {
@@ -195,10 +198,43 @@ const EVENT_LABELS = {
   auto_timeout: "系统自动判定超时",
 };
 
+const WORKSPACE_TAB_NOTES = {
+  dashboard: "先看系统当前建议，再决定今天这本书最该推进的那一步。",
+  project: "这里只处理立项和基础创作设定，不混入运行过程信息。",
+  runs: "这里只看章节成果和运行记录，方便判断产出与过程是否顺畅。",
+  approvals: "这里只做审批决策，先处理当前最值得裁决的一条。",
+  conversation: "这里只做协作对话和结论沉淀，不被其他运行信息打断。",
+  artifacts: "这里只看过程材料，适合复盘本章方向、正文、审校与经验沉淀。",
+  audit: "这里只看系统记录和排障信息，日常创作时可以不打开。",
+};
+
 function setStatus(text, kind = "ready") {
   el.statusPill.textContent = text;
   el.statusPill.style.color = kind === "error" ? "#9b1c1c" : kind === "warn" ? "#8d5b00" : "#1f6b44";
   el.statusPill.style.background = kind === "error" ? "rgba(155,28,28,0.12)" : kind === "warn" ? "rgba(141,91,0,0.12)" : "rgba(31,107,68,0.12)";
+}
+
+function renderWorkspaceTab() {
+  el.workspaceTabs.forEach((node) => {
+    const active = node.dataset.workspaceTab === state.activeWorkspaceTab;
+    node.classList.toggle("active", active);
+    node.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  el.workspacePages.forEach((node) => {
+    const active = node.dataset.workspacePage === state.activeWorkspaceTab;
+    node.classList.toggle("active", active);
+    node.hidden = !active;
+  });
+  if (el.heroNote) {
+    el.heroNote.textContent = WORKSPACE_TAB_NOTES[state.activeWorkspaceTab] || WORKSPACE_TAB_NOTES.dashboard;
+  }
+}
+
+function setWorkspaceTab(tab) {
+  state.activeWorkspaceTab = tab;
+  localStorage.setItem("novelstudio_workspace_tab", tab);
+  renderWorkspaceTab();
+  window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 function headers() {
@@ -2889,11 +2925,14 @@ function renderArtifactsLoading(runId) {
 }
 
 function scrollArtifactsIntoView() {
-  artifactsPanel()?.scrollIntoView({ behavior: "smooth", block: "start" });
+  setWorkspaceTab("artifacts");
 }
 
-async function loadConversationMessages(threadId) {
+async function loadConversationMessages(threadId, { activateTab = true } = {}) {
   state.selectedThreadId = threadId;
+  if (activateTab) {
+    setWorkspaceTab("conversation");
+  }
   renderProjectState();
   const messages = await api(`/api/conversation-threads/${threadId}/messages`);
   state.conversationMessages = messages;
@@ -2903,7 +2942,8 @@ async function loadConversationMessages(threadId) {
 async function openConversationThread(threadId) {
   if (!threadId) return;
   state.selectedThreadId = threadId;
-  await loadConversationMessages(threadId);
+  setWorkspaceTab("conversation");
+  await loadConversationMessages(threadId, { activateTab: true });
   setStatus("已进入人工协作线程", "ready");
 }
 
@@ -2919,6 +2959,7 @@ function conversationThreadBody(scope) {
 
 async function createConversationThread(scope) {
   if (!state.selectedProjectId) return;
+  setWorkspaceTab("conversation");
   const body = conversationThreadBody(scope);
   const thread = await api(`/api/projects/${state.selectedProjectId}/conversation-threads`, {
     method: "POST",
@@ -2926,11 +2967,12 @@ async function createConversationThread(scope) {
   });
   await selectProject(state.selectedProjectId);
   state.selectedThreadId = thread.thread_id;
-  await loadConversationMessages(thread.thread_id);
+  await loadConversationMessages(thread.thread_id, { activateTab: true });
   setStatus(`已创建${conversationScopeLabel(scope)}线程`, "ready");
 }
 
 async function ensureThreadForDecisionType(decisionType) {
+  setWorkspaceTab("conversation");
   const current = selectedThread();
   if (current && threadSupportsDecisionType(current.scope, decisionType)) {
     return current;
@@ -2938,7 +2980,7 @@ async function ensureThreadForDecisionType(decisionType) {
   const existing = (state.projectSnapshot.conversationThreads || []).find((item) => threadSupportsDecisionType(item.scope, decisionType));
   if (existing) {
     state.selectedThreadId = existing.thread_id;
-    await loadConversationMessages(existing.thread_id);
+    await loadConversationMessages(existing.thread_id, { activateTab: true });
     return existing;
   }
   const scope = preferredScopeForDecisionType(decisionType);
@@ -2951,7 +2993,7 @@ async function ensureThreadForDecisionType(decisionType) {
   });
   await selectProject(state.selectedProjectId);
   state.selectedThreadId = thread.thread_id;
-  await loadConversationMessages(thread.thread_id);
+  await loadConversationMessages(thread.thread_id, { activateTab: true });
   return thread;
 }
 
@@ -2968,7 +3010,7 @@ async function sendConversationMessage(event) {
     el.conversationInput.value = "";
     await selectProject(state.selectedProjectId);
     if (state.selectedThreadId) {
-      await loadConversationMessages(state.selectedThreadId);
+      await loadConversationMessages(state.selectedThreadId, { activateTab: false });
     }
     setStatus("对话已记录，并已生成下一步协作提示", "ready");
   } catch (error) {
@@ -2984,7 +3026,7 @@ async function adoptConversationMessage(messageId, decisionType) {
     });
     await selectProject(state.selectedProjectId);
     if (state.selectedThreadId) {
-      await loadConversationMessages(state.selectedThreadId);
+      await loadConversationMessages(state.selectedThreadId, { activateTab: false });
     }
     setStatus(`已采纳为${conversationDecisionLabel(decisionType)}`, "ready");
   } catch (error) {
@@ -3006,7 +3048,7 @@ async function updateConversationDecision(decisionId) {
     });
     await selectProject(state.selectedProjectId);
     if (state.selectedThreadId) {
-      await loadConversationMessages(state.selectedThreadId);
+      await loadConversationMessages(state.selectedThreadId, { activateTab: false });
     }
     setStatus("已更新对话结论", "ready");
   } catch (error) {
@@ -3022,7 +3064,7 @@ async function deleteConversationDecision(decisionId) {
     await api(`/api/conversation-decisions/${decisionId}`, { method: "DELETE" });
     await selectProject(state.selectedProjectId);
     if (state.selectedThreadId) {
-      await loadConversationMessages(state.selectedThreadId);
+      await loadConversationMessages(state.selectedThreadId, { activateTab: false });
     }
     setStatus("已撤销这条采纳结论", "warn");
   } catch (error) {
@@ -3051,7 +3093,7 @@ async function saveDecisionDraft(draftId, decisionType) {
     state.decisionDrafts = state.decisionDrafts.filter((item) => item.draftId !== draftId);
     await selectProject(state.selectedProjectId);
     if (state.selectedThreadId) {
-      await loadConversationMessages(state.selectedThreadId);
+      await loadConversationMessages(state.selectedThreadId, { activateTab: false });
     }
     setStatus(`已新增${conversationDecisionLabel(decisionType)}`, "ready");
   } catch (error) {
@@ -3121,7 +3163,7 @@ async function selectProject(projectId) {
     renderArtifacts([]);
   }
   if (state.selectedThreadId) {
-    await loadConversationMessages(state.selectedThreadId);
+    await loadConversationMessages(state.selectedThreadId, { activateTab: false });
   } else {
     state.conversationMessages = [];
     renderConversationPanel();
@@ -3182,6 +3224,7 @@ async function loadArtifacts(
 async function handleRunAction(action, runId) {
   if (action === "view-run") {
     try {
+      setWorkspaceTab("artifacts");
       await loadArtifacts(runId, { showLoading: true, scrollOnSuccess: true, updateStatus: true });
     } catch (_error) {
       // loadArtifacts already updates the visible error state and status pill.
@@ -3252,6 +3295,7 @@ async function waitForRunCompletion(runId, timeoutMs = 480000) {
 
 async function handleApprovalAction(action, approvalId, options = {}) {
   try {
+    setWorkspaceTab("approvals");
     let backgroundStillRunning = false;
     if (action === "approve" || action === "reject") {
       await api(`/api/approval-requests/${approvalId}/resolve`, {
@@ -3322,6 +3366,7 @@ async function createProject(event) {
     await loadProjects();
     await selectProject(project.project_id);
     await loadAudit();
+    setWorkspaceTab("dashboard");
     setStatus("项目已创建并已切换到新项目", "ready");
   } catch (error) {
     setStatus(String(error.message || error), "error");
@@ -3331,6 +3376,7 @@ async function createProject(event) {
 async function createRun({ quickMode = false } = {}) {
   if (!state.selectedProjectId) return;
   try {
+    setWorkspaceTab("dashboard");
     const payload = await api(`/api/projects/${state.selectedProjectId}/runs`, {
       method: "POST",
       body: JSON.stringify({ operator_id: state.operatorId, quick_mode: quickMode }),
@@ -3377,8 +3423,15 @@ function saveAuth() {
 }
 
 async function boot() {
+  if (!el.workspacePages.some((node) => node.dataset.workspacePage === state.activeWorkspaceTab)) {
+    state.activeWorkspaceTab = "dashboard";
+  }
+  renderWorkspaceTab();
   el.apiToken.value = state.apiToken;
   el.operatorId.value = state.operatorId;
+  el.workspaceTabs.forEach((node) => {
+    node.addEventListener("click", () => setWorkspaceTab(node.dataset.workspaceTab));
+  });
   el.saveAuth.addEventListener("click", saveAuth);
   el.refreshProjects.addEventListener("click", () => loadProjects().catch((error) => setStatus(error.message, "error")));
   el.refreshAudit.addEventListener("click", () => loadAudit().catch((error) => setStatus(error.message, "error")));
