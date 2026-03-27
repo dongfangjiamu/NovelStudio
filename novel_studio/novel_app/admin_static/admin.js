@@ -2362,6 +2362,23 @@ function artifactSectionSummary(section) {
   };
 }
 
+function renderArtifactExcerpt(item, summary) {
+  if (!summary.excerpt) return "";
+  const escaped = escapeHtml(summary.excerpt).replaceAll("\n", "<br>");
+  const shouldCollapse = ["publish_package", "current_draft"].includes(item.artifact_type) && summary.excerpt.length > 280;
+  if (!shouldCollapse) {
+    return `<div class="artifact-excerpt">${escaped}</div>`;
+  }
+  const previewText = `${summary.excerpt.slice(0, 280).trimEnd()}...`;
+  return `
+    <div class="artifact-excerpt artifact-excerpt-preview">${escapeHtml(previewText).replaceAll("\n", "<br>")}</div>
+    <details class="artifact-excerpt-more">
+      <summary>${item.artifact_type === "publish_package" ? "展开全文" : "展开草稿全文"}</summary>
+      <div class="artifact-excerpt artifact-excerpt-full">${escaped}</div>
+    </details>
+  `;
+}
+
 function renderArtifactCard(item, options = {}) {
   const summary = summarizeArtifact(item);
   const spotlightBadge = options.spotlight ? `<div class="section-caption">优先看这一项</div>` : "";
@@ -2377,9 +2394,7 @@ function renderArtifactCard(item, options = {}) {
   const bulletsHtml = summary.bullets.length
     ? `<ul class="artifact-bullets">${summary.bullets.map((entry) => `<li>${escapeHtml(entry)}</li>`).join("")}</ul>`
     : `<div class="meta">暂无进一步摘要</div>`;
-  const excerptHtml = summary.excerpt
-    ? `<div class="artifact-excerpt">${escapeHtml(summary.excerpt).replaceAll("\n", "<br>")}</div>`
-    : "";
+  const excerptHtml = renderArtifactExcerpt(item, summary);
   return `
     <div class="card artifact-card ${options.spotlight ? "artifact-spotlight" : ""}">
       ${spotlightBadge}
