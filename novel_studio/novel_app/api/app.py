@@ -53,6 +53,7 @@ LIVE_ARTIFACT_TYPES = [
     "event_log",
 ]
 RUN_STALE_TIMEOUT_SECONDS = 900
+REVIEWER_STALL_HINT_SECONDS = 180
 REVIEWER_NODE_TO_REPORTER = {
     "continuity_reviewer": "continuity",
     "pacing_reviewer": "pacing",
@@ -121,6 +122,23 @@ def create_app(
             return "系统已判定需要重规划；如果后续长时间无更新，通常是重新生成章卡的模型调用挂住。"
         return None
 
+    def reviewer_timeout_reason(review_progress: dict[str, object] | None, *, include_duration: bool) -> str | None:
+        progress = review_progress or {}
+        reviewer = progress.get("longest_wait_reviewer")
+        seconds = int(progress.get("longest_wait_seconds", 0) or 0)
+        if not reviewer or seconds <= 0:
+            return None
+        label = REVIEWER_NODE_TO_REPORTER.get(str(reviewer), str(reviewer))
+        label = {
+            "continuity": "连续性审校",
+            "pacing": "节奏审校",
+            "style": "文风审校",
+            "reader_sim": "读者模拟",
+        }.get(label, str(reviewer))
+        if include_duration:
+            return f"最可能卡在 {label}，已等待约 {seconds // 60} 分钟。"
+        return f"当前最可能卡在 {label}。"
+
     def build_live_artifacts(state: dict[str, object]) -> list[dict[str, object]]:
         artifacts: list[dict[str, object]] = []
         for artifact_type in LIVE_ARTIFACT_TYPES:
@@ -169,6 +187,9 @@ def create_app(
         event_log_tail = list(progress.get("event_log_tail") or [])
         event_log_tail.append("auto_timeout")
         reason = f"系统自动判定该运行已超时：连续 {stale_seconds // 60} 分钟没有新进度。"
+        reviewer_reason = reviewer_timeout_reason(progress.get("review_progress"), include_duration=True)
+        if reviewer_reason:
+            reason = f"{reason} {reviewer_reason}"
         result["progress"] = {
             **progress,
             "latest_event": "auto_timeout",
@@ -205,6 +226,9 @@ def create_app(
                     "total_count": len(REVIEWER_NODE_TO_REPORTER),
                     "active_reviewers": [],
                     "pending_reviewers": list(REVIEWER_NODE_TO_REPORTER.values()),
+                    "longest_wait_reviewer": None,
+                    "longest_wait_seconds": 0,
+                    "stall_hint": None,
                     "reviewers": {},
                 },
             }
@@ -221,7 +245,7 @@ def create_app(
             stage_started_at = timestamp
             reviewers = {
                 reviewer: {
-                    "status": "pending",
+                    "status": "running",
                     "started_at": stage_started_at,
                     "finished_at": None,
                     "decision": None,
@@ -276,6 +300,17 @@ def create_app(
         completed = [name for name, item in reviewers.items() if item.get("status") == "completed"]
         active = [name for name, item in reviewers.items() if item.get("status") == "running"]
         pending = [name for name, item in reviewers.items() if item.get("status") in {None, "pending"}]
+        longest_wait_reviewer = None
+        longest_wait_seconds = 0
+        for reviewer in active:
+            started_at = parse_timestamp((reviewers.get(reviewer) or {}).get("started_at"))
+            if started_at is None:
+                continue
+            waited_seconds = max(0, int((datetime.now(timezone.utc) - started_at).total_seconds()))
+            reviewers[reviewer]["stalled_for_seconds"] = waited_seconds
+            if waited_seconds >= longest_wait_seconds:
+                longest_wait_seconds = waited_seconds
+                longest_wait_reviewer = reviewer
         if stage_started_at and not active and not pending:
             stage_status = "completed"
         elif stage_started_at:
@@ -291,6 +326,17 @@ def create_app(
             "total_count": len(REVIEWER_NODE_TO_REPORTER),
             "active_reviewers": active,
             "pending_reviewers": pending,
+            "longest_wait_reviewer": longest_wait_reviewer,
+            "longest_wait_seconds": longest_wait_seconds,
+            "stall_hint": reviewer_timeout_reason(
+                {
+                    "longest_wait_reviewer": longest_wait_reviewer,
+                    "longest_wait_seconds": longest_wait_seconds,
+                },
+                include_duration=False,
+            )
+            if longest_wait_seconds >= REVIEWER_STALL_HINT_SECONDS
+            else None,
             "reviewers": reviewers,
         }
 
@@ -306,6 +352,25 @@ def create_app(
         phase_decision = state.get("phase_decision") or {}
         chapter_no = publish_package.get("chapter_no") or current_card.get("chapter_no")
         final_decision = phase_decision.get("final_decision")
+        effective_review_progress = review_progress or {
+            "stage_status": "not_started",
+            "stage_started_at": None,
+            "completed_count": 0,
+            "total_count": len(REVIEWER_NODE_TO_REPORTER),
+            "active_reviewers": [],
+            "pending_reviewers": list(REVIEWER_NODE_TO_REPORTER.values()),
+            "longest_wait_reviewer": None,
+            "longest_wait_seconds": 0,
+            "stall_hint": None,
+            "reviewers": {},
+        }
+        possible_cause = infer_possible_cause(
+            current_node=current_node,
+            phase_decision=final_decision,
+        )
+        stall_hint = effective_review_progress.get("stall_hint")
+        if stall_hint:
+            possible_cause = f"{possible_cause} {stall_hint}" if possible_cause else str(stall_hint)
         return {
             "progress": {
                 "current_node": current_node,
@@ -320,20 +385,8 @@ def create_app(
                     phase_decision=final_decision,
                     chapter_no=chapter_no,
                 ),
-                "possible_cause": infer_possible_cause(
-                    current_node=current_node,
-                    phase_decision=final_decision,
-                ),
-                "review_progress": review_progress
-                or {
-                    "stage_status": "not_started",
-                    "stage_started_at": None,
-                    "completed_count": 0,
-                    "total_count": len(REVIEWER_NODE_TO_REPORTER),
-                    "active_reviewers": [],
-                    "pending_reviewers": list(REVIEWER_NODE_TO_REPORTER.values()),
-                    "reviewers": {},
-                },
+                "possible_cause": possible_cause,
+                "review_progress": effective_review_progress,
             },
             "live_artifacts": build_live_artifacts(state),
         }
@@ -394,6 +447,9 @@ def create_app(
         if stale_seconds < RUN_STALE_TIMEOUT_SECONDS:
             return run
         reason = f"系统自动判定该运行已超时：连续 {stale_seconds // 60} 分钟没有新进度。"
+        reviewer_reason = reviewer_timeout_reason(progress.get("review_progress"), include_duration=True)
+        if reviewer_reason:
+            reason = f"{reason} {reviewer_reason}"
         updated_run = app.state.store.update_run(
             run_id=run.run_id,
             status="failed",

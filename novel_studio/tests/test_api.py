@@ -444,6 +444,7 @@ def test_running_run_exposes_parallel_reviewer_progress() -> None:
     assert review_progress["pending_reviewers"] == []
     assert review_progress["reviewers"]["continuity"]["decision"] == "pass"
     assert review_progress["reviewers"]["pacing"]["decision"] == "rewrite"
+    assert review_progress["reviewers"]["style"]["stalled_for_seconds"] >= 0
 
     release_run.set()
     wait_for_run(client, run["run_id"])
@@ -621,6 +622,27 @@ def test_stale_running_run_auto_transitions_to_failed() -> None:
                 "updated_at": stale_updated_at,
                 "stage_goal": "重新规划第 1 章章卡。",
                 "possible_cause": "等待上游返回",
+                "review_progress": {
+                    "stage_status": "running",
+                    "stage_started_at": stale_updated_at,
+                    "completed_count": 3,
+                    "total_count": 4,
+                    "active_reviewers": ["style"],
+                    "pending_reviewers": [],
+                    "longest_wait_reviewer": "style",
+                    "longest_wait_seconds": 1200,
+                    "stall_hint": "当前最可能卡在 文风审校。",
+                    "reviewers": {
+                        "style": {
+                            "status": "running",
+                            "started_at": stale_updated_at,
+                            "finished_at": None,
+                            "decision": None,
+                            "total_score": None,
+                            "stalled_for_seconds": 1200,
+                        }
+                    },
+                },
             }
         },
         error=None,
@@ -632,4 +654,5 @@ def test_stale_running_run_auto_transitions_to_failed() -> None:
     payload = response.json()
     assert payload["status"] == "failed"
     assert "自动判定该运行已超时" in payload["error"]
+    assert "文风审校" in payload["error"]
     assert payload["result"]["manual_intervention"]["action"] == "auto_timeout"

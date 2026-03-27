@@ -242,6 +242,11 @@ function reviewerStatusText(value) {
   return "待返回";
 }
 
+function reviewerStallLabel(reviewProgress) {
+  if (!reviewProgress?.longest_wait_reviewer || !reviewProgress?.longest_wait_seconds) return null;
+  return `${reviewerLabel(reviewProgress.longest_wait_reviewer)} · 已等待 ${formatDuration((reviewProgress.longest_wait_seconds || 0) * 1000)}`;
+}
+
 function artifactLabel(value) {
   return ARTIFACT_LABELS[value] || value;
 }
@@ -284,8 +289,10 @@ function buildTimelineEntries(run) {
   if (reviewProgress.stage_status === "running" || reviewProgress.stage_status === "completed") {
     entries.push({
       title: `并行审校 ${reviewProgress.completed_count || 0}/${reviewProgress.total_count || 4}`,
-      meta: remainingReviewers(reviewProgress).length
-        ? `等待：${remainingReviewers(reviewProgress).map((item) => reviewerLabel(item)).join("、")}`
+      meta: reviewerStallLabel(reviewProgress)
+        ? `当前最慢：${reviewerStallLabel(reviewProgress)}`
+        : remainingReviewers(reviewProgress).length
+          ? `等待：${remainingReviewers(reviewProgress).map((item) => reviewerLabel(item)).join("、")}`
         : "4 个审校都已返回",
       status: reviewProgress.stage_status === "completed" ? "done" : "current",
     });
@@ -820,12 +827,12 @@ function deriveSummary(project, snapshot) {
         ? `系统正在并行审校，已完成 ${reviewProgress.completed_count || 0}/${reviewProgress.total_count || 4}；当前目标是：${stageGoal}`
         : `系统正在后台执行，当前节点是 ${currentNode}；当前目标是：${stageGoal}`,
       event: reviewProgress.stage_status === "running"
-        ? `最近事件：${latestEvent}；${remainingReviewers(reviewProgress).length ? `仍在等待 ${remainingReviewers(reviewProgress).map((item) => reviewerLabel(item)).join("、")}` : "等待最后汇总"}；最近更新时间：${updatedAt}。`
+        ? `最近事件：${latestEvent}；${reviewerStallLabel(reviewProgress) ? `当前最慢的是 ${reviewerStallLabel(reviewProgress)}` : remainingReviewers(reviewProgress).length ? `仍在等待 ${remainingReviewers(reviewProgress).map((item) => reviewerLabel(item)).join("、")}` : "等待最后汇总"}；最近更新时间：${updatedAt}。`
         : `最近事件：${latestEvent}；最近更新时间：${updatedAt}；当前重写次数：${progress.rewrite_count ?? 0}。`,
       next: stale
         ? `这条 Run 已经 ${formatDuration(staleMs)} 没有新进度。它更像是卡住，而不是一直重写。先点“刷新”确认；如果仍不动，就点“标记失败”，然后再“重新尝试”。`
         : reviewProgress.stage_status === "running"
-          ? `当前 4 个审校在并行工作，不要重复点击“生成章节”。等待自动刷新，留意哪些审校已返回、还剩谁没回。`
+        ? `当前 4 个审校在并行工作，不要重复点击“生成章节”。等待自动刷新，留意哪些审校已返回、还剩谁没回。`
           : `当前已经有 Run 在执行，不要重复点击“生成章节”。等待自动刷新，或点“查看工件”跟踪当前 Run。`,
       heroNote: stale
         ? "系统判断这条运行更像是卡住，而不是正常生成中。建议先收口这条失败，再决定是否重试。"
@@ -976,16 +983,19 @@ function renderReviewProgressCard(reviewProgress) {
   }
   const reviewers = reviewProgress.reviewers || {};
   const items = Object.entries(reviewers).map(([name, item]) => {
-    const status = item.status || "pending";
-    const decision = item.decision || "等待返回";
-    const totalScore = item.total_score ?? "?";
-    const finishedAt = item.finished_at ? ` · ${formatTimestamp(item.finished_at)}` : "";
-    return `
-        <div class="focus-metric">
+      const status = item.status || "pending";
+      const decision = item.decision || "等待返回";
+      const totalScore = item.total_score ?? "?";
+      const finishedAt = item.finished_at ? ` · ${formatTimestamp(item.finished_at)}` : "";
+      const stallMeta = status === "running" && item.stalled_for_seconds
+        ? ` · 已等待 ${formatDuration((item.stalled_for_seconds || 0) * 1000)}`
+        : "";
+      return `
+      <div class="focus-metric">
         <strong>${reviewerLabel(name)}</strong>
         <div class="meta">${reviewerStatusText(status)}</div>
         <div class="meta">${status === "completed" ? `结论：${decision} / 总分 ${totalScore}` : status === "running" ? "并行执行中" : "等待返回"}</div>
-        <div class="meta">${finishedAt || (item.started_at ? `开始于 ${formatTimestamp(item.started_at)}` : "尚未开始")}</div>
+        <div class="meta">${finishedAt || (item.started_at ? `开始于 ${formatTimestamp(item.started_at)}${stallMeta}` : "尚未开始")}</div>
       </div>
     `;
   });
