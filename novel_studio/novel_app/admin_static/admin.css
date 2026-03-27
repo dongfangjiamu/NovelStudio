@@ -317,6 +317,11 @@ body {
   gap: 10px;
 }
 
+.decision-card.draft {
+  border-style: dashed;
+  background: rgba(255, 249, 240, 0.72);
+}
+
 .decision-editor {
   display: flex;
   flex-direction: column;
@@ -327,6 +332,18 @@ body {
   width: 100%;
   min-height: 92px;
   resize: vertical;
+}
+
+.decision-group + .decision-group {
+  margin-top: 18px;
+}
+
+.decision-group-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
 }
 
 .learning-grid {

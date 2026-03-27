@@ -6,6 +6,7 @@ const state = {
   artifactRunId: null,
   artifactFingerprint: "",
   artifactItems: [],
+  decisionDrafts: [],
   conversationMessages: [],
   projectSnapshot: {
     chapters: [],
@@ -301,8 +302,43 @@ function editableDecisionContent(item) {
   return item.payload.comment || item.payload.rule || item.payload.note || item.payload.constraint || item.payload.instruction || item.payload.content || "";
 }
 
+function conversationDecisionGroup(value) {
+  if (value === "character_note") return "characters";
+  if (value === "outline_constraint") return "outline";
+  if (value === "writer_playbook_rule") return "long_term";
+  return "chapter";
+}
+
+function conversationDecisionGroupLabel(group) {
+  if (group === "characters") return "人物";
+  if (group === "outline") return "大纲";
+  if (group === "long_term") return "长期规则";
+  return "本章修订";
+}
+
+function draftDecisionLabel(decisionType) {
+  return conversationDecisionLabel(decisionType);
+}
+
 function scopeNeedsRunContext(scope) {
   return ["chapter_planning", "rewrite_intervention", "chapter_retro"].includes(scope);
+}
+
+function preferredScopeForDecisionType(decisionType) {
+  if (decisionType === "character_note") return "character_room";
+  if (decisionType === "outline_constraint") return "outline_room";
+  if (decisionType === "human_instruction") return "rewrite_intervention";
+  if (decisionType === "chapter_card_patch") return "chapter_planning";
+  return "project_bootstrap";
+}
+
+function threadSupportsDecisionType(scope, decisionType) {
+  if (decisionType === "writer_playbook_rule") return ["project_bootstrap", "chapter_retro"].includes(scope);
+  if (decisionType === "character_note") return scope === "character_room";
+  if (decisionType === "outline_constraint") return scope === "outline_room";
+  if (decisionType === "chapter_card_patch") return scope === "chapter_planning";
+  if (decisionType === "human_instruction") return scope === "rewrite_intervention";
+  return false;
 }
 
 function conversationGuidance(run) {
@@ -1619,13 +1655,95 @@ function renderConversationMessages(items) {
   el.conversationMessageList.scrollTop = el.conversationMessageList.scrollHeight;
 }
 
+function createDecisionDraft(decisionType) {
+  state.decisionDrafts = [
+    {
+      draftId: `draft_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
+      decisionType,
+      content: "",
+    },
+    ...state.decisionDrafts,
+  ];
+  renderConversationPanel();
+}
+
+function cancelDecisionDraft(draftId) {
+  state.decisionDrafts = state.decisionDrafts.filter((item) => item.draftId !== draftId);
+  renderConversationPanel();
+}
+
+function updateDecisionDraftValue(draftId, value) {
+  state.decisionDrafts = state.decisionDrafts.map((item) => (item.draftId === draftId ? { ...item, content: value } : item));
+}
+
+function renderDecisionDraftCard(item) {
+  return `
+    <div class="card decision-card draft">
+      <div class="card-head">
+        <h4>${draftDecisionLabel(item.decisionType)}</h4>
+        <span class="status-chip status-pending">草稿</span>
+      </div>
+      <div class="meta">这是一条尚未保存的新结论。保存后会自动进入后续运行。</div>
+      <label class="decision-editor">
+        <span class="muted">直接输入你想新增的结论。</span>
+        <textarea data-draft-editor="${item.draftId}" rows="4">${escapeHtml(item.content || "")}</textarea>
+      </label>
+      <div class="actions">
+        <button class="button ghost" data-action="save-draft-decision" data-id="${item.draftId}" data-decision-type="${item.decisionType}">保存为结论</button>
+        <button class="button ghost" data-action="cancel-draft-decision" data-id="${item.draftId}">取消</button>
+      </div>
+    </div>
+  `;
+}
+
 function renderConversationDecisions(items) {
-  if (!items.length) {
-    el.conversationDecisionList.innerHTML = `<div class="empty">当前还没有采纳结果。你可以把对话里的结论采纳为规则或修订指令。</div>`;
-    return;
-  }
-  el.conversationDecisionList.innerHTML = items
-    .map((item) => `
+  const groups = [
+    {
+      key: "characters",
+      title: "人物",
+      description: "主角气质、角色边界、人物关系张力等长期影响角色塑造的结论。",
+      createLabel: "新建人物设定",
+      createType: "character_note",
+    },
+    {
+      key: "outline",
+      title: "大纲",
+      description: "第一卷主线、升级路径、卷末高潮等会影响整体推进的约束。",
+      createLabel: "新建卷纲约束",
+      createType: "outline_constraint",
+    },
+    {
+      key: "long_term",
+      title: "长期规则",
+      description: "对整本书都应长期生效的写作偏好和硬规则。",
+      createLabel: "新建长期规则",
+      createType: "writer_playbook_rule",
+    },
+    {
+      key: "chapter",
+      title: "本章修订",
+      description: "只针对当前章节或当前一次修稿生效的执行指令。",
+      createLabel: "新建本章修订",
+      createType: "human_instruction",
+    },
+  ];
+  const itemsByGroup = Object.fromEntries(groups.map((group) => [group.key, []]));
+  items.forEach((item) => {
+    itemsByGroup[conversationDecisionGroup(item.decision_type)]?.push(item);
+  });
+  const draftsByGroup = Object.fromEntries(groups.map((group) => [group.key, []]));
+  state.decisionDrafts.forEach((item) => {
+    draftsByGroup[conversationDecisionGroup(item.decisionType)]?.push(item);
+  });
+
+  const hasAnyContent = items.length || state.decisionDrafts.length;
+  el.conversationDecisionList.innerHTML = groups
+    .map((group) => {
+      const groupItems = itemsByGroup[group.key] || [];
+      const groupDrafts = draftsByGroup[group.key] || [];
+      const body = [
+        ...groupDrafts.map((item) => renderDecisionDraftCard(item)),
+        ...groupItems.map((item) => `
       <div class="card decision-card">
         <div class="card-head">
           <h4>${conversationDecisionLabel(item.decision_type)}</h4>
@@ -1641,13 +1759,43 @@ function renderConversationDecisions(items) {
           <button class="button ghost" data-action="delete-decision" data-id="${item.decision_id}">撤销采纳</button>
         </div>
       </div>
-    `)
+    `),
+      ].join("");
+      const empty = !body ? `<div class="empty">这一组暂时还没有结论。</div>` : body;
+      return `
+        <section class="decision-group">
+          <div class="decision-group-head">
+            <div>
+              <div class="section-caption">${group.title}</div>
+              <div class="muted">${group.description}</div>
+            </div>
+            <button class="button ghost" data-action="create-draft-decision" data-decision-type="${group.createType}">${group.createLabel}</button>
+          </div>
+          <div class="stack compact">${empty}</div>
+        </section>
+      `;
+    })
     .join("");
+  if (!hasAnyContent) {
+    el.conversationDecisionList.insertAdjacentHTML("afterbegin", `<div class="empty">当前还没有采纳结果。你可以从任意一组直接新建空白结论，或者把对话消息采纳进来。</div>`);
+  }
   el.conversationDecisionList.querySelectorAll("[data-action='save-decision']").forEach((node) => {
     node.addEventListener("click", () => updateConversationDecision(node.dataset.id));
   });
   el.conversationDecisionList.querySelectorAll("[data-action='delete-decision']").forEach((node) => {
     node.addEventListener("click", () => deleteConversationDecision(node.dataset.id));
+  });
+  el.conversationDecisionList.querySelectorAll("[data-action='create-draft-decision']").forEach((node) => {
+    node.addEventListener("click", () => createDecisionDraft(node.dataset.decisionType));
+  });
+  el.conversationDecisionList.querySelectorAll("[data-action='cancel-draft-decision']").forEach((node) => {
+    node.addEventListener("click", () => cancelDecisionDraft(node.dataset.id));
+  });
+  el.conversationDecisionList.querySelectorAll("[data-draft-editor]").forEach((node) => {
+    node.addEventListener("input", () => updateDecisionDraftValue(node.dataset.draftEditor, node.value));
+  });
+  el.conversationDecisionList.querySelectorAll("[data-action='save-draft-decision']").forEach((node) => {
+    node.addEventListener("click", () => saveDecisionDraft(node.dataset.id, node.dataset.decisionType));
   });
 }
 
@@ -1704,14 +1852,19 @@ async function loadConversationMessages(threadId) {
   renderConversationPanel();
 }
 
-async function createConversationThread(scope) {
-  if (!state.selectedProjectId) return;
+function conversationThreadBody(scope) {
   const focusRun = pickFocusRun(state.projectSnapshot.runs || []);
   const body = { scope };
   if (scopeNeedsRunContext(scope) && focusRun) {
     body.linked_run_id = focusRun.run_id;
     body.linked_chapter_no = chapterForRun(focusRun);
   }
+  return body;
+}
+
+async function createConversationThread(scope) {
+  if (!state.selectedProjectId) return;
+  const body = conversationThreadBody(scope);
   const thread = await api(`/api/projects/${state.selectedProjectId}/conversation-threads`, {
     method: "POST",
     body: JSON.stringify(body),
@@ -1720,6 +1873,31 @@ async function createConversationThread(scope) {
   state.selectedThreadId = thread.thread_id;
   await loadConversationMessages(thread.thread_id);
   setStatus(`已创建${conversationScopeLabel(scope)}线程`, "ready");
+}
+
+async function ensureThreadForDecisionType(decisionType) {
+  const current = selectedThread();
+  if (current && threadSupportsDecisionType(current.scope, decisionType)) {
+    return current;
+  }
+  const existing = (state.projectSnapshot.conversationThreads || []).find((item) => threadSupportsDecisionType(item.scope, decisionType));
+  if (existing) {
+    state.selectedThreadId = existing.thread_id;
+    await loadConversationMessages(existing.thread_id);
+    return existing;
+  }
+  const scope = preferredScopeForDecisionType(decisionType);
+  if (scopeNeedsRunContext(scope) && !pickFocusRun(state.projectSnapshot.runs || [])) {
+    throw new Error("当前还没有可关联的章节运行，请先生成或选择一条章节运行。");
+  }
+  const thread = await api(`/api/projects/${state.selectedProjectId}/conversation-threads`, {
+    method: "POST",
+    body: JSON.stringify(conversationThreadBody(scope)),
+  });
+  await selectProject(state.selectedProjectId);
+  state.selectedThreadId = thread.thread_id;
+  await loadConversationMessages(thread.thread_id);
+  return thread;
 }
 
 async function sendConversationMessage(event) {
@@ -1797,6 +1975,35 @@ async function deleteConversationDecision(decisionId) {
   }
 }
 
+async function saveDecisionDraft(draftId, decisionType) {
+  const editor = el.conversationDecisionList.querySelector(`[data-draft-editor="${draftId}"]`);
+  const content = editor?.value.trim() || "";
+  if (!content) {
+    setStatus("结论内容不能为空", "error");
+    return;
+  }
+  try {
+    const thread = await ensureThreadForDecisionType(decisionType);
+    const createdMessages = await api(`/api/conversation-threads/${thread.thread_id}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content }),
+    });
+    const sourceMessage = createdMessages[0];
+    await api(`/api/conversation-messages/${sourceMessage.message_id}/adopt`, {
+      method: "POST",
+      body: JSON.stringify({ decision_type: decisionType }),
+    });
+    state.decisionDrafts = state.decisionDrafts.filter((item) => item.draftId !== draftId);
+    await selectProject(state.selectedProjectId);
+    if (state.selectedThreadId) {
+      await loadConversationMessages(state.selectedThreadId);
+    }
+    setStatus(`已新增${conversationDecisionLabel(decisionType)}`, "ready");
+  } catch (error) {
+    setStatus(String(error.message || error), "error");
+  }
+}
+
 function renderAudit(items) {
   el.auditList.innerHTML = items.length
     ? items
@@ -1821,6 +2028,7 @@ async function loadProjects() {
 
 async function selectProject(projectId) {
   state.selectedProjectId = projectId;
+  state.decisionDrafts = [];
   renderProjects();
   const project = state.projects.find((item) => item.project_id === projectId);
   el.projectTitle.textContent = project?.name || "未选择项目";
