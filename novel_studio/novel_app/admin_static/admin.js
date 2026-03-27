@@ -2647,6 +2647,26 @@ function renderConversationMessages(items) {
   el.conversationMessageList.scrollTop = el.conversationMessageList.scrollHeight;
 }
 
+function renderDecisionItemCard(item) {
+  return `
+    <div class="card decision-card">
+      <div class="card-head">
+        <h4>${conversationDecisionLabel(item.decision_type)}</h4>
+        <span class="status-chip status-approved">已采纳</span>
+      </div>
+      <div class="meta">${formatTimestamp(item.created_at)}</div>
+      <label class="decision-editor">
+        <span class="muted">可直接编辑这条结论，保存后会进入后续运行。</span>
+        <textarea data-decision-editor="${item.decision_id}" rows="4">${escapeHtml(editableDecisionContent(item))}</textarea>
+      </label>
+      <div class="actions">
+        <button class="button ghost" data-action="save-decision" data-id="${item.decision_id}">保存修改</button>
+        <button class="button ghost" data-action="delete-decision" data-id="${item.decision_id}">撤销采纳</button>
+      </div>
+    </div>
+  `;
+}
+
 function createDecisionDraft(decisionType) {
   state.decisionDrafts = [
     {
@@ -2736,27 +2756,16 @@ function renderConversationDecisions(items) {
       const groupDrafts = draftsByGroup[group.key] || [];
       const summary = summarizeDecisionGroup(groupItems, groupDrafts);
       const applied = summarizeAppliedGuidanceGroup(focusRun, group.key);
-      const body = [
-        ...groupDrafts.map((item) => renderDecisionDraftCard(item)),
-        ...groupItems.map((item) => `
-      <div class="card decision-card">
-        <div class="card-head">
-          <h4>${conversationDecisionLabel(item.decision_type)}</h4>
-          <span class="status-chip status-approved">已采纳</span>
-        </div>
-        <div class="meta">${formatTimestamp(item.created_at)}</div>
-        <label class="decision-editor">
-          <span class="muted">可直接编辑这条结论，保存后会进入后续运行。</span>
-          <textarea data-decision-editor="${item.decision_id}" rows="4">${escapeHtml(editableDecisionContent(item))}</textarea>
-        </label>
-        <div class="actions">
-          <button class="button ghost" data-action="save-decision" data-id="${item.decision_id}">保存修改</button>
-          <button class="button ghost" data-action="delete-decision" data-id="${item.decision_id}">撤销采纳</button>
-        </div>
-      </div>
-    `),
-      ].join("");
-      const empty = !body ? `<div class="empty">这一组暂时还没有结论。</div>` : body;
+      const primaryDraft = groupDrafts[0] || null;
+      const remainingDrafts = primaryDraft ? groupDrafts.slice(1) : [];
+      const primaryItem = groupItems[0] || null;
+      const remainingItems = primaryItem ? groupItems.slice(1) : [];
+      const primaryCard = primaryDraft
+        ? renderDecisionDraftCard(primaryDraft)
+        : primaryItem
+          ? renderDecisionItemCard(primaryItem)
+          : `<div class="empty">这一组暂时还没有结论。</div>`;
+      const secondaryCount = remainingDrafts.length + remainingItems.length;
       return `
         <section class="decision-group">
           <div class="decision-group-head">
@@ -2789,7 +2798,22 @@ function renderConversationDecisions(items) {
             </div>
             <button class="button ghost" data-action="create-draft-decision" data-decision-type="${group.createType}">${group.createLabel}</button>
           </div>
-          <div class="stack compact">${empty}</div>
+          <div class="stack compact">
+            ${primaryCard}
+            ${
+              secondaryCount
+                ? `
+                  <details class="decision-group-history">
+                    <summary>查看本组其他结论（${secondaryCount}）</summary>
+                    <div class="stack compact decision-group-history-body">
+                      ${remainingDrafts.map((item) => renderDecisionDraftCard(item)).join("")}
+                      ${remainingItems.map((item) => renderDecisionItemCard(item)).join("")}
+                    </div>
+                  </details>
+                `
+                : ""
+            }
+          </div>
         </section>
       `;
     })

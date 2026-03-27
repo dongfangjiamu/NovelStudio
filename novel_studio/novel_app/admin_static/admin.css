@@ -458,6 +458,27 @@ body {
   color: var(--muted);
 }
 
+.decision-group-history {
+  border: 1px dashed var(--line);
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: rgba(255, 251, 245, 0.72);
+}
+
+.decision-group-history summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.decision-group-history[open] summary {
+  margin-bottom: 10px;
+}
+
+.decision-group-history-body {
+  margin-top: 4px;
+}
+
 .learning-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
