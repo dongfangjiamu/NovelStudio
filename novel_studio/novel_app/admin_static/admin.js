@@ -56,6 +56,7 @@ const el = {
   conversationThreadCaption: document.getElementById("conversation-thread-caption"),
   conversationActionCopy: document.getElementById("conversation-action-copy"),
   conversationExecute: document.getElementById("conversation-execute"),
+  conversationInterviewSummary: document.getElementById("conversation-interview-summary"),
   conversationMessageList: document.getElementById("conversation-message-list"),
   conversationForm: document.getElementById("conversation-form"),
   conversationInput: document.getElementById("conversation-input"),
@@ -272,12 +273,43 @@ function selectedThread() {
   return (state.projectSnapshot.conversationThreads || []).find((item) => item.thread_id === state.selectedThreadId) || null;
 }
 
+function interviewState(thread) {
+  return thread?.interview_state || null;
+}
+
 function nodeLabel(value) {
   return NODE_LABELS[value] || value || "未记录";
 }
 
 function conversationScopeLabel(value) {
   return CONVERSATION_SCOPE_LABELS[value] || value || "创作对话";
+}
+
+function conversationThreadProgressLabel(thread) {
+  const interview = interviewState(thread);
+  return interview?.completion_label || null;
+}
+
+function conversationInputPlaceholder(thread) {
+  if (!thread) {
+    return "例如：这章我想保留主角克制的气质，但请把冲突前置，不要拖到中段。";
+  }
+  if (thread.scope === "project_bootstrap") {
+    return "例如：我想写一个被流放的铸器师，在王朝边境靠禁忌炉火翻身，卖点是废柴逆袭和门阀阴谋。";
+  }
+  if (thread.scope === "character_room") {
+    return "例如：主角表面克制冷硬，实则极怕再失去亲近之人，所以宁可先承担风险也不会让同伴顶上。";
+  }
+  if (thread.scope === "outline_room") {
+    return "例如：第一卷主线是主角借宗门试炼追查师门灭门真相，中段反转是发现真凶来自他最信任的一方。";
+  }
+  if (thread.scope === "chapter_planning") {
+    return "例如：这一章我要主角主动试探敌方底牌，章末必须落在更大风险暴露。";
+  }
+  if (thread.scope === "rewrite_intervention") {
+    return "例如：不要改掉主角克制气质，但前 800 字一定要让他先行动一次，别再铺垫过长。";
+  }
+  return "例如：这章通过的关键是冲突前置和钩子更明确，后面要继续保持这个节奏。";
 }
 
 function conversationRoleLabel(role, messageType) {
@@ -356,6 +388,57 @@ function summarizeAppliedGuidanceGroup(run, groupKey) {
     appliedCount: matches.length,
     highlights: matches,
   };
+}
+
+function renderInterviewSummary(thread) {
+  const interview = interviewState(thread);
+  if (!thread || !interview) {
+    el.conversationInterviewSummary.innerHTML = "";
+    return;
+  }
+  const confirmed = interview.confirmed_topics?.length
+    ? `<ul class="interview-list">${interview.confirmed_topics.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+    : `<div class="meta">还没有稳定确认项，先从当前下一问开始回答。</div>`;
+  const unresolved = interview.unresolved_topics?.length
+    ? `<ul class="interview-list">${interview.unresolved_topics.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+    : `<div class="meta">当前关键问题已基本问清，可以开始采纳并执行。</div>`;
+  const basis = interview.basis?.length
+    ? `<div class="meta">${interview.basis.map((item) => escapeHtml(item)).join(" / ")}</div>`
+    : `<div class="meta">当前还没有明确的项目基础信息。</div>`;
+  const adopted = interview.adopted_highlights?.length
+    ? `<div class="meta">${interview.adopted_highlights.map((item) => escapeHtml(compactDecisionText(item, 36))).join(" / ")}</div>`
+    : `<div class="meta">当前线程还没有采纳结论。</div>`;
+  el.conversationInterviewSummary.innerHTML = `
+    <section class="interview-card">
+      <div class="card-head">
+        <h4>共创采访进度</h4>
+        <span class="status-chip status-approved">已确认 ${interview.completion_label}</span>
+      </div>
+      <div class="meta">${escapeHtml(interview.goal || "")}</div>
+      ${basis}
+      <div class="interview-grid">
+        <div class="interview-block">
+          <strong>已确认事项</strong>
+          ${confirmed}
+        </div>
+        <div class="interview-block">
+          <strong>未决问题</strong>
+          ${unresolved}
+        </div>
+      </div>
+      <div class="interview-grid">
+        <div class="interview-block">
+          <strong>系统下一问</strong>
+          <div class="meta">${escapeHtml(interview.next_prompt || "继续补充你认为最关键的信息。")}</div>
+        </div>
+        <div class="interview-block">
+          <strong>当前已采纳</strong>
+          <div class="meta">已采纳 ${interview.adopted_count || 0} 条</div>
+          ${adopted}
+        </div>
+      </div>
+    </section>
+  `;
 }
 
 function scopeNeedsRunContext(scope) {
@@ -1664,6 +1747,8 @@ function renderConversationThreads(items) {
     .map((item) => {
       const active = item.thread_id === state.selectedThreadId ? "active" : "";
       const chapterText = item.linked_chapter_no ? `第 ${item.linked_chapter_no} 章` : "项目级";
+      const progressLabel = conversationThreadProgressLabel(item);
+      const nextPrompt = interviewState(item)?.next_prompt;
       return `
         <button class="card ${active}" data-thread-id="${item.thread_id}">
           <div class="card-head">
@@ -1671,7 +1756,9 @@ function renderConversationThreads(items) {
             <span class="status-chip status-${item.status}">${item.status === "open" ? "进行中" : item.status}</span>
           </div>
           <div class="meta">${conversationScopeLabel(item.scope)} · ${chapterText}</div>
+          ${progressLabel ? `<div class="meta">采访进度 ${progressLabel}</div>` : ""}
           <div class="meta">${item.latest_message_preview || "还没有消息。"}</div>
+          ${nextPrompt ? `<div class="card-caption">下一问：${escapeHtml(compactDecisionText(nextPrompt, 46))}</div>` : ""}
         </button>
       `;
     })
@@ -1925,9 +2012,12 @@ function renderConversationPanel() {
   el.conversationExecute.dataset.actionKind = actionPlan.action?.kind || "";
   el.conversationExecute.dataset.runId = actionPlan.action?.runId || "";
   el.conversationExecute.dataset.approvalId = actionPlan.action?.approvalId || "";
+  el.conversationInput.placeholder = conversationInputPlaceholder(thread);
+  renderInterviewSummary(thread);
   renderConversationMessages(state.conversationMessages || []);
   el.conversationSend.disabled = !thread;
   if (!thread && !state.conversationMessages.length) {
+    el.conversationInterviewSummary.innerHTML = "";
     el.conversationMessageList.innerHTML = `<div class="empty">先在当前项目中创建一条创作对话线程。</div>`;
   }
 }

@@ -265,6 +265,46 @@ body {
   background: rgba(255, 249, 240, 0.9);
 }
 
+.conversation-interview-summary {
+  display: grid;
+  gap: 12px;
+}
+
+.interview-card {
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(138, 59, 18, 0.18);
+  background: linear-gradient(180deg, rgba(255, 247, 238, 0.96), rgba(255, 252, 246, 0.92));
+}
+
+.interview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.interview-block {
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: rgba(255, 252, 247, 0.9);
+}
+
+.interview-block strong {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.interview-list {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+}
+
+.interview-list li + li {
+  margin-top: 4px;
+}
+
 .conversation-messages {
   min-height: 220px;
   max-height: 560px;
@@ -802,7 +842,8 @@ pre {
   .columns,
   .overview-strip,
   .summary-grid,
-  .focus-run-grid {
+  .focus-run-grid,
+  .interview-grid {
     grid-template-columns: 1fr;
   }
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from uuid import uuid4
 
 from pathlib import Path
@@ -611,38 +612,166 @@ def create_app(
             return f"第 {chapter_no or '?'} 章复盘"
         return "创作对话"
 
+    def interview_blueprint(scope: str) -> dict | None:
+        if scope == "project_bootstrap":
+            return {
+                "goal": "把项目方向问清楚，形成可执行的立项基础。",
+                "decision_types": ["writer_playbook_rule", "character_note", "outline_constraint"],
+                "topics": [
+                    {
+                        "title": "一句话卖点",
+                        "prompt": "请先只用一句话回答：这本书最想卖给读者的核心爽点是什么？",
+                    },
+                    {
+                        "title": "主角核心欲望",
+                        "prompt": "主角最想得到什么？如果拿不到，他会失去什么？",
+                    },
+                    {
+                        "title": "第一卷卖点",
+                        "prompt": "第一卷最想让读者追下去的东西是什么：阴谋、升级、关系、复仇，还是别的？",
+                    },
+                    {
+                        "title": "写作禁区",
+                        "prompt": "这本书最不能写歪的地方是什么？有没有你明确不接受的套路、人物走向或文风？",
+                    },
+                ],
+                "closing_prompt": "这四项已经基本问清。下一步建议把已形成的稳定结论采纳为人物设定、卷纲约束或长期规则。",
+            }
+        if scope == "character_room":
+            return {
+                "goal": "把主角驱动、人物关系和行为边界收紧成人物设定。",
+                "decision_types": ["character_note"],
+                "topics": [
+                    {
+                        "title": "主角缺陷",
+                        "prompt": "主角最关键的缺陷是什么？这个缺陷会在故事前期造成什么代价？",
+                    },
+                    {
+                        "title": "主角真正想要什么",
+                        "prompt": "主角表面上想要什么，内里真正想要什么？这两者是否冲突？",
+                    },
+                    {
+                        "title": "关键关系张力",
+                        "prompt": "谁是最关键的配角或对手？他和主角之间最大的关系张力是什么？",
+                    },
+                    {
+                        "title": "角色边界",
+                        "prompt": "主角有哪些事绝不会做？哪些行为一旦出现，就会让你觉得人物写崩了？",
+                    },
+                ],
+                "closing_prompt": "人物核心边界已经基本清楚。下一步建议把关键结论采纳为人物设定，进入后续写作。",
+            }
+        if scope == "outline_room":
+            return {
+                "goal": "把第一卷主线和推进结构收紧成可执行的大纲约束。",
+                "decision_types": ["outline_constraint"],
+                "topics": [
+                    {
+                        "title": "第一卷主线冲突",
+                        "prompt": "第一卷最核心的主线冲突是什么？它为什么足以支撑读者持续追更？",
+                    },
+                    {
+                        "title": "升级路径",
+                        "prompt": "主角在第一卷里会怎样一步步升级或逼近目标？中间至少经过哪几次关键推进？",
+                    },
+                    {
+                        "title": "阶段反转",
+                        "prompt": "第一卷中段最重要的一次反转是什么？它会怎样改变局势或认知？",
+                    },
+                    {
+                        "title": "卷末高潮",
+                        "prompt": "卷末必须兑现的高潮是什么？读者看到卷末时最应该得到哪种情绪回报？",
+                    },
+                ],
+                "closing_prompt": "第一卷方向已经足够清楚。下一步建议把这些结论采纳为卷纲约束，再驱动章卡和正文。",
+            }
+        return None
+
+    def build_interview_state(*, thread, project) -> dict | None:
+        blueprint = interview_blueprint(thread.scope)
+        if blueprint is None:
+            return None
+        messages = app.state.store.list_conversation_messages(thread.thread_id)
+        user_messages = [item for item in messages if item.role == "user"]
+        topics = blueprint["topics"]
+        completed_count = min(len(user_messages), len(topics))
+        confirmed_topics = [item["title"] for item in topics[:completed_count]]
+        unresolved_topics = [item["title"] for item in topics[completed_count:]]
+        next_prompt = (
+            topics[completed_count]["prompt"]
+            if completed_count < len(topics)
+            else blueprint["closing_prompt"]
+        )
+        relevant_types = set(blueprint["decision_types"])
+        adopted = [
+            item
+            for item in app.state.store.list_conversation_decisions(
+                project_id=thread.project_id,
+                thread_id=thread.thread_id,
+            )
+            if item.decision_type in relevant_types
+        ]
+        brief = project.default_user_brief or {}
+        basis = []
+        if brief.get("title"):
+            basis.append(f"书名：{brief['title']}")
+        if brief.get("genre"):
+            basis.append(f"题材：{brief['genre']}")
+        if brief.get("hook"):
+            basis.append(f"当前钩子：{brief['hook']}")
+        return {
+            "goal": blueprint["goal"],
+            "completion_count": completed_count,
+            "total_topics": len(topics),
+            "completion_label": f"{completed_count}/{len(topics)}",
+            "confirmed_topics": confirmed_topics,
+            "unresolved_topics": unresolved_topics,
+            "next_prompt": next_prompt,
+            "basis": basis,
+            "adopted_count": len(adopted),
+            "adopted_highlights": [item.summary for item in adopted[:3]],
+        }
+
     def build_thread_opening(*, scope: str, project, run, chapter_no: int | None) -> tuple[str, str, dict]:
         if scope == "project_bootstrap":
+            thread_stub = SimpleNamespace(thread_id="", project_id=project.project_id, scope=scope)
+            interview_state = build_interview_state(thread=thread_stub, project=project)
             brief = project.default_user_brief or {}
             title = brief.get("title") or project.name
             genre = brief.get("genre") or "未定题材"
-            hook = brief.get("hook") or "请先明确一句话卖点。"
             content = (
                 f"我们先把《{title}》的立项方向问清楚。当前已知题材是 {genre}。\n\n"
-                f"当前核心钩子：{hook}\n\n"
-                "建议优先确认 4 件事：一句话卖点、主角核心欲望、第一卷卖点、必须避免的写法。"
+                f"本线程目标：{interview_state['goal']}\n"
+                f"当前进度：{interview_state['completion_label']}\n\n"
+                f"先回答第 1 问：{interview_state['next_prompt']}"
             )
-            return "assistant_question", content, {"suggested_topics": ["核心爽点", "主角欲望", "第一卷卖点", "写作禁区"]}
+            return "assistant_question", content, {"interview_state": interview_state}
 
         if scope == "character_room":
+            thread_stub = SimpleNamespace(thread_id="", project_id=project.project_id, scope=scope)
+            interview_state = build_interview_state(thread=thread_stub, project=project)
             brief = project.default_user_brief or {}
             title = brief.get("title") or project.name
             content = (
                 f"这是《{title}》的人物讨论线程。\n\n"
-                "建议先把 4 件事说清楚：主角当前缺陷、主角真正想要什么、主角最怕失去什么、关键配角和主角的关系张力。\n\n"
-                "如果你还没想清楚，也可以直接告诉我你想要的人物气质，我会帮你继续追问。"
+                f"本线程目标：{interview_state['goal']}\n"
+                f"当前进度：{interview_state['completion_label']}\n\n"
+                f"先回答第 1 问：{interview_state['next_prompt']}"
             )
-            return "assistant_question", content, {"suggested_topics": ["主角缺陷", "主角欲望", "主角恐惧", "关键关系张力"]}
+            return "assistant_question", content, {"interview_state": interview_state}
 
         if scope == "outline_room":
+            thread_stub = SimpleNamespace(thread_id="", project_id=project.project_id, scope=scope)
+            interview_state = build_interview_state(thread=thread_stub, project=project)
             brief = project.default_user_brief or {}
             title = brief.get("title") or project.name
             content = (
                 f"这是《{title}》的大纲讨论线程。\n\n"
-                "建议先确认 4 件事：第一卷主线冲突、升级路径、阶段性反转、卷末必须兑现的高潮。\n\n"
-                "如果你已有模糊想法，也可以先说一个版本，我来帮你拆成更可执行的卷纲。"
+                f"本线程目标：{interview_state['goal']}\n"
+                f"当前进度：{interview_state['completion_label']}\n\n"
+                f"先回答第 1 问：{interview_state['next_prompt']}"
             )
-            return "assistant_question", content, {"suggested_topics": ["第一卷主线冲突", "升级路径", "阶段反转", "卷末高潮"]}
+            return "assistant_question", content, {"interview_state": interview_state}
 
         if scope == "rewrite_intervention" and run is not None:
             result = run.result or {}
@@ -677,25 +806,37 @@ def create_app(
         if len(excerpt) > 100:
             excerpt = f"{excerpt[:100]}..."
         if thread.scope == "project_bootstrap":
+            interview_state = build_interview_state(thread=thread, project=project)
             content = (
                 f"已记录你的方向：{excerpt}\n\n"
-                "我建议下一步继续补齐：一句话卖点、主角核心欲望、第一卷卖点、必须避免的写法。"
+                f"当前采访进度：{interview_state['completion_label']}。\n"
+                f"已确认：{'、'.join(interview_state['confirmed_topics']) if interview_state['confirmed_topics'] else '暂未形成稳定结论'}。\n"
+                f"下一问：{interview_state['next_prompt']}\n"
+                f"仍待明确：{'、'.join(interview_state['unresolved_topics']) if interview_state['unresolved_topics'] else '已基本问清，可开始采纳结论。'}"
             )
-            payload = {"suggested_topics": ["一句话卖点", "主角核心欲望", "第一卷卖点", "必须避免的写法"]}
+            payload = {"interview_state": interview_state}
             return "assistant_question", content, payload
         if thread.scope == "character_room":
+            interview_state = build_interview_state(thread=thread, project=project)
             content = (
                 f"已记录人物方向：{excerpt}\n\n"
-                "我建议下一步继续收紧：主角的缺陷代价、行动风格、和关键配角的冲突关系。"
+                f"当前采访进度：{interview_state['completion_label']}。\n"
+                f"已确认：{'、'.join(interview_state['confirmed_topics']) if interview_state['confirmed_topics'] else '暂未形成稳定结论'}。\n"
+                f"下一问：{interview_state['next_prompt']}\n"
+                f"仍待明确：{'、'.join(interview_state['unresolved_topics']) if interview_state['unresolved_topics'] else '已可以采纳为人物设定。'}"
             )
-            payload = {"suggested_topics": ["缺陷代价", "行动风格", "关键关系冲突", "角色边界"]}
+            payload = {"interview_state": interview_state}
             return "assistant_question", content, payload
         if thread.scope == "outline_room":
+            interview_state = build_interview_state(thread=thread, project=project)
             content = (
                 f"已记录大纲方向：{excerpt}\n\n"
-                "我建议下一步继续明确：第一卷要解决什么、每段升级怎么推进、卷末高潮必须兑现什么。"
+                f"当前采访进度：{interview_state['completion_label']}。\n"
+                f"已确认：{'、'.join(interview_state['confirmed_topics']) if interview_state['confirmed_topics'] else '暂未形成稳定结论'}。\n"
+                f"下一问：{interview_state['next_prompt']}\n"
+                f"仍待明确：{'、'.join(interview_state['unresolved_topics']) if interview_state['unresolved_topics'] else '已可以采纳为卷纲约束。'}"
             )
-            payload = {"suggested_topics": ["第一卷目标", "升级推进", "阶段反转", "卷末兑现"]}
+            payload = {"interview_state": interview_state}
             return "assistant_question", content, payload
         if thread.scope == "rewrite_intervention":
             content = (
@@ -723,6 +864,8 @@ def create_app(
         latest = messages[-1].content if messages else None
         payload["latest_message_preview"] = latest[:120] if latest else None
         payload["message_count"] = len(messages)
+        project = app.state.store.get_project(thread.project_id)
+        payload["interview_state"] = build_interview_state(thread=thread, project=project) if project else None
         return payload
 
     def build_conversation_decision_payload(*, thread, message, decision_type: str) -> dict:
