@@ -269,6 +269,108 @@ def test_interview_state_builds_current_draft_after_two_answers() -> None:
     assert "《长夜炉火》" in draft["lead"]
 
 
+def test_draft_confirm_helper_does_not_advance_progress() -> None:
+    client = make_client()
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "草案确认项目",
+            "default_user_brief": {"title": "长夜炉火", "idea_seed": "一个被逐出山门的人，靠炉火中的古老声音翻盘。"},
+            "default_target_chapters": 1,
+        },
+    ).json()
+
+    thread = client.post(
+        f"/api/projects/{project['project_id']}/conversation-threads",
+        json={"scope": "project_bootstrap"},
+    ).json()
+    client.post(
+        f"/api/conversation-threads/{thread['thread_id']}/messages",
+        json={"content": "我最想保住的是压迫中翻盘和悬念感。"},
+    )
+    client.post(
+        f"/api/conversation-threads/{thread['thread_id']}/messages",
+        json={"content": "主角要是那种克制但危险的人，平时忍着，关键时刻会立刻动手。"},
+    )
+    confirm = client.post(
+        f"/api/conversation-threads/{thread['thread_id']}/messages",
+        json={"content": "这版理解基本对，请继续细化。"},
+    )
+
+    assert confirm.status_code == 201
+    refreshed = client.get(f"/api/conversation-threads/{thread['thread_id']}").json()
+    assert refreshed["interview_state"]["completion_label"] == "2/4"
+    assert refreshed["interview_state"]["last_helper_action"] == "draft_confirm"
+
+
+def test_draft_recap_section_can_be_adopted_directly() -> None:
+    app = create_app(
+        config=AppConfig(
+            stub_mode=True,
+            openai_api_key=None,
+            admin_token=None,
+            database_url="sqlite:///:memory:",
+            model_name="gpt-5-nano",
+            project_id="api-test",
+            operator_id="tester",
+        ),
+        store=InMemoryStore(),
+    )
+
+    class FakeWorkflow:
+        def prepare_project_request(self, *, project, user_brief, target_chapters, operator_id, quick_mode=False):
+            return {
+                "user_brief": user_brief or project.default_user_brief,
+                "target_chapters": target_chapters or project.default_target_chapters,
+                "operator_id": operator_id or "tester",
+                "quick_mode": quick_mode,
+            }
+
+        def run_project(self, *, project, request_payload, on_update=None):
+            return {
+                "current_card": {"chapter_no": 1, "purpose": "第1章章卡"},
+                "publish_package": {"chapter_no": 1, "title": "第1章", "full_text": "正文"},
+                "brief_snapshot": request_payload.get("user_brief"),
+                "writer_playbook": request_payload.get("writer_playbook"),
+                "feedback_summary": {"chapter_no": 1},
+                "event_log": ["chapter_card_ready:1", "release_package_ready:1", "feedback_ingested:1"],
+            }
+
+    app.state.workflow = FakeWorkflow()
+    client = TestClient(app)
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "草案直采项目",
+            "default_user_brief": {"title": "长夜炉火", "idea_seed": "一个被逐出山门的人，靠炉火中的古老声音翻盘。"},
+            "default_target_chapters": 1,
+        },
+    ).json()
+
+    thread = client.post(
+        f"/api/projects/{project['project_id']}/conversation-threads",
+        json={"scope": "project_bootstrap"},
+    ).json()
+    direct = client.post(
+        f"/api/conversation-threads/{thread['thread_id']}/decisions",
+        json={
+            "decision_type": "character_note",
+            "content": "主角要是那种克制但危险的人，平时忍着，关键时刻会立刻动手。",
+            "source_label": "当前理解草案 · 主角行动方式",
+        },
+    )
+
+    assert direct.status_code == 201
+    assert direct.json()["payload"]["source"] == "draft_recap"
+    assert direct.json()["payload"]["source_label"] == "当前理解草案 · 主角行动方式"
+
+    run_response = client.post(f"/api/projects/{project['project_id']}/runs", json={})
+    assert run_response.status_code == 201
+    request_payload = run_response.json()["request"]
+    assert request_payload["conversation_guidance"]["character_note_count"] == 1
+    assert "克制但危险" in request_payload["user_brief"]["character_notes"][0]
+
+
 def test_conversation_decision_is_persisted_and_applied_to_run_request() -> None:
     app = create_app(
         config=AppConfig(

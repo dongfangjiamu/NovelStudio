@@ -23,6 +23,7 @@ from novel_app.api.schemas import (
     ConversationMessageCreateRequest,
     ConversationMessageResponse,
     ConversationDecisionCreateRequest,
+    ConversationDecisionDirectCreateRequest,
     ConversationDecisionUpdateRequest,
     ConversationDecisionResponse,
     ConversationThreadCreateRequest,
@@ -800,6 +801,8 @@ def create_app(
         normalized = " ".join(str(content or "").strip().lower().split())
         if not normalized:
             return None
+        if "这版理解基本对" in normalized or "确认这版理解" in normalized or "confirm draft" in normalized:
+            return "draft_confirm"
         if "先跳过" in normalized or "skip" in normalized:
             return "skip"
         if "换个问法" in normalized or "换种问法" in normalized or "rephrase" in normalized:
@@ -813,7 +816,7 @@ def create_app(
     def build_interview_user_payload(*, thread, content: str, operator_id: str) -> dict:
         helper_action = detect_interview_helper_action(content) if interview_blueprint(thread.scope) else None
         progress_effect = "answered"
-        if helper_action in {"rephrase", "more_options", "unsure"}:
+        if helper_action in {"rephrase", "more_options", "unsure", "draft_confirm"}:
             progress_effect = "helper"
         elif helper_action == "skip":
             progress_effect = "skipped"
@@ -1345,6 +1348,44 @@ def create_app(
             "instruction": message.content,
             "chapter_no": thread.linked_chapter_no,
         }
+
+    def build_conversation_decision_payload_from_content(
+        *,
+        thread,
+        message_id: str,
+        decision_type: str,
+        content: str,
+        source: str,
+        source_label: str | None = None,
+    ) -> dict:
+        base = {
+            "source": source,
+            "source_label": source_label,
+            "thread_id": thread.thread_id,
+            "message_id": message_id,
+            "scope": thread.scope,
+            "content": content,
+        }
+        if decision_type == "human_instruction":
+            return {
+                **base,
+                "requested_action": "conversation_guidance",
+                "reason": f"来自{thread.title}的结构化协作结论",
+                "operator_id": None,
+                "comment": content,
+                "payload": {
+                    "scope": thread.scope,
+                    "linked_run_id": thread.linked_run_id,
+                    "linked_chapter_no": thread.linked_chapter_no,
+                },
+            }
+        if decision_type == "writer_playbook_rule":
+            return {**base, "rule": content}
+        if decision_type == "character_note":
+            return {**base, "note": content}
+        if decision_type == "outline_constraint":
+            return {**base, "constraint": content}
+        return {**base, "instruction": content, "chapter_no": thread.linked_chapter_no}
 
     def rewrite_conversation_decision_payload(*, existing_payload: dict, decision_type: str, content: str) -> dict:
         updated = dict(existing_payload or {})
@@ -2124,6 +2165,61 @@ def create_app(
             payload={"decision_type": decision.decision_type},
         )
         return Response(status_code=204)
+
+    @app.post("/api/conversation-threads/{thread_id}/decisions", response_model=ConversationDecisionResponse, status_code=201)
+    async def create_conversation_decision_direct(
+        thread_id: str,
+        payload: ConversationDecisionDirectCreateRequest,
+        request: Request,
+        response: Response,
+    ) -> ConversationDecisionResponse:
+        thread = app.state.store.get_conversation_thread(thread_id)
+        if not thread:
+            raise HTTPException(status_code=404, detail="conversation_thread_not_found")
+        source_label = payload.source_label or "当前理解草案"
+        source_message = app.state.store.add_conversation_message(
+            thread_id=thread.thread_id,
+            role="system",
+            message_type="system_action_result",
+            content=f"已从{source_label}采纳为{payload.decision_type}：{payload.content}",
+            structured_payload={
+                "source": "draft_recap_adoption",
+                "source_label": source_label,
+                "decision_type": payload.decision_type,
+                "content": payload.content,
+            },
+        )
+        if source_message is None:
+            raise HTTPException(status_code=404, detail="conversation_thread_not_found")
+        decision = app.state.store.create_conversation_decision(
+            project_id=thread.project_id,
+            thread_id=thread.thread_id,
+            message_id=source_message.message_id,
+            decision_type=payload.decision_type,
+            payload=build_conversation_decision_payload_from_content(
+                thread=thread,
+                message_id=source_message.message_id,
+                decision_type=payload.decision_type,
+                content=payload.content,
+                source="draft_recap",
+                source_label=source_label,
+            ),
+            applied_to_run_id=thread.linked_run_id,
+            applied_to_chapter_no=thread.linked_chapter_no,
+        )
+        audit(
+            request=request,
+            response=response,
+            status_code=201,
+            action="conversation_decision.create",
+            resource_type="conversation_decision",
+            resource_id=decision.decision_id,
+            project_id=thread.project_id,
+            run_id=thread.linked_run_id,
+            approval_id=None,
+            payload={"decision_type": payload.decision_type, "thread_id": thread.thread_id, "source_label": source_label},
+        )
+        return ConversationDecisionResponse.model_validate(decision.__dict__)
 
     @app.post("/api/conversation-messages/{message_id}/adopt", response_model=ConversationDecisionResponse, status_code=201)
     async def adopt_conversation_message(

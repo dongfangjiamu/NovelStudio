@@ -915,6 +915,33 @@ function summarizeAppliedGuidanceGroup(run, groupKey) {
   };
 }
 
+function interviewDraftActions(thread, section) {
+  if (!thread || !section) return [];
+  if (thread.scope === "project_bootstrap") {
+    if (section.label === "最想保住的吸引力" || section.label === "不能写歪的边界") {
+      return [{ label: "采纳为长期规则", decisionType: "writer_playbook_rule" }];
+    }
+    if (section.label === "主角行动方式") {
+      return [{ label: "采纳为人物设定", decisionType: "character_note" }];
+    }
+    if (section.label === "故事推进方式") {
+      return [{ label: "采纳为卷纲约束", decisionType: "outline_constraint" }];
+    }
+    return [
+      { label: "采纳为人物设定", decisionType: "character_note" },
+      { label: "采纳为卷纲约束", decisionType: "outline_constraint" },
+      { label: "采纳为长期规则", decisionType: "writer_playbook_rule" },
+    ];
+  }
+  if (thread.scope === "character_room") {
+    return [{ label: "采纳为人物设定", decisionType: "character_note" }];
+  }
+  if (thread.scope === "outline_room") {
+    return [{ label: "采纳为卷纲约束", decisionType: "outline_constraint" }];
+  }
+  return [{ label: "采纳为写作规则", decisionType: "writer_playbook_rule" }];
+}
+
 function renderInterviewSummary(thread) {
   const interview = interviewState(thread);
   if (!thread || !interview) {
@@ -957,12 +984,33 @@ function renderInterviewSummary(thread) {
           <span class="status-chip status-approved">可确认</span>
         </div>
         <div class="meta">${escapeHtml(interview.current_draft.lead || "")}</div>
-        <ul class="interview-list">
+        <div class="stack compact">
           ${(interview.current_draft.sections || [])
-            .map((item) => `<li><strong>${escapeHtml(item.label || "")}</strong>：${escapeHtml(item.summary || "")}</li>`)
+            .map((item, index) => {
+              const actions = interviewDraftActions(thread, item);
+              return `
+                <div class="interview-block">
+                  <strong>${escapeHtml(item.label || "")}</strong>
+                  <div class="meta">${escapeHtml(item.summary || "")}</div>
+                  ${
+                    actions.length
+                      ? `<div class="actions">${actions
+                          .map(
+                            (action) =>
+                              `<button class="button ghost" type="button" data-draft-adopt="${index}" data-decision-type="${action.decisionType}">${action.label}</button>`
+                          )
+                          .join("")}</div>`
+                      : ""
+                  }
+                </div>
+              `;
+            })
             .join("")}
-        </ul>
+        </div>
         <div class="meta">${escapeHtml(interview.current_draft.recommendation || "")}</div>
+        <div class="actions">
+          <button class="button ghost" type="button" data-draft-confirm="true">确认这版理解</button>
+        </div>
       </section>
     `
     : "";
@@ -1022,6 +1070,33 @@ function renderInterviewSummary(thread) {
               : "我还不确定，先给我几个更具体的方向。";
       try {
         await submitConversationMessage(helper);
+      } catch (error) {
+        setStatus(String(error.message || error), "error");
+      }
+    });
+  });
+  el.conversationInterviewSummary.querySelectorAll("[data-draft-confirm]").forEach((node) => {
+    node.addEventListener("click", async () => {
+      try {
+        await submitConversationMessage("这版理解基本对，请继续细化。");
+      } catch (error) {
+        setStatus(String(error.message || error), "error");
+      }
+    });
+  });
+  el.conversationInterviewSummary.querySelectorAll("[data-draft-adopt]").forEach((node) => {
+    node.addEventListener("click", async () => {
+      const index = Number(node.dataset.draftAdopt);
+      const decisionType = node.dataset.decisionType;
+      const section = interview.current_draft?.sections?.[index];
+      if (!section || !decisionType || !thread) return;
+      try {
+        await createConversationDecisionFromDraft({
+          threadId: thread.thread_id,
+          decisionType,
+          content: section.summary,
+          sourceLabel: `${interview.current_draft.title || "当前理解草案"} · ${section.label}`,
+        });
       } catch (error) {
         setStatus(String(error.message || error), "error");
       }
@@ -3163,6 +3238,22 @@ async function adoptConversationMessage(messageId, decisionType) {
   } catch (error) {
     setStatus(String(error.message || error), "error");
   }
+}
+
+async function createConversationDecisionFromDraft({ threadId, decisionType, content, sourceLabel }) {
+  await api(`/api/conversation-threads/${threadId}/decisions`, {
+    method: "POST",
+    body: JSON.stringify({
+      decision_type: decisionType,
+      content,
+      source_label: sourceLabel,
+    }),
+  });
+  await selectProject(state.selectedProjectId);
+  if (state.selectedThreadId) {
+    await loadConversationMessages(state.selectedThreadId, { activateTab: false });
+  }
+  setStatus(`已从草案采纳为${conversationDecisionLabel(decisionType)}`, "ready");
 }
 
 async function updateConversationDecision(decisionId) {

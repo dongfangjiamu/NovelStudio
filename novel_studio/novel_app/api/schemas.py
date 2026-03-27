@@ -208,6 +208,18 @@ class ConversationDecisionCreateRequest(BaseModel):
     ]
 
 
+class ConversationDecisionDirectCreateRequest(BaseModel):
+    decision_type: Literal[
+        "human_instruction",
+        "writer_playbook_rule",
+        "character_note",
+        "outline_constraint",
+        "chapter_card_patch",
+    ]
+    content: str = Field(min_length=1, max_length=4000)
+    source_label: str | None = Field(default=None, max_length=120)
+
+
 class ConversationDecisionUpdateRequest(BaseModel):
     content: str = Field(min_length=1, max_length=4000)
 
