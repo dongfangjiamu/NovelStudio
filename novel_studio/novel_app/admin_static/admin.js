@@ -384,6 +384,50 @@ function recoveryModePlan(value, context = null) {
   };
 }
 
+function approvalDecisionTitle(item, recoveryMode) {
+  const chapterNo = item.chapter_no || "?";
+  if (recoveryMode === "replan") {
+    return `第 ${chapterNo} 章方向不稳，先重做章卡`;
+  }
+  if (recoveryMode === "rewrite") {
+    return `第 ${chapterNo} 章方向可保留，但正文需要重写`;
+  }
+  return `第 ${chapterNo} 章可保留，继续推进下一步`;
+}
+
+function approvalDecisionSummary(item, recoveryMode, plan) {
+  const status = STATUS_LABELS[item.status] || item.status;
+  if (item.status === "pending") {
+    return `${status}。${item.reason} 当前更像是在决定：${recoveryModeLabel(recoveryMode)}。`;
+  }
+  if (item.status === "approved" && !item.executed_run_id) {
+    return `${status}，尚未执行。当前将按“${recoveryModeLabel(recoveryMode)}”恢复。${plan.preserves[0]}`;
+  }
+  if (item.status === "approved" && item.executed_run_id) {
+    return `${status}，已执行。系统已经按“${recoveryModeLabel(recoveryMode)}”进入下一条运行。`;
+  }
+  if (item.status === "rejected") {
+    return `${status}。这次恢复路径没有被接受，建议先回到会诊线程补充说明。`;
+  }
+  return `${status}。${item.reason}`;
+}
+
+function approvalDecisionActions(item) {
+  if (item.status === "pending") {
+    return "你现在要做的是决定：接受当前恢复方案，还是先打回再讨论。";
+  }
+  if (item.status === "approved" && !item.executed_run_id) {
+    return "你现在要做的是：确认会诊结论无误，然后执行这条恢复路径。";
+  }
+  if (item.status === "approved" && item.executed_run_id) {
+    return "这张卡已经处理完成。下一步去看最新运行记录和过程材料。";
+  }
+  if (item.status === "rejected") {
+    return "建议先回到会诊线程，把保留项、要改什么、不能怎么改说清楚，再决定是否重新提交。";
+  }
+  return "当前没有额外建议动作。";
+}
+
 function latestApprovalForThread(thread) {
   if (!thread?.linked_run_id) return null;
   return latestApprovalForRun(thread.linked_run_id, state.projectSnapshot.approvals || []);
@@ -2075,23 +2119,27 @@ function renderApprovals(items) {
           const interventionThread = conversationThreadForRun(item.run_id, "rewrite_intervention");
           const recoveryMode = interventionThread ? inferRecoveryModeForThread(interventionThread) : (isRecoveryMode(item.requested_action) ? item.requested_action : "continue");
           const recoveryPlan = recoveryModePlan(recoveryMode, { chapter_no: item.chapter_no });
+          const title = approvalDecisionTitle(item, recoveryMode);
+          const summary = approvalDecisionSummary(item, recoveryMode, recoveryPlan);
+          const nextStep = approvalDecisionActions(item);
           if (item.status === "pending") {
-            actions.push({ action: "approve", id: item.approval_id, label: "通过" });
-            actions.push({ action: "reject", id: item.approval_id, label: "驳回" });
+            actions.push({ action: "approve", id: item.approval_id, label: "接受当前方案" });
+            actions.push({ action: "reject", id: item.approval_id, label: "先打回再讨论" });
           }
           if (item.status === "approved" && !item.executed_run_id) {
-            actions.push({ action: `execute-${recoveryMode}`, id: item.approval_id, label: `执行：${recoveryModeLabel(recoveryMode)}` });
+            actions.push({ action: `execute-${recoveryMode}`, id: item.approval_id, label: recoveryModeExecuteLabel(recoveryMode) });
           }
           if (interventionThread) {
             actions.push({ action: "open-thread", id: interventionThread.thread_id, label: "进入会诊" });
           }
           return card(
-            item.requested_action === "continue" ? "继续写下一章" : item.requested_action,
-            `${STATUS_LABELS[item.status] || item.status}<br>${item.reason}`,
+            title,
+            `${summary}<br>${nextStep}`,
             actions,
             `
               <div class="meta">当前恢复路径：${recoveryModeLabel(recoveryMode)}</div>
-              <div class="meta">${escapeHtml(recoveryPlan.preserves[0])}</div>
+              <div class="meta">会保留：${escapeHtml(recoveryPlan.preserves[0])}</div>
+              <div class="meta">会重做：${escapeHtml(recoveryPlan.rewrites[0])}</div>
               <div class="meta">风险：${escapeHtml(recoveryPlan.risks[0])}</div>
               ${item.executed_run_id ? `<div class="meta">executed: ${item.executed_run_id}</div>` : ""}
             `
