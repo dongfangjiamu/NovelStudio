@@ -464,6 +464,99 @@ def test_chapter_planning_thread_exposes_write_before_context() -> None:
     assert thread["thread_context"]["patch_count"] == 0
 
 
+def test_human_check_creates_checkpoint_thread_and_approval() -> None:
+    app = create_app(
+        config=AppConfig(
+            stub_mode=True,
+            openai_api_key=None,
+            admin_token=None,
+            database_url="sqlite:///:memory:",
+            model_name="gpt-5-nano",
+            project_id="api-test",
+            operator_id="tester",
+        ),
+        store=InMemoryStore(),
+    )
+
+    class FakeWorkflow:
+        def prepare_project_request(self, *, project, user_brief, target_chapters, operator_id, quick_mode=False):
+            return {
+                "user_brief": user_brief or project.default_user_brief,
+                "target_chapters": target_chapters or project.default_target_chapters,
+                "operator_id": operator_id or "tester",
+                "quick_mode": quick_mode,
+            }
+
+        def run_project(self, *, project, request_payload, on_update=None):
+            return {
+                "current_card": {"chapter_no": 1, "purpose": "第1章章卡"},
+                "phase_decision": {
+                    "final_decision": "human_check",
+                    "reason": "同类 major 问题连续复发，需要人工决定先改章卡还是正文。",
+                },
+                "human_guidance": {
+                    "chapter_no": 1,
+                    "reason": "同类 major 问题连续复发，需要人工决定先改章卡还是正文。",
+                    "must_fix": ["先决定冲突前置还是重写正文开头"],
+                    "suggested_actions": ["continue", "rewrite", "replan"],
+                    "issue_progress_summary": "已解决 0 项，复发 1 项，新增 0 项。",
+                    "stubborn_issues": [
+                        {
+                            "issue_id": "iss_1",
+                            "fix_instruction": "把关键冲突前置到前半章",
+                            "evidence": "前半章推进过慢",
+                        }
+                    ],
+                },
+                "issue_ledger": {
+                    "chapter_no": 1,
+                    "status": "needs_human_review",
+                    "progress_summary": "已解决 0 项，复发 1 项，新增 0 项。",
+                    "issues": [
+                        {
+                            "issue_id": "iss_1",
+                            "status": "recurring",
+                            "attempts": 2,
+                            "severity": "major",
+                            "fix_instruction": "把关键冲突前置到前半章",
+                            "evidence": "前半章推进过慢",
+                        }
+                    ],
+                },
+                "blockers": ["需要人工审核或继续指令。"],
+                "event_log": ["phase_decision:human_check", "human_gate_reached"],
+            }
+
+    app.state.workflow = FakeWorkflow()
+    client = TestClient(app)
+    project = client.post(
+        "/api/projects",
+        json={"name": "人工检查点项目", "default_user_brief": {"title": "长夜炉火"}, "default_target_chapters": 1},
+    ).json()
+
+    run_response = client.post(f"/api/projects/{project['project_id']}/runs", json={})
+    assert run_response.status_code == 201
+    completed = wait_for_run(client, run_response.json()["run_id"])
+    assert completed["status"] == "awaiting_approval"
+    checkpoint = completed["result"]["human_checkpoint"]
+    assert checkpoint["status"] == "paused_for_human"
+    assert checkpoint["approval_id"]
+    assert checkpoint["thread_id"]
+
+    approvals = client.get(f"/api/projects/{project['project_id']}/approval-requests")
+    assert approvals.status_code == 200
+    assert len(approvals.json()) == 1
+    assert approvals.json()[0]["approval_id"] == checkpoint["approval_id"]
+
+    threads = client.get(f"/api/projects/{project['project_id']}/conversation-threads")
+    assert threads.status_code == 200
+    intervention_threads = [item for item in threads.json() if item["scope"] == "rewrite_intervention"]
+    assert len(intervention_threads) == 1
+    assert intervention_threads[0]["thread_id"] == checkpoint["thread_id"]
+    assert intervention_threads[0]["linked_run_id"] == completed["run_id"]
+    assert intervention_threads[0]["thread_context"]["checkpoint_reason"].startswith("同类 major 问题连续复发")
+
+
 def test_run_flow() -> None:
     client = make_client()
     project = client.post(

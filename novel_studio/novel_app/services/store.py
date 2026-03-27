@@ -291,6 +291,7 @@ class InMemoryStore:
                 "review_resolution_trace",
                 "latest_review_reports",
                 "human_guidance",
+                "human_checkpoint",
                 "blockers",
                 "event_log",
             ]:

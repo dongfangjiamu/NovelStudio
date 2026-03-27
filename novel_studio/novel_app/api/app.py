@@ -57,6 +57,7 @@ LIVE_ARTIFACT_TYPES = [
     "review_resolution_trace",
     "latest_review_reports",
     "human_guidance",
+    "human_checkpoint",
     "blockers",
     "event_log",
 ]
@@ -423,6 +424,19 @@ def create_app(
     def enrich_run_payload(run) -> dict[str, object]:
         payload = dict(run.__dict__)
         result = dict(payload.get("result") or {})
+        if run.status == "awaiting_approval":
+            approval = next(
+                (
+                    item
+                    for item in app.state.store.list_approval_requests(project_id=run.project_id)
+                    if item.run_id == run.run_id
+                ),
+                None,
+            )
+            thread = find_conversation_thread(project_id=run.project_id, linked_run_id=run.run_id, scope="rewrite_intervention")
+            checkpoint = build_human_checkpoint(run=run, result=result, approval=approval, thread=thread)
+            if checkpoint:
+                result["human_checkpoint"] = checkpoint
         progress = dict(result.get("progress") or {})
         if progress:
             chapter_no = progress.get("chapter_no")
@@ -463,6 +477,7 @@ def create_app(
                 )
         payload["artifact_count"] = artifact_count
         payload["has_artifacts"] = artifact_count > 0
+        payload["result"] = result
         return payload
 
     def maybe_finalize_stale_run(run):
@@ -493,6 +508,34 @@ def create_app(
         if not existing_run:
             return
         run_status = "awaiting_approval" if run_requires_human_approval(result) else "completed"
+        approval = None
+        intervention_thread = None
+        if run_status == "awaiting_approval":
+            phase_reason = ((result.get("phase_decision") or {}).get("reason")) or "需要人工确认后继续执行"
+            chapter_no = infer_run_chapter(existing_run)
+            approval = app.state.store.create_approval_request(
+                project_id=existing_run.project_id,
+                run_id=existing_run.run_id,
+                chapter_no=chapter_no,
+                requested_action="continue",
+                reason="；".join(result.get("blockers") or []) if (result.get("blockers") or []) else str(phase_reason),
+                payload={"source": "auto"},
+            )
+            project = app.state.store.get_project(existing_run.project_id)
+            if project is not None:
+                intervention_thread = ensure_intervention_thread(
+                    project=project,
+                    run_id=existing_run.run_id,
+                    chapter_no=chapter_no,
+                )
+            checkpoint = build_human_checkpoint(
+                run=existing_run,
+                result=result,
+                approval=approval,
+                thread=intervention_thread,
+            )
+            if checkpoint:
+                result = {**result, "human_checkpoint": checkpoint}
         updated_run = app.state.store.update_run(
             run_id=run_id,
             status=run_status,
@@ -503,17 +546,6 @@ def create_app(
         if not updated_run:
             return
         app.state.store.save_run_outputs(run=updated_run, result=result)
-        if run_status == "awaiting_approval":
-            blockers = result.get("blockers") or []
-            phase_reason = ((result.get("phase_decision") or {}).get("reason")) or "需要人工确认后继续执行"
-            app.state.store.create_approval_request(
-                project_id=updated_run.project_id,
-                run_id=updated_run.run_id,
-                chapter_no=((result.get("publish_package") or {}).get("chapter_no")),
-                requested_action="continue",
-                reason="；".join(blockers) if blockers else str(phase_reason),
-                payload={"source": "auto"},
-            )
 
     def finalize_run_failure(*, run_id: str, error: Exception) -> None:
         app.state.store.update_run(
@@ -739,13 +771,41 @@ def create_app(
         return latest
 
     def build_thread_context(thread) -> dict | None:
-        if thread.scope != "chapter_planning" or not thread.linked_run_id:
+        if thread.scope not in {"chapter_planning", "rewrite_intervention"} or not thread.linked_run_id:
             return None
         run = app.state.store.get_run(thread.linked_run_id)
         if run is None:
             return None
         latest_by_type = latest_artifact_payloads(run.run_id)
         result = run.result or {}
+        if thread.scope == "rewrite_intervention":
+            human_guidance = result.get("human_guidance") or latest_by_type.get("human_guidance") or {}
+            issue_ledger = result.get("issue_ledger") or latest_by_type.get("issue_ledger") or {}
+            latest_approval = next(
+                (
+                    item
+                    for item in app.state.store.list_approval_requests(project_id=thread.project_id)
+                    if item.run_id == run.run_id
+                ),
+                None,
+            )
+            stubborn = [
+                issue.get("fix_instruction") or issue.get("evidence") or issue.get("issue_id")
+                for issue in (human_guidance.get("stubborn_issues") or [])[:3]
+                if issue.get("fix_instruction") or issue.get("evidence") or issue.get("issue_id")
+            ]
+            must_fix = list(human_guidance.get("must_fix") or [])[:4]
+            return {
+                "chapter_no": human_guidance.get("chapter_no"),
+                "checkpoint_reason": human_guidance.get("reason") or "系统已暂停，等待人工判断。",
+                "issue_progress_summary": human_guidance.get("issue_progress_summary") or issue_ledger.get("progress_summary"),
+                "must_fix": must_fix,
+                "suggested_actions": list(human_guidance.get("suggested_actions") or [])[:3],
+                "stubborn_issues": stubborn,
+                "approval_id": latest_approval.approval_id if latest_approval else None,
+                "approval_status": latest_approval.status if latest_approval else None,
+                "recommendation": "先在这条会诊线程里明确保留项、优先修章卡还是正文，再去审批或执行。",
+            }
         current_card = result.get("current_card") or latest_by_type.get("current_card") or {}
         planning_context = result.get("planning_context") or latest_by_type.get("planning_context") or {}
         issue_ledger = result.get("issue_ledger") or latest_by_type.get("issue_ledger") or {}
@@ -786,6 +846,75 @@ def create_app(
             "patch_count": len(decisions),
             "patch_highlights": patch_highlights,
             "recommendation": recommendation,
+        }
+
+    def find_conversation_thread(*, project_id: str, linked_run_id: str, scope: str) -> object | None:
+        return next(
+            (
+                item
+                for item in app.state.store.list_conversation_threads(project_id)
+                if item.scope == scope and item.linked_run_id == linked_run_id and item.status == "open"
+            ),
+            None,
+        )
+
+    def ensure_intervention_thread(*, project, run_id: str, chapter_no: int | None) -> object:
+        existing = find_conversation_thread(project_id=project.project_id, linked_run_id=run_id, scope="rewrite_intervention")
+        if existing is not None:
+            return existing
+        thread = app.state.store.create_conversation_thread(
+            project_id=project.project_id,
+            scope="rewrite_intervention",
+            title=conversation_title(scope="rewrite_intervention", chapter_no=chapter_no),
+            linked_run_id=run_id,
+            linked_chapter_no=chapter_no,
+        )
+        opening_type, opening_content, opening_payload = build_thread_opening(
+            scope="rewrite_intervention",
+            project=project,
+            run=app.state.store.get_run(run_id),
+            chapter_no=chapter_no,
+        )
+        app.state.store.add_conversation_message(
+            thread_id=thread.thread_id,
+            role="assistant",
+            message_type=opening_type,
+            content=opening_content,
+            structured_payload=opening_payload,
+        )
+        app.state.store.add_conversation_message(
+            thread_id=thread.thread_id,
+            role="system",
+            message_type="system_action_result",
+            content="系统已在这里为你创建人工检查点。先明确保留项和修改方向，再处理审批或执行续写。",
+            structured_payload={
+                "source": "auto_checkpoint",
+                "run_id": run_id,
+                "chapter_no": chapter_no,
+            },
+        )
+        return app.state.store.get_conversation_thread(thread.thread_id) or thread
+
+    def build_human_checkpoint(*, run, result: dict[str, object], approval=None, thread=None) -> dict | None:
+        if not run_requires_human_approval(result):
+            return None
+        human_guidance = result.get("human_guidance") or {}
+        issue_ledger = result.get("issue_ledger") or {}
+        blockers = result.get("blockers") or []
+        return {
+            "run_id": run.run_id,
+            "chapter_no": infer_run_chapter(run),
+            "status": "paused_for_human",
+            "reason": human_guidance.get("reason") or "流程已进入人工检查点。",
+            "issue_progress_summary": human_guidance.get("issue_progress_summary") or issue_ledger.get("progress_summary"),
+            "must_fix": list(human_guidance.get("must_fix") or [])[:4],
+            "stubborn_issues": list(human_guidance.get("stubborn_issues") or [])[:3],
+            "suggested_actions": list(human_guidance.get("suggested_actions") or [])[:3],
+            "blockers": blockers,
+            "approval_id": approval.approval_id if approval else None,
+            "approval_status": approval.status if approval else None,
+            "thread_id": thread.thread_id if thread else None,
+            "thread_title": thread.title if thread else None,
         }
 
     def build_thread_opening(*, scope: str, project, run, chapter_no: int | None) -> tuple[str, str, dict]:

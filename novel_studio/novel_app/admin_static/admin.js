@@ -145,6 +145,7 @@ const ARTIFACT_LABELS = {
   review_resolution_trace: "问题关闭证据",
   latest_review_reports: "审校结果",
   human_guidance: "人工指导",
+  human_checkpoint: "人工检查点",
   blockers: "阻塞原因",
   event_log: "事件日志",
 };
@@ -155,6 +156,7 @@ const ARTIFACT_ORDER = [
   "current_card",
   "latest_review_reports",
   "phase_decision",
+  "human_checkpoint",
   "human_guidance",
   "creative_contract",
   "story_bible",
@@ -274,12 +276,20 @@ function selectedThread() {
   return (state.projectSnapshot.conversationThreads || []).find((item) => item.thread_id === state.selectedThreadId) || null;
 }
 
+function conversationThreadForRun(runId, scope = "rewrite_intervention") {
+  return (state.projectSnapshot.conversationThreads || []).find((item) => item.linked_run_id === runId && item.scope === scope) || null;
+}
+
 function interviewState(thread) {
   return thread?.interview_state || null;
 }
 
 function threadContext(thread) {
   return thread?.thread_context || null;
+}
+
+function humanCheckpoint(run) {
+  return run?.result?.human_checkpoint || null;
 }
 
 function nodeLabel(value) {
@@ -319,8 +329,51 @@ function conversationInputPlaceholder(thread) {
 
 function renderThreadContext(thread) {
   const context = threadContext(thread);
-  if (!thread || !context || thread.scope !== "chapter_planning") {
+  if (!thread || !context || !["chapter_planning", "rewrite_intervention"].includes(thread.scope)) {
     el.conversationThreadContext.innerHTML = "";
+    return;
+  }
+  if (thread.scope === "rewrite_intervention") {
+    const mustFix = context.must_fix?.length
+      ? `<ul class="interview-list">${context.must_fix.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+      : `<div class="meta">当前没有明确的必须先修项。</div>`;
+    const stubborn = context.stubborn_issues?.length
+      ? `<ul class="interview-list">${context.stubborn_issues.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+      : `<div class="meta">当前没有连续复发到必须人工裁决的顽固问题。</div>`;
+    const suggested = context.suggested_actions?.length
+      ? `<ul class="interview-list">${context.suggested_actions.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+      : `<div class="meta">当前没有额外推荐动作。</div>`;
+    el.conversationThreadContext.innerHTML = `
+      <section class="interview-card">
+        <div class="card-head">
+          <h4>人工检查点</h4>
+          <span class="status-chip status-awaiting_approval">第 ${context.chapter_no || "?"} 章</span>
+        </div>
+        <div class="meta">${escapeHtml(context.recommendation || "")}</div>
+        <div class="meta">${escapeHtml(context.checkpoint_reason || "系统已暂停，等待人工判断。")}</div>
+        <div class="interview-grid">
+          <div class="interview-block">
+            <strong>当前为什么停在这里</strong>
+            <div class="meta">${escapeHtml(context.issue_progress_summary || "当前没有更细的问题进展摘要。")}</div>
+            <div class="meta">${context.approval_status ? `审批状态：${STATUS_LABELS[context.approval_status] || context.approval_status}` : "审批状态暂未记录"}</div>
+          </div>
+          <div class="interview-block">
+            <strong>系统建议动作</strong>
+            ${suggested}
+          </div>
+        </div>
+        <div class="interview-grid">
+          <div class="interview-block">
+            <strong>必须先修</strong>
+            ${mustFix}
+          </div>
+          <div class="interview-block">
+            <strong>顽固问题</strong>
+            ${stubborn}
+          </div>
+        </div>
+      </section>
+    `;
     return;
   }
   const mustInclude = context.must_include?.length
@@ -710,6 +763,7 @@ function summarizeRunCard(run) {
   const reviewProgress = progress.review_progress || {};
   const publish = run.result?.publish_package || {};
   const guidanceSummary = conversationGuidanceSummary(run);
+  const checkpoint = humanCheckpoint(run);
   if (run.status === "running") {
     if (reviewProgress.stage_status === "running") {
       return `${guidanceSummary ? `${guidanceSummary}；` : ""}4 个审校正在并行进行，已完成 ${reviewProgress.completed_count || 0}/${reviewProgress.total_count || 4}。`;
@@ -726,7 +780,7 @@ function summarizeRunCard(run) {
     return `${guidanceSummary ? `${guidanceSummary}；` : ""}这一章的审批已驳回，建议先看工件再决定是否重试。`;
   }
   if (displayStatus === "awaiting_approval") {
-    return `${guidanceSummary ? `${guidanceSummary}；` : ""}这一章已经生成，正在等你决定是否继续。`;
+    return `${guidanceSummary ? `${guidanceSummary}；` : ""}${checkpoint?.thread_id ? "系统已自动创建人工检查点，可直接进入会诊；" : ""}这一章已经生成，正在等你决定是否继续。`;
   }
   if (run.status === "failed") {
     return run.result?.manual_intervention?.action === "auto_timeout"
@@ -1535,9 +1589,16 @@ function renderFocusRun(summary) {
   const guidanceBlock = guidance?.decision_count
     ? `<div class="focus-metric"><strong>已带入对话结论</strong><div class="meta">${guidance.decision_count} 条，其中写作规则 ${guidance.writer_playbook_rule_count || 0} 条，人物设定 ${guidance.character_note_count || 0} 条，卷纲约束 ${guidance.outline_constraint_count || 0} 条，修订指令 ${guidance.human_instruction_count || 0} 条，章卡修订 ${guidance.chapter_card_patch_count || 0} 条。</div></div>`
     : "";
+  const checkpoint = humanCheckpoint(run);
+  const checkpointBlock = checkpoint
+    ? `<div class="focus-metric"><strong>人工检查点</strong><div class="meta">${escapeHtml(checkpoint.reason || "流程已暂停。")}${checkpoint.thread_id ? ` 已自动创建会诊线程。` : ""}</div></div>`
+    : "";
   const actionButtons = [
     renderViewArtifactsButton(run.run_id, run.artifact_count),
   ];
+  if (checkpoint?.thread_id) {
+    actionButtons.push(`<button class="button ghost" data-action="open-thread" data-id="${checkpoint.thread_id}">进入会诊</button>`);
+  }
   if (run.status === "running") {
     actionButtons.push(`<button class="button ghost" data-action="mark-failed" data-id="${run.run_id}">标记失败</button>`);
   }
@@ -1589,6 +1650,7 @@ function renderFocusRun(summary) {
         <div class="meta">${stageGoal}</div>
       </div>
       ${guidanceBlock}
+      ${checkpointBlock}
       ${interventionBlock}
       ${causeBlock}
       ${errorBlock}
@@ -1635,7 +1697,13 @@ function renderFocusRun(summary) {
     </div>
   `;
   el.focusRun.querySelectorAll("[data-action]:not([disabled])").forEach((node) => {
-    node.addEventListener("click", () => handleRunAction(node.dataset.action, node.dataset.id));
+    node.addEventListener("click", () => {
+      if (node.dataset.action === "open-thread") {
+        openConversationThread(node.dataset.id).catch((error) => setStatus(String(error.message || error), "error"));
+        return;
+      }
+      handleRunAction(node.dataset.action, node.dataset.id);
+    });
   });
 }
 
@@ -1712,6 +1780,10 @@ function renderRuns(runs, focusRunId) {
     if (recommendedCard) classes.push("recommended");
     if (!recommendedCard) classes.push("history");
     const actions = [renderViewArtifactsButton(item.run_id, item.artifact_count)];
+    const checkpoint = humanCheckpoint(item);
+    if ((recommendedCard || displayStatus === "awaiting_approval") && checkpoint?.thread_id) {
+      actions.push(`<button class="button ghost" data-action="open-thread" data-id="${checkpoint.thread_id}">进入会诊</button>`);
+    }
     if (recommendedCard && item.status === "running") {
       actions.push(`<button class="button ghost" data-action="mark-failed" data-id="${item.run_id}">标记失败</button>`);
     }
@@ -1754,7 +1826,13 @@ function renderRuns(runs, focusRunId) {
   }
   el.runsList.innerHTML = blocks.join("");
   el.runsList.querySelectorAll("[data-action]:not([disabled])").forEach((node) => {
-    node.addEventListener("click", () => handleRunAction(node.dataset.action, node.dataset.id));
+    node.addEventListener("click", () => {
+      if (node.dataset.action === "open-thread") {
+        openConversationThread(node.dataset.id).catch((error) => setStatus(String(error.message || error), "error"));
+        return;
+      }
+      handleRunAction(node.dataset.action, node.dataset.id);
+    });
   });
 }
 
@@ -1763,12 +1841,16 @@ function renderApprovals(items) {
     ? items
         .map((item) => {
           const actions = [];
+          const interventionThread = conversationThreadForRun(item.run_id, "rewrite_intervention");
           if (item.status === "pending") {
             actions.push({ action: "approve", id: item.approval_id, label: "通过" });
             actions.push({ action: "reject", id: item.approval_id, label: "驳回" });
           }
           if (item.status === "approved" && !item.executed_run_id) {
             actions.push({ action: "execute", id: item.approval_id, label: "执行" });
+          }
+          if (interventionThread) {
+            actions.push({ action: "open-thread", id: interventionThread.thread_id, label: "进入会诊" });
           }
           return card(
             item.requested_action === "continue" ? "继续写下一章" : item.requested_action,
@@ -1780,7 +1862,13 @@ function renderApprovals(items) {
         .join("")
     : `<div class="empty">暂无审批单</div>`;
   el.approvalsList.querySelectorAll("[data-action]").forEach((node) => {
-    node.addEventListener("click", () => handleApprovalAction(node.dataset.action, node.dataset.id));
+    node.addEventListener("click", () => {
+      if (node.dataset.action === "open-thread") {
+        openConversationThread(node.dataset.id).catch((error) => setStatus(String(error.message || error), "error"));
+        return;
+      }
+      handleApprovalAction(node.dataset.action, node.dataset.id);
+    });
   });
 }
 
@@ -2154,6 +2242,13 @@ async function loadConversationMessages(threadId) {
   const messages = await api(`/api/conversation-threads/${threadId}/messages`);
   state.conversationMessages = messages;
   renderConversationPanel();
+}
+
+async function openConversationThread(threadId) {
+  if (!threadId) return;
+  state.selectedThreadId = threadId;
+  await loadConversationMessages(threadId);
+  setStatus("已进入人工协作线程", "ready");
 }
 
 function conversationThreadBody(scope) {
