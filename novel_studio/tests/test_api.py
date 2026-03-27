@@ -327,10 +327,126 @@ def test_running_run_exposes_live_artifacts() -> None:
     run_snapshot = client.get(f"/api/runs/{run['run_id']}").json()
     assert run_snapshot["artifact_count"] >= 3
     assert run_snapshot["has_artifacts"] is True
+    assert run_snapshot["result"]["progress"]["review_progress"]["total_count"] == 4
 
     release_run.set()
     completed_run = wait_for_run(client, run["run_id"])
     assert completed_run["status"] == "completed"
+
+
+def test_running_run_exposes_parallel_reviewer_progress() -> None:
+    app = create_app(
+        config=AppConfig(
+            stub_mode=True,
+            openai_api_key=None,
+            admin_token=None,
+            database_url="sqlite:///:memory:",
+            model_name="gpt-5-nano",
+            project_id="api-test",
+            operator_id="tester",
+        ),
+        store=InMemoryStore(),
+    )
+    release_run = Event()
+
+    class FakeWorkflow:
+        def prepare_project_request(self, *, project, user_brief, target_chapters, operator_id, quick_mode=False):
+            return {
+                "user_brief": user_brief or project.default_user_brief,
+                "target_chapters": target_chapters or project.default_target_chapters,
+                "operator_id": operator_id or "tester",
+                "quick_mode": quick_mode,
+                "human_instruction": None,
+            }
+
+        def run_project(self, *, project, request_payload, on_update=None):
+            base_state = {
+                "current_card": {"chapter_no": 1, "purpose": "测试章卡"},
+                "event_log": ["chapter_draft_ready"],
+                "rewrite_count": 0,
+            }
+            if on_update is not None:
+                on_update("draft_writer", base_state)
+                on_update(
+                    "continuity_reviewer",
+                    {
+                        **base_state,
+                        "review_reports": [
+                            {
+                                "reviewer": "continuity",
+                                "decision": "pass",
+                                "scores": {"continuity": 90, "pacing": 80, "style": 80, "hook": 80, "total": 83},
+                                "hard_violations": [],
+                                "issues": [],
+                            }
+                        ],
+                        "event_log": ["chapter_draft_ready", "review_ready:continuity:pass"],
+                    },
+                )
+                on_update(
+                    "pacing_reviewer",
+                    {
+                        **base_state,
+                        "review_reports": [
+                            {
+                                "reviewer": "continuity",
+                                "decision": "pass",
+                                "scores": {"continuity": 90, "pacing": 80, "style": 80, "hook": 80, "total": 83},
+                                "hard_violations": [],
+                                "issues": [],
+                            },
+                            {
+                                "reviewer": "pacing",
+                                "decision": "rewrite",
+                                "scores": {"continuity": 82, "pacing": 72, "style": 80, "hook": 79, "total": 78},
+                                "hard_violations": [],
+                                "issues": [],
+                            },
+                        ],
+                        "event_log": [
+                            "chapter_draft_ready",
+                            "review_ready:continuity:pass",
+                            "review_ready:pacing:rewrite",
+                        ],
+                    },
+                )
+            release_run.wait(timeout=2)
+            return {
+                **base_state,
+                "publish_package": {"chapter_no": 1, "title": "第1章", "full_text": "正文"},
+                "latest_review_reports": [],
+            }
+
+    app.state.workflow = FakeWorkflow()
+    client = TestClient(app)
+
+    project = client.post(
+        "/api/projects",
+        json={"name": "并行审校进度", "default_user_brief": {"title": "测试"}, "default_target_chapters": 1},
+    ).json()
+    run = client.post(f"/api/projects/{project['project_id']}/runs", json={}).json()
+
+    deadline = time.time() + 2
+    run_snapshot = None
+    while time.time() < deadline:
+        candidate = client.get(f"/api/runs/{run['run_id']}").json()
+        review_progress = candidate["result"]["progress"]["review_progress"]
+        if review_progress["completed_count"] >= 2:
+            run_snapshot = candidate
+            break
+        time.sleep(0.02)
+
+    assert run_snapshot is not None
+    review_progress = run_snapshot["result"]["progress"]["review_progress"]
+    assert review_progress["stage_status"] == "running"
+    assert review_progress["completed_count"] == 2
+    assert set(review_progress["active_reviewers"]) == {"style", "reader_sim"}
+    assert review_progress["pending_reviewers"] == []
+    assert review_progress["reviewers"]["continuity"]["decision"] == "pass"
+    assert review_progress["reviewers"]["pacing"]["decision"] == "rewrite"
+
+    release_run.set()
+    wait_for_run(client, run["run_id"])
 
 
 def test_mark_failed_prevents_late_background_overwrite() -> None:

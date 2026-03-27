@@ -53,6 +53,13 @@ LIVE_ARTIFACT_TYPES = [
     "event_log",
 ]
 RUN_STALE_TIMEOUT_SECONDS = 900
+REVIEWER_NODE_TO_REPORTER = {
+    "continuity_reviewer": "continuity",
+    "pacing_reviewer": "pacing",
+    "style_reviewer": "style",
+    "reader_simulator": "reader_sim",
+}
+REVIEWER_REPORTER_TO_NODE = {value: key for key, value in REVIEWER_NODE_TO_REPORTER.items()}
 
 
 def run_requires_human_approval(result: dict[str, object]) -> bool:
@@ -191,10 +198,108 @@ def create_app(
                 "updated_at": utc_now_iso(),
                 "stage_goal": infer_stage_goal(current_node=current_node, phase_decision=None, chapter_no=None),
                 "possible_cause": None,
+                "review_progress": {
+                    "stage_status": "not_started",
+                    "stage_started_at": None,
+                    "completed_count": 0,
+                    "total_count": len(REVIEWER_NODE_TO_REPORTER),
+                    "active_reviewers": [],
+                    "pending_reviewers": list(REVIEWER_NODE_TO_REPORTER.values()),
+                    "reviewers": {},
+                },
             }
         }
 
-    def build_progress_snapshot(*, state: dict[str, object], current_node: str | None) -> dict[str, object]:
+    def build_review_progress(*, tracker: dict[str, object], current_node: str | None, state: dict[str, object]) -> dict[str, object]:
+        reviewers = {
+            reviewer: dict((tracker.get("reviewers") or {}).get(reviewer) or {})
+            for reviewer in REVIEWER_NODE_TO_REPORTER.values()
+        }
+        timestamp = utc_now_iso()
+        stage_started_at = tracker.get("stage_started_at")
+        if current_node in {"draft_writer", "patch_writer"}:
+            stage_started_at = timestamp
+            reviewers = {
+                reviewer: {
+                    "status": "pending",
+                    "started_at": stage_started_at,
+                    "finished_at": None,
+                    "decision": None,
+                    "total_score": None,
+                }
+                for reviewer in REVIEWER_NODE_TO_REPORTER.values()
+            }
+
+        latest_reports = {
+            str(report.get("reviewer", "")).strip(): report
+            for report in (state.get("review_reports") or [])
+            if str(report.get("reviewer", "")).strip()
+        }
+        if current_node in REVIEWER_NODE_TO_REPORTER:
+            if not stage_started_at:
+                stage_started_at = timestamp
+            just_finished = REVIEWER_NODE_TO_REPORTER[current_node]
+            for reviewer in REVIEWER_NODE_TO_REPORTER.values():
+                existing = reviewers.get(reviewer) or {}
+                if not existing.get("started_at"):
+                    existing["started_at"] = stage_started_at
+                if reviewer == just_finished:
+                    report = latest_reports.get(reviewer, {})
+                    existing.update(
+                        {
+                            "status": "completed",
+                            "finished_at": timestamp,
+                            "decision": report.get("decision"),
+                            "total_score": (report.get("scores") or {}).get("total"),
+                        }
+                    )
+                elif existing.get("status") != "completed":
+                    existing["status"] = "running"
+                reviewers[reviewer] = existing
+
+        if current_node == "chief_editor" and latest_reports:
+            if not stage_started_at:
+                stage_started_at = timestamp
+            for reviewer, report in latest_reports.items():
+                existing = reviewers.get(reviewer) or {}
+                existing.update(
+                    {
+                        "status": "completed",
+                        "started_at": existing.get("started_at") or stage_started_at,
+                        "finished_at": existing.get("finished_at") or timestamp,
+                        "decision": report.get("decision"),
+                        "total_score": (report.get("scores") or {}).get("total"),
+                    }
+                )
+                reviewers[reviewer] = existing
+
+        completed = [name for name, item in reviewers.items() if item.get("status") == "completed"]
+        active = [name for name, item in reviewers.items() if item.get("status") == "running"]
+        pending = [name for name, item in reviewers.items() if item.get("status") in {None, "pending"}]
+        if stage_started_at and not active and not pending:
+            stage_status = "completed"
+        elif stage_started_at:
+            stage_status = "running"
+        else:
+            stage_status = "not_started"
+        tracker["stage_started_at"] = stage_started_at
+        tracker["reviewers"] = reviewers
+        return {
+            "stage_status": stage_status,
+            "stage_started_at": stage_started_at,
+            "completed_count": len(completed),
+            "total_count": len(REVIEWER_NODE_TO_REPORTER),
+            "active_reviewers": active,
+            "pending_reviewers": pending,
+            "reviewers": reviewers,
+        }
+
+    def build_progress_snapshot(
+        *,
+        state: dict[str, object],
+        current_node: str | None,
+        review_progress: dict[str, object] | None = None,
+    ) -> dict[str, object]:
         event_log = state.get("event_log") or []
         current_card = state.get("current_card") or {}
         publish_package = state.get("publish_package") or {}
@@ -219,6 +324,16 @@ def create_app(
                     current_node=current_node,
                     phase_decision=final_decision,
                 ),
+                "review_progress": review_progress
+                or {
+                    "stage_status": "not_started",
+                    "stage_started_at": None,
+                    "completed_count": 0,
+                    "total_count": len(REVIEWER_NODE_TO_REPORTER),
+                    "active_reviewers": [],
+                    "pending_reviewers": list(REVIEWER_NODE_TO_REPORTER.values()),
+                    "reviewers": {},
+                },
             },
             "live_artifacts": build_live_artifacts(state),
         }
@@ -325,11 +440,21 @@ def create_app(
         )
 
     def launch_background_run(*, run_id: str, work) -> None:
+        progress_tracker: dict[str, object] = {
+            "stage_started_at": None,
+            "reviewers": {},
+        }
+
         def on_update(current_node: str | None, state: dict[str, object]) -> None:
+            review_progress = build_review_progress(tracker=progress_tracker, current_node=current_node, state=state)
             app.state.store.update_run(
                 run_id=run_id,
                 status="running",
-                result=build_progress_snapshot(state=state, current_node=current_node),
+                result=build_progress_snapshot(
+                    state=state,
+                    current_node=current_node,
+                    review_progress=review_progress,
+                ),
                 error=None,
                 only_if_status_in={"running"},
             )

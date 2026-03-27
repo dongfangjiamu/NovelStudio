@@ -78,6 +78,13 @@ const NODE_LABELS = {
   human_gate: "等待人工处理",
 };
 
+const REVIEWER_LABELS = {
+  continuity: "连续性审校",
+  pacing: "节奏审校",
+  style: "文风审校",
+  reader_sim: "读者模拟",
+};
+
 const ARTIFACT_LABELS = {
   creative_contract: "创作契约",
   story_bible: "故事设定",
@@ -225,6 +232,16 @@ function nodeLabel(value) {
   return NODE_LABELS[value] || value || "未记录";
 }
 
+function reviewerLabel(value) {
+  return REVIEWER_LABELS[value] || nodeLabel(REVIEWER_LABELS[value] ? "" : value) || value || "未记录";
+}
+
+function reviewerStatusText(value) {
+  if (value === "completed") return "已返回";
+  if (value === "running") return "审校中";
+  return "待返回";
+}
+
 function artifactLabel(value) {
   return ARTIFACT_LABELS[value] || value;
 }
@@ -237,8 +254,13 @@ function eventLabel(value) {
   return EVENT_LABELS[kind] || value;
 }
 
+function remainingReviewers(reviewProgress) {
+  return [...(reviewProgress.active_reviewers || []), ...(reviewProgress.pending_reviewers || [])];
+}
+
 function buildTimelineEntries(run) {
   const progress = run.result?.progress || {};
+  const reviewProgress = progress.review_progress || {};
   const entries = [];
   entries.push({
     title: "开始生成",
@@ -257,6 +279,15 @@ function buildTimelineEntries(run) {
       title: `正在进行：${nodeLabel(progress.current_node)}`,
       meta: `已等待 ${formatDuration((progress.stalled_for_seconds || 0) * 1000)}`,
       status: "current",
+    });
+  }
+  if (reviewProgress.stage_status === "running" || reviewProgress.stage_status === "completed") {
+    entries.push({
+      title: `并行审校 ${reviewProgress.completed_count || 0}/${reviewProgress.total_count || 4}`,
+      meta: remainingReviewers(reviewProgress).length
+        ? `等待：${remainingReviewers(reviewProgress).map((item) => reviewerLabel(item)).join("、")}`
+        : "4 个审校都已返回",
+      status: reviewProgress.stage_status === "completed" ? "done" : "current",
     });
   }
   if (run.status === "failed") {
@@ -284,8 +315,12 @@ function chapterForRun(run) {
 
 function summarizeRunCard(run) {
   const progress = run.result?.progress || {};
+  const reviewProgress = progress.review_progress || {};
   const publish = run.result?.publish_package || {};
   if (run.status === "running") {
+    if (reviewProgress.stage_status === "running") {
+      return `4 个审校正在并行进行，已完成 ${reviewProgress.completed_count || 0}/${reviewProgress.total_count || 4}。`;
+    }
     return `系统正在 ${nodeLabel(progress.current_node)}。`;
   }
   if (run.status === "awaiting_approval") {
@@ -750,6 +785,7 @@ function deriveSummary(project, snapshot) {
   const approvedWaitingExecution = approvals.find((item) => item.status === "approved" && !item.executed_run_id);
   const latestChapter = latestChapterNo(chapters);
   const progress = focusRun?.result?.progress || {};
+  const reviewProgress = progress.review_progress || {};
   const updatedAt = progress.updated_at ? formatTimestamp(progress.updated_at) : "未记录";
   const stageGoal = progress.stage_goal || "等待下一步目标。";
   const possibleCause = progress.possible_cause || null;
@@ -780,15 +816,23 @@ function deriveSummary(project, snapshot) {
     const stale = staleMs > 180000;
     return {
       goal: `完成第 ${targetChapter} 章的生成。`,
-      system: `系统正在后台执行，当前节点是 ${currentNode}；当前目标是：${stageGoal}`,
-      event: `最近事件：${latestEvent}；最近更新时间：${updatedAt}；当前重写次数：${progress.rewrite_count ?? 0}。`,
+      system: reviewProgress.stage_status === "running"
+        ? `系统正在并行审校，已完成 ${reviewProgress.completed_count || 0}/${reviewProgress.total_count || 4}；当前目标是：${stageGoal}`
+        : `系统正在后台执行，当前节点是 ${currentNode}；当前目标是：${stageGoal}`,
+      event: reviewProgress.stage_status === "running"
+        ? `最近事件：${latestEvent}；${remainingReviewers(reviewProgress).length ? `仍在等待 ${remainingReviewers(reviewProgress).map((item) => reviewerLabel(item)).join("、")}` : "等待最后汇总"}；最近更新时间：${updatedAt}。`
+        : `最近事件：${latestEvent}；最近更新时间：${updatedAt}；当前重写次数：${progress.rewrite_count ?? 0}。`,
       next: stale
         ? `这条 Run 已经 ${formatDuration(staleMs)} 没有新进度。它更像是卡住，而不是一直重写。先点“刷新”确认；如果仍不动，就点“标记失败”，然后再“重新尝试”。`
-        : `当前已经有 Run 在执行，不要重复点击“生成章节”。等待自动刷新，或点“查看工件”跟踪当前 Run。`,
+        : reviewProgress.stage_status === "running"
+          ? `当前 4 个审校在并行工作，不要重复点击“生成章节”。等待自动刷新，留意哪些审校已返回、还剩谁没回。`
+          : `当前已经有 Run 在执行，不要重复点击“生成章节”。等待自动刷新，或点“查看工件”跟踪当前 Run。`,
       heroNote: stale
         ? "系统判断这条运行更像是卡住，而不是正常生成中。建议先收口这条失败，再决定是否重试。"
-        : "当前已经在写作流程中。你现在最需要做的是观察，不是重复点击。",
-      pill: stale ? `Run 可能卡住: ${focusRun.run_id}` : `Run 执行中: ${currentNode}`,
+        : reviewProgress.stage_status === "running"
+          ? "当前不是串行审核，而是 4 个审校并行中。最重要的是看还有谁没返回。"
+          : "当前已经在写作流程中。你现在最需要做的是观察，不是重复点击。",
+      pill: stale ? `Run 可能卡住: ${focusRun.run_id}` : reviewProgress.stage_status === "running" ? `并行审校中 ${reviewProgress.completed_count || 0}/${reviewProgress.total_count || 4}` : `Run 执行中: ${currentNode}`,
       kind: "warn",
       focusRun,
       disableRunButton: true,
@@ -926,6 +970,38 @@ function renderOverview(project, snapshot, summary) {
   el.overviewAction.textContent = summary.next;
 }
 
+function renderReviewProgressCard(reviewProgress) {
+  if (!reviewProgress || reviewProgress.stage_status === "not_started") {
+    return "";
+  }
+  const reviewers = reviewProgress.reviewers || {};
+  const items = Object.entries(reviewers).map(([name, item]) => {
+    const status = item.status || "pending";
+    const decision = item.decision || "等待返回";
+    const totalScore = item.total_score ?? "?";
+    const finishedAt = item.finished_at ? ` · ${formatTimestamp(item.finished_at)}` : "";
+    return `
+        <div class="focus-metric">
+        <strong>${reviewerLabel(name)}</strong>
+        <div class="meta">${reviewerStatusText(status)}</div>
+        <div class="meta">${status === "completed" ? `结论：${decision} / 总分 ${totalScore}` : status === "running" ? "并行执行中" : "等待返回"}</div>
+        <div class="meta">${finishedAt || (item.started_at ? `开始于 ${formatTimestamp(item.started_at)}` : "尚未开始")}</div>
+      </div>
+    `;
+  });
+  return `
+    <div class="card">
+      <div class="card-head">
+        <h4>并行审校进度</h4>
+        <div class="meta">已完成 ${reviewProgress.completed_count || 0}/${reviewProgress.total_count || 4}</div>
+      </div>
+      <div class="focus-run-grid">
+        ${items.join("")}
+      </div>
+    </div>
+  `;
+}
+
 function renderFocusRun(summary) {
   const run = summary.focusRun;
   if (!run) {
@@ -935,6 +1011,7 @@ function renderFocusRun(summary) {
   }
 
   const progress = run.result?.progress || {};
+  const reviewProgress = progress.review_progress || {};
   const logTail = progress.event_log_tail || [];
   const latestEvent = progress.latest_event || "暂无事件";
   const updatedAt = progress.updated_at || run.created_at;
@@ -1032,6 +1109,7 @@ function renderFocusRun(summary) {
           .join("")}
       </div>
     </div>
+    ${renderReviewProgressCard(reviewProgress)}
     <div class="card">
       <div class="card-head">
         <h4>最近事件尾部</h4>
