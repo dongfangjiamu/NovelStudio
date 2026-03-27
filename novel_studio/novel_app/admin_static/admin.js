@@ -278,6 +278,16 @@ function conversationDecisionLabel(value) {
   return value || "已采纳结论";
 }
 
+function conversationGuidance(run) {
+  return run?.request?.conversation_guidance || null;
+}
+
+function conversationGuidanceSummary(run) {
+  const guidance = conversationGuidance(run);
+  if (!guidance || !guidance.decision_count) return null;
+  return `本次已带入 ${guidance.decision_count} 条对话结论`;
+}
+
 function reviewerLabel(value) {
   return REVIEWER_LABELS[value] || nodeLabel(REVIEWER_LABELS[value] ? "" : value) || value || "未记录";
 }
@@ -403,31 +413,32 @@ function summarizeRunCard(run) {
   const progress = run.result?.progress || {};
   const reviewProgress = progress.review_progress || {};
   const publish = run.result?.publish_package || {};
+  const guidanceSummary = conversationGuidanceSummary(run);
   if (run.status === "running") {
     if (reviewProgress.stage_status === "running") {
-      return `4 个审校正在并行进行，已完成 ${reviewProgress.completed_count || 0}/${reviewProgress.total_count || 4}。`;
+      return `${guidanceSummary ? `${guidanceSummary}；` : ""}4 个审校正在并行进行，已完成 ${reviewProgress.completed_count || 0}/${reviewProgress.total_count || 4}。`;
     }
-    return `系统正在 ${nodeLabel(progress.current_node)}。`;
+    return `${guidanceSummary ? `${guidanceSummary}；` : ""}系统正在 ${nodeLabel(progress.current_node)}。`;
   }
   if (displayStatus === "awaiting_execution") {
-    return "这一章已经审批通过，等待你执行继续写下一章。";
+    return `${guidanceSummary ? `${guidanceSummary}；` : ""}这一章已经审批通过，等待你执行继续写下一章。`;
   }
   if (displayStatus === "approved") {
-    return "这一章已经审批通过，后续续写运行已启动或已完成。";
+    return `${guidanceSummary ? `${guidanceSummary}；` : ""}这一章已经审批通过，后续续写运行已启动或已完成。`;
   }
   if (displayStatus === "rejected") {
-    return "这一章的审批已驳回，建议先看工件再决定是否重试。";
+    return `${guidanceSummary ? `${guidanceSummary}；` : ""}这一章的审批已驳回，建议先看工件再决定是否重试。`;
   }
   if (displayStatus === "awaiting_approval") {
-    return "这一章已经生成，正在等你决定是否继续。";
+    return `${guidanceSummary ? `${guidanceSummary}；` : ""}这一章已经生成，正在等你决定是否继续。`;
   }
   if (run.status === "failed") {
     return run.result?.manual_intervention?.action === "auto_timeout"
-      ? "这次运行长时间无进度，系统已自动收口。"
-      : "这次运行没有顺利完成。";
+      ? `${guidanceSummary ? `${guidanceSummary}；` : ""}这次运行长时间无进度，系统已自动收口。`
+      : `${guidanceSummary ? `${guidanceSummary}；` : ""}这次运行没有顺利完成。`;
   }
   if (run.status === "completed") {
-    return publish.blurb || "这一章已经生成完成，可先阅读结果。";
+    return publish.blurb || `${guidanceSummary ? `${guidanceSummary}；` : ""}这一章已经生成完成，可先阅读结果。`;
   }
   return "查看这条运行的详细结果。";
 }
@@ -1120,6 +1131,7 @@ function renderFocusRun(summary) {
   const possibleCause = progress.possible_cause;
   const intervention = run.result?.manual_intervention || null;
   const displayStatus = runDisplayStatus(run);
+  const guidance = conversationGuidance(run);
   const timelineEntries = buildTimelineEntries(run);
   const errorBlock = run.error
     ? `<div class="focus-metric"><strong class="error-copy">错误</strong><div class="meta">${run.error}</div></div>`
@@ -1129,6 +1141,9 @@ function renderFocusRun(summary) {
     : "";
   const interventionBlock = intervention
     ? `<div class="focus-metric"><strong>系统处理</strong><div class="meta">${intervention.action === "auto_timeout" ? "系统已自动收口这条超时运行" : "这条运行已被人工收口"}</div></div>`
+    : "";
+  const guidanceBlock = guidance?.decision_count
+    ? `<div class="focus-metric"><strong>已带入对话结论</strong><div class="meta">${guidance.decision_count} 条，其中写作规则 ${guidance.writer_playbook_rule_count || 0} 条，修订指令 ${guidance.human_instruction_count || 0} 条，章卡修订 ${guidance.chapter_card_patch_count || 0} 条。</div></div>`
     : "";
   const actionButtons = [
     renderViewArtifactsButton(run.run_id, run.artifact_count),
@@ -1183,6 +1198,7 @@ function renderFocusRun(summary) {
         <strong>当前目标</strong>
         <div class="meta">${stageGoal}</div>
       </div>
+      ${guidanceBlock}
       ${interventionBlock}
       ${causeBlock}
       ${errorBlock}
@@ -1215,6 +1231,14 @@ function renderFocusRun(summary) {
         ${statusChip(displayStatus)}
       </div>
       <div class="meta">${logTail.length ? logTail.join(" -> ") : "暂无事件日志"}</div>
+      ${
+        guidance?.adopted_decisions?.length
+          ? `<div class="meta">本次实际带入：${guidance.adopted_decisions
+              .slice(0, 3)
+              .map((item) => `${conversationDecisionLabel(item.decision_type)}：${escapeHtml(String(item.summary || "").slice(0, 24))}`)
+              .join(" / ")}</div>`
+          : ""
+      }
       <div class="actions">
         ${actionButtons.join("")}
       </div>

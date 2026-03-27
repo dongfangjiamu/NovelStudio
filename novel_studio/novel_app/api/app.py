@@ -727,9 +727,31 @@ def create_app(
         human_guidance = [item for item in decisions if item.decision_type == "human_instruction"]
         playbook_rules = [item.payload.get("rule") for item in decisions if item.decision_type == "writer_playbook_rule"]
         chapter_patches = [item.payload.get("instruction") for item in decisions if item.decision_type == "chapter_card_patch"]
+        adopted_decisions = [
+            {
+                "decision_id": item.decision_id,
+                "decision_type": item.decision_type,
+                "thread_id": item.thread_id,
+                "summary": (
+                    item.payload.get("comment")
+                    or item.payload.get("rule")
+                    or item.payload.get("instruction")
+                    or item.payload.get("content")
+                    or ""
+                ),
+            }
+            for item in decisions[:8]
+        ]
 
         playbook_rules = [str(item).strip() for item in playbook_rules if str(item or "").strip()]
         chapter_patches = [str(item).strip() for item in chapter_patches if str(item or "").strip()]
+        updated["conversation_guidance"] = {
+            "decision_count": len(decisions),
+            "human_instruction_count": len(human_guidance),
+            "writer_playbook_rule_count": len(playbook_rules),
+            "chapter_card_patch_count": len(chapter_patches),
+            "adopted_decisions": adopted_decisions,
+        }
         if playbook_rules:
             current_playbook = dict(updated.get("writer_playbook") or {})
             always_apply = list(current_playbook.get("always_apply") or [])

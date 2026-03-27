@@ -46,6 +46,7 @@ class RunRequestPayload(BaseModel):
     operator_id: str
     quick_mode: bool = False
     human_instruction: dict[str, Any] | None = None
+    conversation_guidance: dict[str, Any] | None = None
 
 
 class RunResponse(BaseModel):

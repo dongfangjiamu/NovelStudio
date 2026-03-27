@@ -176,6 +176,7 @@ def test_conversation_decision_is_persisted_and_applied_to_run_request() -> None
 
     run_response = client.post(f"/api/projects/{project['project_id']}/runs", json={})
     assert run_response.status_code == 201
+    assert run_response.json()["request"]["conversation_guidance"]["decision_count"] == 1
     completed = wait_for_run(client, run_response.json()["run_id"])
     assert "主角的主动动作要在前半章出现。" in completed["result"]["writer_playbook"]["always_apply"]
 
