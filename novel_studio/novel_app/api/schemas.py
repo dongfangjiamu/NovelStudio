@@ -132,3 +132,46 @@ class AuditLogResponse(BaseModel):
 class ApprovalExecuteResponse(BaseModel):
     approval: ApprovalRequestResponse
     run: RunResponse
+
+
+class ConversationThreadCreateRequest(BaseModel):
+    scope: Literal["project_bootstrap", "chapter_planning", "rewrite_intervention", "chapter_retro"] = "project_bootstrap"
+    title: str | None = Field(default=None, max_length=255)
+    linked_run_id: str | None = Field(default=None, min_length=1, max_length=32)
+    linked_chapter_no: int | None = Field(default=None, ge=1)
+
+
+class ConversationThreadResponse(BaseModel):
+    thread_id: str
+    project_id: str
+    scope: Literal["project_bootstrap", "chapter_planning", "rewrite_intervention", "chapter_retro"]
+    status: Literal["open", "resolved", "archived"]
+    title: str
+    linked_run_id: str | None = None
+    linked_chapter_no: int | None = None
+    created_at: str
+    updated_at: str
+    latest_message_preview: str | None = None
+    message_count: int = 0
+
+
+class ConversationMessageCreateRequest(BaseModel):
+    content: str = Field(min_length=1, max_length=4000)
+
+
+class ConversationMessageResponse(BaseModel):
+    message_id: str
+    thread_id: str
+    project_id: str
+    role: Literal["user", "assistant", "system"]
+    message_type: Literal[
+        "user_message",
+        "assistant_question",
+        "assistant_proposal",
+        "assistant_diagnosis",
+        "system_summary",
+        "system_action_result",
+    ]
+    content: str
+    structured_payload: dict[str, Any] | None = None
+    created_at: str

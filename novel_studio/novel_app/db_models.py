@@ -91,3 +91,30 @@ class AuditLogModel(Base):
     status_code: Mapped[int] = mapped_column(nullable=False)
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)
     created_at: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+
+
+class ConversationThreadModel(Base):
+    __tablename__ = "conversation_threads"
+
+    thread_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    scope: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    linked_run_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    linked_chapter_no: Mapped[int | None] = mapped_column(nullable=True)
+    created_at: Mapped[str] = mapped_column(String(64), nullable=False)
+    updated_at: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+
+
+class ConversationMessageModel(Base):
+    __tablename__ = "conversation_messages"
+
+    message_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    thread_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    project_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    role: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    message_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    structured_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[str] = mapped_column(String(64), nullable=False, index=True)

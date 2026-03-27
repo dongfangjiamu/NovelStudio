@@ -196,6 +196,76 @@ body {
   background: linear-gradient(180deg, rgba(255, 249, 240, 0.96), rgba(248, 242, 231, 0.9));
 }
 
+.conversation-panel {
+  margin-bottom: 18px;
+}
+
+.conversation-layout {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 16px;
+}
+
+.conversation-sidebar {
+  border-right: 1px solid var(--line);
+  padding-right: 16px;
+}
+
+.conversation-main {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.conversation-messages {
+  min-height: 220px;
+  max-height: 560px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-right: 4px;
+}
+
+.conversation-message {
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: rgba(255, 253, 249, 0.96);
+}
+
+.conversation-message.user {
+  background: rgba(255, 245, 235, 0.96);
+  border-color: rgba(138, 59, 18, 0.18);
+}
+
+.conversation-message.assistant {
+  background: rgba(255, 252, 246, 0.98);
+}
+
+.conversation-message.system {
+  background: rgba(248, 242, 231, 0.8);
+}
+
+.conversation-role {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 6px;
+}
+
+.conversation-content {
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+.conversation-form {
+  border-top: 1px dashed var(--line);
+  padding-top: 12px;
+}
+
 .learning-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -484,6 +554,7 @@ textarea {
   border-color: rgba(31, 107, 68, 0.2);
 }
 
+.status-open,
 .status-pending,
 .status-approved,
 .status-rejected {
@@ -608,10 +679,18 @@ pre {
   .shell,
   .grid,
   .lower-grid,
+  .conversation-layout,
   .columns,
   .overview-strip,
   .summary-grid,
   .focus-run-grid {
     grid-template-columns: 1fr;
+  }
+
+  .conversation-sidebar {
+    border-right: 0;
+    padding-right: 0;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 12px;
   }
 }

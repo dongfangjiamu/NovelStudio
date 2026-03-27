@@ -92,6 +92,31 @@ class AuditLogRecord:
     created_at: str
 
 
+@dataclass(frozen=True)
+class ConversationThreadRecord:
+    thread_id: str
+    project_id: str
+    scope: str
+    status: str
+    title: str
+    linked_run_id: str | None
+    linked_chapter_no: int | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class ConversationMessageRecord:
+    message_id: str
+    thread_id: str
+    project_id: str
+    role: str
+    message_type: str
+    content: str
+    structured_payload: dict[str, Any] | None
+    created_at: str
+
+
 class InMemoryStore:
     def __init__(self) -> None:
         self._lock = RLock()
@@ -101,6 +126,8 @@ class InMemoryStore:
         self._artifacts: dict[str, ArtifactRecord] = {}
         self._approval_requests: dict[str, ApprovalRequestRecord] = {}
         self._audit_logs: dict[str, AuditLogRecord] = {}
+        self._conversation_threads: dict[str, ConversationThreadRecord] = {}
+        self._conversation_messages: dict[str, ConversationMessageRecord] = {}
 
     def create_project(
         self,
@@ -420,6 +447,87 @@ class InMemoryStore:
         with self._lock:
             items = sorted(self._audit_logs.values(), key=lambda item: item.created_at, reverse=True)
             return items[:limit]
+
+    def create_conversation_thread(
+        self,
+        *,
+        project_id: str,
+        scope: str,
+        title: str,
+        linked_run_id: str | None,
+        linked_chapter_no: int | None,
+    ) -> ConversationThreadRecord:
+        with self._lock:
+            timestamp = utc_now_iso()
+            thread = ConversationThreadRecord(
+                thread_id=f"thr_{uuid4().hex[:12]}",
+                project_id=project_id,
+                scope=scope,
+                status="open",
+                title=title,
+                linked_run_id=linked_run_id,
+                linked_chapter_no=linked_chapter_no,
+                created_at=timestamp,
+                updated_at=timestamp,
+            )
+            self._conversation_threads[thread.thread_id] = thread
+            return thread
+
+    def get_conversation_thread(self, thread_id: str) -> ConversationThreadRecord | None:
+        with self._lock:
+            return self._conversation_threads.get(thread_id)
+
+    def list_conversation_threads(self, project_id: str) -> list[ConversationThreadRecord]:
+        with self._lock:
+            return sorted(
+                [item for item in self._conversation_threads.values() if item.project_id == project_id],
+                key=lambda item: item.updated_at,
+                reverse=True,
+            )
+
+    def add_conversation_message(
+        self,
+        *,
+        thread_id: str,
+        role: str,
+        message_type: str,
+        content: str,
+        structured_payload: dict[str, Any] | None,
+    ) -> ConversationMessageRecord | None:
+        with self._lock:
+            thread = self._conversation_threads.get(thread_id)
+            if thread is None:
+                return None
+            message = ConversationMessageRecord(
+                message_id=f"msg_{uuid4().hex[:12]}",
+                thread_id=thread_id,
+                project_id=thread.project_id,
+                role=role,
+                message_type=message_type,
+                content=content,
+                structured_payload=structured_payload,
+                created_at=utc_now_iso(),
+            )
+            self._conversation_messages[message.message_id] = message
+            self._conversation_threads[thread_id] = ConversationThreadRecord(
+                thread_id=thread.thread_id,
+                project_id=thread.project_id,
+                scope=thread.scope,
+                status=thread.status,
+                title=thread.title,
+                linked_run_id=thread.linked_run_id,
+                linked_chapter_no=thread.linked_chapter_no,
+                created_at=thread.created_at,
+                updated_at=message.created_at,
+            )
+            return message
+
+    def list_conversation_messages(self, thread_id: str) -> list[ConversationMessageRecord]:
+        with self._lock:
+            return sorted(
+                [item for item in self._conversation_messages.values() if item.thread_id == thread_id],
+                key=lambda item: item.created_at,
+            )
 
     def health_status(self) -> dict[str, str | None]:
         return {"status": "ready", "backend": "inmemory", "detail": None}

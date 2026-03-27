@@ -72,6 +72,51 @@ def test_project_create_and_list() -> None:
     assert list_response.json()[0]["name"] == "测试项目"
 
 
+def test_conversation_thread_flow() -> None:
+    client = make_client()
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "对话项目",
+            "default_user_brief": {"title": "长夜炉火", "genre": "东方玄幻"},
+            "default_target_chapters": 1,
+        },
+    ).json()
+
+    create_thread = client.post(
+        f"/api/projects/{project['project_id']}/conversation-threads",
+        json={"scope": "project_bootstrap"},
+    )
+
+    assert create_thread.status_code == 201
+    thread = create_thread.json()
+    assert thread["scope"] == "project_bootstrap"
+    assert thread["message_count"] == 1
+    assert "项目共创" in thread["title"]
+
+    list_threads = client.get(f"/api/projects/{project['project_id']}/conversation-threads")
+    assert list_threads.status_code == 200
+    assert list_threads.json()[0]["thread_id"] == thread["thread_id"]
+
+    initial_messages = client.get(f"/api/conversation-threads/{thread['thread_id']}/messages")
+    assert initial_messages.status_code == 200
+    assert initial_messages.json()[0]["role"] == "assistant"
+
+    reply = client.post(
+        f"/api/conversation-threads/{thread['thread_id']}/messages",
+        json={"content": "我想把主角写成克制型，但前期行动要更果断。"},
+    )
+    assert reply.status_code == 201
+    created_messages = reply.json()
+    assert len(created_messages) == 2
+    assert created_messages[0]["role"] == "user"
+    assert created_messages[1]["role"] == "assistant"
+
+    refreshed_thread = client.get(f"/api/conversation-threads/{thread['thread_id']}")
+    assert refreshed_thread.status_code == 200
+    assert refreshed_thread.json()["message_count"] == 3
+
+
 def test_run_flow() -> None:
     client = make_client()
     project = client.post(

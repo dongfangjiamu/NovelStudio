@@ -18,6 +18,10 @@ from novel_app.api.schemas import (
     ArtifactResponse,
     AuditLogResponse,
     ChapterResponse,
+    ConversationMessageCreateRequest,
+    ConversationMessageResponse,
+    ConversationThreadCreateRequest,
+    ConversationThreadResponse,
     HealthResponse,
     ProjectCreateRequest,
     ProjectResponse,
@@ -67,6 +71,27 @@ def run_requires_human_approval(result: dict[str, object]) -> bool:
     phase_decision = result.get("phase_decision") or {}
     blockers = result.get("blockers") or []
     return bool(blockers) or phase_decision.get("final_decision") == "human_check"
+
+
+def infer_run_chapter(run) -> int | None:
+    result = run.result or {}
+    progress = result.get("progress") or {}
+    publish_package = result.get("publish_package") or {}
+    current_card = result.get("current_card") or {}
+    feedback_summary = result.get("feedback_summary") or {}
+    for candidate in (
+        progress.get("chapter_no"),
+        publish_package.get("chapter_no"),
+        current_card.get("chapter_no"),
+        feedback_summary.get("chapter_no"),
+        run.request.get("target_chapters"),
+    ):
+        try:
+            if candidate is not None:
+                return int(candidate)
+        except (TypeError, ValueError):
+            continue
+    return None
 
 
 def create_app(
@@ -568,6 +593,97 @@ def create_app(
             payload=payload,
         )
 
+    def conversation_title(*, scope: str, chapter_no: int | None) -> str:
+        if scope == "project_bootstrap":
+            return "项目共创对话"
+        if scope == "chapter_planning":
+            return f"第 {chapter_no or '?'} 章章卡协商"
+        if scope == "rewrite_intervention":
+            return f"第 {chapter_no or '?'} 章修稿协作"
+        if scope == "chapter_retro":
+            return f"第 {chapter_no or '?'} 章复盘"
+        return "创作对话"
+
+    def build_thread_opening(*, scope: str, project, run, chapter_no: int | None) -> tuple[str, str, dict]:
+        if scope == "project_bootstrap":
+            brief = project.default_user_brief or {}
+            title = brief.get("title") or project.name
+            genre = brief.get("genre") or "未定题材"
+            hook = brief.get("hook") or "请先明确一句话卖点。"
+            content = (
+                f"我们先把《{title}》的创作方向问清楚。当前已知题材是 {genre}。\n\n"
+                f"当前核心钩子：{hook}\n\n"
+                "建议优先确认 4 件事：一句话卖点、主角核心欲望、第一卷卖点、必须避免的写法。"
+            )
+            return "assistant_question", content, {"suggested_topics": ["核心爽点", "主角欲望", "第一卷卖点", "写作禁区"]}
+
+        if scope == "rewrite_intervention" and run is not None:
+            result = run.result or {}
+            phase_decision = result.get("phase_decision") or {}
+            must_fix = (phase_decision.get("must_fix") or [])[:3]
+            issue_ledger = result.get("issue_ledger") or {}
+            progress_summary = issue_ledger.get("progress_summary") or "当前还没有结构化的问题账本摘要。"
+            content = (
+                f"这是第 {chapter_no or '?'} 章的协作修稿线程。\n\n"
+                f"当前运行状态：{run.status}\n"
+                f"问题账本摘要：{progress_summary}\n"
+                f"当前建议优先处理：{'; '.join(must_fix) if must_fix else '先明确这次优先改章卡还是改正文。'}\n\n"
+                "请直接告诉我：哪些内容必须保留、这次优先修什么、哪些改法不能接受。"
+            )
+            return "assistant_diagnosis", content, {"must_fix": must_fix, "progress_summary": progress_summary}
+
+        if scope == "chapter_planning":
+            content = (
+                f"这是第 {chapter_no or '?'} 章的章卡协商线程。\n\n"
+                "建议先确认 3 件事：本章目的、主角动作、章末钩子。"
+            )
+            return "assistant_question", content, {"suggested_topics": ["本章目的", "主角动作", "章末钩子"]}
+
+        content = (
+            f"这是第 {chapter_no or '?'} 章的复盘线程。\n\n"
+            "建议先说清楚：这一章为什么算通过、哪些写法值得延续、哪些问题仍要警惕。"
+        )
+        return "system_summary", content, {"suggested_topics": ["通过原因", "延续规则", "遗留风险"]}
+
+    def build_assistant_followup(*, thread, project, run, user_message: str) -> tuple[str, str, dict]:
+        excerpt = user_message.strip().replace("\n", " ")
+        if len(excerpt) > 100:
+            excerpt = f"{excerpt[:100]}..."
+        if thread.scope == "project_bootstrap":
+            content = (
+                f"已记录你的方向：{excerpt}\n\n"
+                "我建议下一步继续补齐：一句话卖点、主角核心欲望、第一卷卖点、必须避免的写法。"
+            )
+            payload = {"suggested_topics": ["一句话卖点", "主角核心欲望", "第一卷卖点", "必须避免的写法"]}
+            return "assistant_question", content, payload
+        if thread.scope == "rewrite_intervention":
+            content = (
+                f"已记录这次人工意见：{excerpt}\n\n"
+                "下一步建议明确三件事：哪些内容必须保留、优先改章卡还是正文、这次必须先关闭哪些旧问题。"
+            )
+            payload = {"suggested_topics": ["必须保留", "优先修章卡或正文", "必须先关闭的问题"]}
+            return "system_summary", content, payload
+        if thread.scope == "chapter_planning":
+            content = (
+                f"已记录本章方向：{excerpt}\n\n"
+                "如果你认可当前结论，下一步就可以把它作为章卡修订指令。"
+            )
+            payload = {"suggested_topics": ["章卡修订指令", "必须兑现", "章末钩子"]}
+            return "assistant_proposal", content, payload
+        content = (
+            f"已记录这次复盘意见：{excerpt}\n\n"
+            "下一步可以决定：把哪些内容沉淀为长期写作规则，哪些只保留为本章经验。"
+        )
+        return "system_summary", content, {"suggested_topics": ["长期规则", "本章经验", "暂不采纳"]}
+
+    def enrich_thread_payload(thread) -> dict:
+        payload = dict(thread.__dict__)
+        messages = app.state.store.list_conversation_messages(thread.thread_id)
+        latest = messages[-1].content if messages else None
+        payload["latest_message_preview"] = latest[:120] if latest else None
+        payload["message_count"] = len(messages)
+        return payload
+
     @app.exception_handler(ValueError)
     async def value_error_handler(_: Request, exc: ValueError) -> JSONResponse:
         return JSONResponse(status_code=400, content={"detail": str(exc)})
@@ -995,6 +1111,136 @@ def create_app(
             approval=ApprovalRequestResponse.model_validate(updated_approval.__dict__),
             run=RunResponse.model_validate(followup_run.__dict__),
         )
+
+    @app.get("/api/projects/{project_id}/conversation-threads", response_model=list[ConversationThreadResponse])
+    async def list_conversation_threads(project_id: str) -> list[ConversationThreadResponse]:
+        project = app.state.store.get_project(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="project_not_found")
+        return [
+            ConversationThreadResponse.model_validate(enrich_thread_payload(item))
+            for item in app.state.store.list_conversation_threads(project_id)
+        ]
+
+    @app.post("/api/projects/{project_id}/conversation-threads", response_model=ConversationThreadResponse, status_code=201)
+    async def create_conversation_thread(
+        project_id: str,
+        payload: ConversationThreadCreateRequest,
+        request: Request,
+        response: Response,
+    ) -> ConversationThreadResponse:
+        project = app.state.store.get_project(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="project_not_found")
+        linked_run = None
+        chapter_no = payload.linked_chapter_no
+        if payload.linked_run_id:
+            linked_run = app.state.store.get_run(payload.linked_run_id)
+            if not linked_run or linked_run.project_id != project_id:
+                raise HTTPException(status_code=404, detail="linked_run_not_found")
+            chapter_no = chapter_no or infer_run_chapter(linked_run)
+        thread = app.state.store.create_conversation_thread(
+            project_id=project_id,
+            scope=payload.scope,
+            title=payload.title or conversation_title(scope=payload.scope, chapter_no=chapter_no),
+            linked_run_id=payload.linked_run_id,
+            linked_chapter_no=chapter_no,
+        )
+        opening_type, opening_content, opening_payload = build_thread_opening(
+            scope=thread.scope,
+            project=project,
+            run=linked_run,
+            chapter_no=thread.linked_chapter_no,
+        )
+        app.state.store.add_conversation_message(
+            thread_id=thread.thread_id,
+            role="assistant",
+            message_type=opening_type,
+            content=opening_content,
+            structured_payload=opening_payload,
+        )
+        thread = app.state.store.get_conversation_thread(thread.thread_id) or thread
+        audit(
+            request=request,
+            response=response,
+            status_code=201,
+            action="conversation_thread.create",
+            resource_type="conversation_thread",
+            resource_id=thread.thread_id,
+            project_id=project_id,
+            run_id=thread.linked_run_id,
+            approval_id=None,
+            payload={"scope": thread.scope, "linked_chapter_no": thread.linked_chapter_no},
+        )
+        return ConversationThreadResponse.model_validate(enrich_thread_payload(thread))
+
+    @app.get("/api/conversation-threads/{thread_id}", response_model=ConversationThreadResponse)
+    async def get_conversation_thread(thread_id: str) -> ConversationThreadResponse:
+        thread = app.state.store.get_conversation_thread(thread_id)
+        if not thread:
+            raise HTTPException(status_code=404, detail="conversation_thread_not_found")
+        return ConversationThreadResponse.model_validate(enrich_thread_payload(thread))
+
+    @app.get("/api/conversation-threads/{thread_id}/messages", response_model=list[ConversationMessageResponse])
+    async def list_conversation_messages(thread_id: str) -> list[ConversationMessageResponse]:
+        thread = app.state.store.get_conversation_thread(thread_id)
+        if not thread:
+            raise HTTPException(status_code=404, detail="conversation_thread_not_found")
+        return [
+            ConversationMessageResponse.model_validate(item.__dict__)
+            for item in app.state.store.list_conversation_messages(thread_id)
+        ]
+
+    @app.post("/api/conversation-threads/{thread_id}/messages", response_model=list[ConversationMessageResponse], status_code=201)
+    async def create_conversation_message(
+        thread_id: str,
+        payload: ConversationMessageCreateRequest,
+        request: Request,
+        response: Response,
+    ) -> list[ConversationMessageResponse]:
+        thread = app.state.store.get_conversation_thread(thread_id)
+        if not thread:
+            raise HTTPException(status_code=404, detail="conversation_thread_not_found")
+        user_message = app.state.store.add_conversation_message(
+            thread_id=thread_id,
+            role="user",
+            message_type="user_message",
+            content=payload.content,
+            structured_payload={"operator_id": request.state.actor},
+        )
+        if user_message is None:
+            raise HTTPException(status_code=404, detail="conversation_thread_not_found")
+        project = app.state.store.get_project(thread.project_id)
+        linked_run = app.state.store.get_run(thread.linked_run_id) if thread.linked_run_id else None
+        reply_type, reply_content, reply_payload = build_assistant_followup(
+            thread=thread,
+            project=project,
+            run=linked_run,
+            user_message=payload.content,
+        )
+        assistant_message = app.state.store.add_conversation_message(
+            thread_id=thread_id,
+            role="assistant",
+            message_type=reply_type,
+            content=reply_content,
+            structured_payload=reply_payload,
+        )
+        audit(
+            request=request,
+            response=response,
+            status_code=201,
+            action="conversation_message.create",
+            resource_type="conversation_message",
+            resource_id=user_message.message_id,
+            project_id=thread.project_id,
+            run_id=thread.linked_run_id,
+            approval_id=None,
+            payload={"thread_id": thread_id, "message_type": "user_message"},
+        )
+        messages = [user_message]
+        if assistant_message is not None:
+            messages.append(assistant_message)
+        return [ConversationMessageResponse.model_validate(item.__dict__) for item in messages]
 
     @app.get("/api/audit-logs", response_model=list[AuditLogResponse])
     async def list_audit_logs(limit: int = 100) -> list[AuditLogResponse]:

@@ -16,6 +16,8 @@ from novel_app.db_models import (
     ArtifactModel,
     AuditLogModel,
     ChapterModel,
+    ConversationMessageModel,
+    ConversationThreadModel,
     ProjectModel,
     RunModel,
 )
@@ -24,6 +26,8 @@ from novel_app.services.store import (
     ArtifactRecord,
     AuditLogRecord,
     ChapterRecord,
+    ConversationMessageRecord,
+    ConversationThreadRecord,
     ProjectRecord,
     RunRecord,
     utc_now_iso,
@@ -126,6 +130,33 @@ class SqlAlchemyStore:
             method=row.method,
             status_code=row.status_code,
             payload=row.payload,
+            created_at=row.created_at,
+        )
+
+    @staticmethod
+    def _conversation_thread_record(row: ConversationThreadModel) -> ConversationThreadRecord:
+        return ConversationThreadRecord(
+            thread_id=row.thread_id,
+            project_id=row.project_id,
+            scope=row.scope,
+            status=row.status,
+            title=row.title,
+            linked_run_id=row.linked_run_id,
+            linked_chapter_no=row.linked_chapter_no,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+        )
+
+    @staticmethod
+    def _conversation_message_record(row: ConversationMessageModel) -> ConversationMessageRecord:
+        return ConversationMessageRecord(
+            message_id=row.message_id,
+            thread_id=row.thread_id,
+            project_id=row.project_id,
+            role=row.role,
+            message_type=row.message_type,
+            content=row.content,
+            structured_payload=row.structured_payload,
             created_at=row.created_at,
         )
 
@@ -431,6 +462,85 @@ class SqlAlchemyStore:
                 select(AuditLogModel).order_by(AuditLogModel.created_at.desc()).limit(limit)
             ).scalars().all()
             return [self._audit_record(row) for row in rows]
+
+    def create_conversation_thread(
+        self,
+        *,
+        project_id: str,
+        scope: str,
+        title: str,
+        linked_run_id: str | None,
+        linked_chapter_no: int | None,
+    ) -> ConversationThreadRecord:
+        timestamp = utc_now_iso()
+        thread = ConversationThreadRecord(
+            thread_id=f"thr_{uuid4().hex[:12]}",
+            project_id=project_id,
+            scope=scope,
+            status="open",
+            title=title,
+            linked_run_id=linked_run_id,
+            linked_chapter_no=linked_chapter_no,
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        with session_scope(self.session_factory) as session:
+            session.add(ConversationThreadModel(**thread.__dict__))
+        return thread
+
+    def get_conversation_thread(self, thread_id: str) -> ConversationThreadRecord | None:
+        with session_scope(self.session_factory) as session:
+            row = session.get(ConversationThreadModel, thread_id)
+            if row is None:
+                return None
+            return self._conversation_thread_record(row)
+
+    def list_conversation_threads(self, project_id: str) -> list[ConversationThreadRecord]:
+        with session_scope(self.session_factory) as session:
+            rows = session.execute(
+                select(ConversationThreadModel)
+                .where(ConversationThreadModel.project_id == project_id)
+                .order_by(ConversationThreadModel.updated_at.desc())
+            ).scalars().all()
+            return [self._conversation_thread_record(row) for row in rows]
+
+    def add_conversation_message(
+        self,
+        *,
+        thread_id: str,
+        role: str,
+        message_type: str,
+        content: str,
+        structured_payload: dict | None,
+    ) -> ConversationMessageRecord | None:
+        with session_scope(self.session_factory) as session:
+            thread = session.get(ConversationThreadModel, thread_id)
+            if thread is None:
+                return None
+            message = ConversationMessageRecord(
+                message_id=f"msg_{uuid4().hex[:12]}",
+                thread_id=thread_id,
+                project_id=thread.project_id,
+                role=role,
+                message_type=message_type,
+                content=content,
+                structured_payload=structured_payload,
+                created_at=utc_now_iso(),
+            )
+            session.add(ConversationMessageModel(**message.__dict__))
+            thread.updated_at = message.created_at
+            session.add(thread)
+            session.flush()
+            return message
+
+    def list_conversation_messages(self, thread_id: str) -> list[ConversationMessageRecord]:
+        with session_scope(self.session_factory) as session:
+            rows = session.execute(
+                select(ConversationMessageModel)
+                .where(ConversationMessageModel.thread_id == thread_id)
+                .order_by(ConversationMessageModel.created_at)
+            ).scalars().all()
+            return [self._conversation_message_record(row) for row in rows]
 
     def health_status(self) -> dict[str, str | None]:
         ready, detail = ping_database(self.engine)

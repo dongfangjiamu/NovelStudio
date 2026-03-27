@@ -192,6 +192,42 @@
           </section>
         </section>
 
+        <section class="panel conversation-panel">
+          <div class="panel-head">
+            <div>
+              <h2>创作对话</h2>
+              <div id="conversation-caption" class="muted">用对话逐步收敛创作结论，而不是只靠填表和按钮。</div>
+            </div>
+            <div class="action-row">
+              <button id="conversation-create-bootstrap" class="button secondary" disabled>新建共创对话</button>
+              <button id="conversation-create-context" class="button ghost" disabled>基于当前 Run 协作</button>
+            </div>
+          </div>
+          <div class="muted panel-tip">第一期先支持项目共创和当前 Run 协作。对话会自动带上项目或章节上下文。</div>
+          <div class="conversation-layout">
+            <div class="conversation-sidebar">
+              <div class="section-caption">线程</div>
+              <div id="conversation-thread-list" class="stack compact"></div>
+            </div>
+            <div class="conversation-main">
+              <div class="panel-head">
+                <h3>消息流</h3>
+                <div id="conversation-thread-caption" class="muted">未选择线程</div>
+              </div>
+              <div id="conversation-message-list" class="conversation-messages"></div>
+              <form id="conversation-form" class="conversation-form">
+                <label>
+                  <span>告诉系统你想保留什么、调整什么、或者想继续追问什么</span>
+                  <textarea id="conversation-input" rows="4" placeholder="例如：这章我想保留主角克制的气质，但请把冲突前置，不要拖到中段。"></textarea>
+                </label>
+                <div class="action-row">
+                  <button id="conversation-send" class="button primary" type="submit" disabled>发送并沉淀</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </section>
+
         <section class="grid lower-grid">
           <section class="panel">
             <div class="panel-head">

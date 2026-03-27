@@ -102,3 +102,47 @@ def test_sql_store_running_run_has_no_finished_at_until_terminal_state(tmp_path:
 
     assert completed is not None
     assert completed.finished_at is not None
+
+
+def test_sql_store_persists_conversation_threads_and_messages(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'novel_studio.db'}"
+    store = SqlAlchemyStore(database_url)
+    store.create_tables()
+
+    project = store.create_project(
+        name="对话项目",
+        description=None,
+        default_user_brief={"title": "长夜炉火"},
+        default_target_chapters=1,
+    )
+    thread = store.create_conversation_thread(
+        project_id=project.project_id,
+        scope="project_bootstrap",
+        title="项目共创对话",
+        linked_run_id=None,
+        linked_chapter_no=None,
+    )
+    opening = store.add_conversation_message(
+        thread_id=thread.thread_id,
+        role="assistant",
+        message_type="assistant_question",
+        content="我们先把这本书的创作方向问清楚。",
+        structured_payload={"suggested_topics": ["核心爽点"]},
+    )
+    user = store.add_conversation_message(
+        thread_id=thread.thread_id,
+        role="user",
+        message_type="user_message",
+        content="主角要克制，但行动要果断。",
+        structured_payload={"operator_id": "tester"},
+    )
+
+    assert opening is not None
+    assert user is not None
+    threads = store.list_conversation_threads(project.project_id)
+    messages = store.list_conversation_messages(thread.thread_id)
+    assert len(threads) == 1
+    assert threads[0].updated_at == user.created_at
+    assert len(messages) == 2
+    assert messages[0].role == "assistant"
+    assert messages[1].role == "user"

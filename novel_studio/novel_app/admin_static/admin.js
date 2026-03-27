@@ -2,13 +2,16 @@ const state = {
   projects: [],
   selectedProjectId: null,
   selectedRunId: null,
+  selectedThreadId: null,
   artifactRunId: null,
   artifactFingerprint: "",
   artifactItems: [],
+  conversationMessages: [],
   projectSnapshot: {
     chapters: [],
     runs: [],
     approvals: [],
+    conversationThreads: [],
   },
   apiToken: localStorage.getItem("novelstudio_api_token") || "",
   operatorId: localStorage.getItem("novelstudio_operator_id") || "editor-1",
@@ -39,6 +42,15 @@ const el = {
   focusRun: document.getElementById("focus-run"),
   learningCaption: document.getElementById("learning-caption"),
   learningPanel: document.getElementById("learning-panel"),
+  conversationCaption: document.getElementById("conversation-caption"),
+  conversationCreateBootstrap: document.getElementById("conversation-create-bootstrap"),
+  conversationCreateContext: document.getElementById("conversation-create-context"),
+  conversationThreadList: document.getElementById("conversation-thread-list"),
+  conversationThreadCaption: document.getElementById("conversation-thread-caption"),
+  conversationMessageList: document.getElementById("conversation-message-list"),
+  conversationForm: document.getElementById("conversation-form"),
+  conversationInput: document.getElementById("conversation-input"),
+  conversationSend: document.getElementById("conversation-send"),
   selectedRunLabel: document.getElementById("selected-run-label"),
   statusPill: document.getElementById("status-pill"),
   heroNote: document.getElementById("hero-note"),
@@ -59,6 +71,13 @@ const STATUS_LABELS = {
   pending: "待处理",
   approved: "已通过",
   rejected: "已驳回",
+};
+
+const CONVERSATION_SCOPE_LABELS = {
+  project_bootstrap: "项目共创",
+  chapter_planning: "章卡协商",
+  rewrite_intervention: "修稿协作",
+  chapter_retro: "章节复盘",
 };
 
 const NODE_LABELS = {
@@ -229,8 +248,25 @@ function selectedProject() {
   return state.projects.find((item) => item.project_id === state.selectedProjectId) || null;
 }
 
+function selectedThread() {
+  return (state.projectSnapshot.conversationThreads || []).find((item) => item.thread_id === state.selectedThreadId) || null;
+}
+
 function nodeLabel(value) {
   return NODE_LABELS[value] || value || "未记录";
+}
+
+function conversationScopeLabel(value) {
+  return CONVERSATION_SCOPE_LABELS[value] || value || "创作对话";
+}
+
+function conversationRoleLabel(role, messageType) {
+  if (role === "user") return "你";
+  if (messageType === "assistant_diagnosis") return "系统诊断";
+  if (messageType === "assistant_question") return "系统追问";
+  if (messageType === "assistant_proposal") return "系统建议";
+  if (role === "assistant") return "系统";
+  return "系统记录";
 }
 
 function reviewerLabel(value) {
@@ -1192,6 +1228,7 @@ function renderProjectState() {
   renderSummary(summary);
   renderFocusRun(summary);
   renderLearningPanel(summary.focusRun || null);
+  renderConversationPanel();
 }
 
 function renderProjects() {
@@ -1376,6 +1413,70 @@ function renderArtifacts(items) {
     .join("");
 }
 
+function renderConversationThreads(items) {
+  el.conversationCreateBootstrap.disabled = !state.selectedProjectId;
+  const focusRun = pickFocusRun(state.projectSnapshot.runs || []);
+  el.conversationCreateContext.disabled = !state.selectedProjectId || !focusRun;
+  if (!items.length) {
+    el.conversationThreadList.innerHTML = `<div class="empty">还没有创作对话。你可以先发起项目共创，或基于当前 Run 发起协作。</div>`;
+    return;
+  }
+  el.conversationThreadList.innerHTML = items
+    .map((item) => {
+      const active = item.thread_id === state.selectedThreadId ? "active" : "";
+      const chapterText = item.linked_chapter_no ? `第 ${item.linked_chapter_no} 章` : "项目级";
+      return `
+        <button class="card ${active}" data-thread-id="${item.thread_id}">
+          <div class="card-head">
+            <h4>${item.title}</h4>
+            <span class="status-chip status-${item.status}">${item.status === "open" ? "进行中" : item.status}</span>
+          </div>
+          <div class="meta">${conversationScopeLabel(item.scope)} · ${chapterText}</div>
+          <div class="meta">${item.latest_message_preview || "还没有消息。"}</div>
+        </button>
+      `;
+    })
+    .join("");
+  el.conversationThreadList.querySelectorAll("[data-thread-id]").forEach((node) => {
+    node.addEventListener("click", () => {
+      loadConversationMessages(node.dataset.threadId).catch((error) => setStatus(String(error.message || error), "error"));
+    });
+  });
+}
+
+function renderConversationMessages(items) {
+  if (!items.length) {
+    el.conversationMessageList.innerHTML = `<div class="empty">当前线程还没有消息。</div>`;
+    return;
+  }
+  el.conversationMessageList.innerHTML = items
+    .map((item) => `
+      <article class="conversation-message ${item.role}">
+        <div class="conversation-role">${conversationRoleLabel(item.role, item.message_type)} · ${formatTimestamp(item.created_at)}</div>
+        <div class="conversation-content">${escapeHtml(item.content).replaceAll("\n", "<br>")}</div>
+      </article>
+    `)
+    .join("");
+  el.conversationMessageList.scrollTop = el.conversationMessageList.scrollHeight;
+}
+
+function renderConversationPanel() {
+  const threads = state.projectSnapshot.conversationThreads || [];
+  renderConversationThreads(threads);
+  const thread = selectedThread();
+  el.conversationThreadCaption.textContent = thread
+    ? `${thread.title} · ${conversationScopeLabel(thread.scope)}`
+    : "未选择线程";
+  el.conversationCaption.textContent = state.selectedProjectId
+    ? "用对话逐步收敛创作结论，并把人工判断沉淀成可执行上下文。"
+    : "先选择项目，才能进入创作对话。";
+  renderConversationMessages(state.conversationMessages || []);
+  el.conversationSend.disabled = !thread;
+  if (!thread && !state.conversationMessages.length) {
+    el.conversationMessageList.innerHTML = `<div class="empty">先在当前项目中创建一条创作对话线程。</div>`;
+  }
+}
+
 function fingerprintArtifacts(items) {
   return JSON.stringify(
     (items || []).map((item) => ({
@@ -1394,6 +1495,53 @@ function renderArtifactsLoading(runId) {
 
 function scrollArtifactsIntoView() {
   artifactsPanel()?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+async function loadConversationMessages(threadId) {
+  state.selectedThreadId = threadId;
+  renderProjectState();
+  const messages = await api(`/api/conversation-threads/${threadId}/messages`);
+  state.conversationMessages = messages;
+  renderConversationPanel();
+}
+
+async function createConversationThread(scope) {
+  if (!state.selectedProjectId) return;
+  const focusRun = pickFocusRun(state.projectSnapshot.runs || []);
+  const body = { scope };
+  if (scope !== "project_bootstrap" && focusRun) {
+    body.linked_run_id = focusRun.run_id;
+    body.linked_chapter_no = chapterForRun(focusRun);
+  }
+  const thread = await api(`/api/projects/${state.selectedProjectId}/conversation-threads`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  await selectProject(state.selectedProjectId);
+  state.selectedThreadId = thread.thread_id;
+  await loadConversationMessages(thread.thread_id);
+  setStatus(`已创建${conversationScopeLabel(scope)}线程`, "ready");
+}
+
+async function sendConversationMessage(event) {
+  event.preventDefault();
+  if (!state.selectedThreadId) return;
+  const content = el.conversationInput.value.trim();
+  if (!content) return;
+  try {
+    await api(`/api/conversation-threads/${state.selectedThreadId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content }),
+    });
+    el.conversationInput.value = "";
+    await selectProject(state.selectedProjectId);
+    if (state.selectedThreadId) {
+      await loadConversationMessages(state.selectedThreadId);
+    }
+    setStatus("对话已记录，并已生成下一步协作提示", "ready");
+  } catch (error) {
+    setStatus(String(error.message || error), "error");
+  }
 }
 
 function renderAudit(items) {
@@ -1429,15 +1577,21 @@ async function selectProject(projectId) {
     return;
   }
 
-  const [chapters, runs, approvals] = await Promise.all([
+  const [chapters, runs, approvals, conversationThreads] = await Promise.all([
     api(`/api/projects/${projectId}/chapters`),
     api(`/api/projects/${projectId}/runs`),
     api(`/api/projects/${projectId}/approval-requests`),
+    api(`/api/projects/${projectId}/conversation-threads`),
   ]);
-  state.projectSnapshot = { chapters, runs, approvals };
+  state.projectSnapshot = { chapters, runs, approvals, conversationThreads };
   const knownRun = runs.find((item) => item.run_id === state.selectedRunId);
   if (!knownRun) {
     state.selectedRunId = pickFocusRun(runs)?.run_id || null;
+  }
+  const knownThread = conversationThreads.find((item) => item.thread_id === state.selectedThreadId);
+  if (!knownThread) {
+    state.selectedThreadId = conversationThreads[0]?.thread_id || null;
+    state.conversationMessages = [];
   }
   renderProjectState();
   if (state.selectedRunId) {
@@ -1448,6 +1602,12 @@ async function selectProject(projectId) {
     state.artifactFingerprint = "";
     state.artifactItems = [];
     renderArtifacts([]);
+  }
+  if (state.selectedThreadId) {
+    await loadConversationMessages(state.selectedThreadId);
+  } else {
+    state.conversationMessages = [];
+    renderConversationPanel();
   }
 }
 
@@ -1682,6 +1842,15 @@ async function boot() {
   el.projectForm.addEventListener("submit", createProject);
   el.createRun.addEventListener("click", () => createRun({ quickMode: false }));
   el.createRunQuick.addEventListener("click", () => createRun({ quickMode: true }));
+  el.conversationCreateBootstrap.addEventListener("click", () => createConversationThread("project_bootstrap").catch((error) => setStatus(String(error.message || error), "error")));
+  el.conversationCreateContext.addEventListener("click", () => {
+    const focusRun = pickFocusRun(state.projectSnapshot.runs || []);
+    const scope = focusRun?.status === "failed" || runDisplayStatus(focusRun || {}) === "awaiting_approval" || runDisplayStatus(focusRun || {}) === "awaiting_execution"
+      ? "rewrite_intervention"
+      : "chapter_planning";
+    createConversationThread(scope).catch((error) => setStatus(String(error.message || error), "error"));
+  });
+  el.conversationForm.addEventListener("submit", sendConversationMessage);
 
   try {
     await loadProjects();
