@@ -270,6 +270,11 @@ body {
   gap: 12px;
 }
 
+.conversation-thread-context {
+  display: grid;
+  gap: 12px;
+}
+
 .interview-card {
   padding: 14px;
   border-radius: 16px;

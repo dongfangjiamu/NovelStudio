@@ -169,6 +169,7 @@ class ConversationThreadResponse(BaseModel):
     latest_message_preview: str | None = None
     message_count: int = 0
     interview_state: dict[str, Any] | None = None
+    thread_context: dict[str, Any] | None = None
 
 
 class ConversationMessageCreateRequest(BaseModel):

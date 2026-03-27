@@ -378,6 +378,92 @@ def test_conversation_decision_can_be_updated_and_deleted() -> None:
     assert run_response_after_delete.json()["request"]["conversation_guidance"] is None
 
 
+def test_chapter_planning_thread_exposes_write_before_context() -> None:
+    app = create_app(
+        config=AppConfig(
+            stub_mode=True,
+            openai_api_key=None,
+            admin_token=None,
+            database_url="sqlite:///:memory:",
+            model_name="gpt-5-nano",
+            project_id="api-test",
+            operator_id="tester",
+        ),
+        store=InMemoryStore(),
+    )
+
+    class FakeWorkflow:
+        def prepare_project_request(self, *, project, user_brief, target_chapters, operator_id, quick_mode=False):
+            return {
+                "user_brief": user_brief or project.default_user_brief,
+                "target_chapters": target_chapters or project.default_target_chapters,
+                "operator_id": operator_id or "tester",
+                "quick_mode": quick_mode,
+            }
+
+        def run_project(self, *, project, request_payload, on_update=None):
+            return {
+                "planning_context": {
+                    "chapter_no": 1,
+                    "applied_guardrails": ["主角必须在前半章先行动一次"],
+                    "issue_applications": [
+                        {
+                            "issue_id": "iss_1",
+                            "fix_instruction": "把关键冲突前置到前半章",
+                            "applied_guardrail": "提前规避已知问题：把关键冲突前置到前半章",
+                        }
+                    ],
+                },
+                "current_card": {
+                    "chapter_no": 1,
+                    "purpose": "让主角第一次主动试探敌方底牌",
+                    "pov": "third_limited_mc",
+                    "must_include": ["一次明确试探", "章末风险升级"],
+                    "must_not_change": ["主角尚未暴露底牌"],
+                },
+                "issue_ledger": {
+                    "issues": [
+                        {
+                            "issue_id": "iss_1",
+                            "status": "open",
+                            "fix_instruction": "把关键冲突前置到前半章",
+                        }
+                    ]
+                },
+                "publish_package": {"chapter_no": 1, "title": "第1章", "full_text": "正文"},
+                "feedback_summary": {"chapter_no": 1},
+                "event_log": ["chapter_card_ready:1", "release_package_ready:1", "feedback_ingested:1"],
+            }
+
+    app.state.workflow = FakeWorkflow()
+    client = TestClient(app)
+    project = client.post(
+        "/api/projects",
+        json={"name": "章卡协商项目", "default_user_brief": {"title": "长夜炉火"}, "default_target_chapters": 1},
+    ).json()
+
+    run_response = client.post(f"/api/projects/{project['project_id']}/runs", json={})
+    assert run_response.status_code == 201
+    completed = wait_for_run(client, run_response.json()["run_id"])
+    assert completed["status"] == "completed"
+
+    thread_response = client.post(
+        f"/api/projects/{project['project_id']}/conversation-threads",
+        json={
+            "scope": "chapter_planning",
+            "linked_run_id": completed["run_id"],
+            "linked_chapter_no": 1,
+        },
+    )
+    assert thread_response.status_code == 201
+    thread = thread_response.json()
+    assert thread["thread_context"]["chapter_no"] == 1
+    assert thread["thread_context"]["purpose"] == "让主角第一次主动试探敌方底牌"
+    assert thread["thread_context"]["must_include"][0] == "一次明确试探"
+    assert thread["thread_context"]["pending_issues"][0] == "把关键冲突前置到前半章"
+    assert thread["thread_context"]["patch_count"] == 0
+
+
 def test_run_flow() -> None:
     client = make_client()
     project = client.post(

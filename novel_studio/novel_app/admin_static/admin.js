@@ -57,6 +57,7 @@ const el = {
   conversationActionCopy: document.getElementById("conversation-action-copy"),
   conversationExecute: document.getElementById("conversation-execute"),
   conversationInterviewSummary: document.getElementById("conversation-interview-summary"),
+  conversationThreadContext: document.getElementById("conversation-thread-context"),
   conversationMessageList: document.getElementById("conversation-message-list"),
   conversationForm: document.getElementById("conversation-form"),
   conversationInput: document.getElementById("conversation-input"),
@@ -277,6 +278,10 @@ function interviewState(thread) {
   return thread?.interview_state || null;
 }
 
+function threadContext(thread) {
+  return thread?.thread_context || null;
+}
+
 function nodeLabel(value) {
   return NODE_LABELS[value] || value || "未记录";
 }
@@ -310,6 +315,70 @@ function conversationInputPlaceholder(thread) {
     return "例如：不要改掉主角克制气质，但前 800 字一定要让他先行动一次，别再铺垫过长。";
   }
   return "例如：这章通过的关键是冲突前置和钩子更明确，后面要继续保持这个节奏。";
+}
+
+function renderThreadContext(thread) {
+  const context = threadContext(thread);
+  if (!thread || !context || thread.scope !== "chapter_planning") {
+    el.conversationThreadContext.innerHTML = "";
+    return;
+  }
+  const mustInclude = context.must_include?.length
+    ? `<ul class="interview-list">${context.must_include.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+    : `<div class="meta">当前章卡还没有明确的“必须兑现”。</div>`;
+  const mustNotChange = context.must_not_change?.length
+    ? `<ul class="interview-list">${context.must_not_change.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+    : `<div class="meta">当前没有记录硬性不可改动项。</div>`;
+  const pendingIssues = context.pending_issues?.length
+    ? `<ul class="interview-list">${context.pending_issues.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+    : `<div class="meta">当前没有明显遗留问题阻塞本章。</div>`;
+  const guardrails = context.guardrails?.length
+    ? `<ul class="interview-list">${context.guardrails.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+    : `<div class="meta">当前没有额外章卡防线。</div>`;
+  const patches = context.patch_highlights?.length
+    ? `<ul class="interview-list">${context.patch_highlights.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+    : `<div class="meta">你还没有采纳章卡修订。先把想改的点说清楚，再采纳为章卡修订。</div>`;
+  el.conversationThreadContext.innerHTML = `
+    <section class="interview-card">
+      <div class="card-head">
+        <h4>写前确认卡</h4>
+        <span class="status-chip status-approved">第 ${context.chapter_no || "?"} 章</span>
+      </div>
+      <div class="meta">${escapeHtml(context.recommendation || "")}</div>
+      <div class="interview-grid">
+        <div class="interview-block">
+          <strong>本章默认目标</strong>
+          <div class="meta">${escapeHtml(context.purpose || "当前还没有形成明确章卡目标。")}</div>
+          <div class="meta">${context.pov ? `默认视角：${escapeHtml(context.pov)}` : "默认视角暂未记录"}</div>
+        </div>
+        <div class="interview-block">
+          <strong>本章修订进度</strong>
+          <div class="meta">已采纳章卡修订 ${context.patch_count || 0} 条</div>
+          ${patches}
+        </div>
+      </div>
+      <div class="interview-grid">
+        <div class="interview-block">
+          <strong>本章必须兑现</strong>
+          ${mustInclude}
+        </div>
+        <div class="interview-block">
+          <strong>本章不可破坏</strong>
+          ${mustNotChange}
+        </div>
+      </div>
+      <div class="interview-grid">
+        <div class="interview-block">
+          <strong>需提前规避的问题</strong>
+          ${pendingIssues}
+        </div>
+        <div class="interview-block">
+          <strong>章卡层已前置防线</strong>
+          ${guardrails}
+        </div>
+      </div>
+    </section>
+  `;
 }
 
 function conversationRoleLabel(role, messageType) {
@@ -1272,9 +1341,11 @@ function deriveSummary(project, snapshot) {
 
 function deriveConversationAction() {
   const project = selectedProject();
+  const thread = selectedThread();
   const focusRun = pickFocusRun(state.projectSnapshot.runs || []);
   const focusDisplayStatus = focusRun ? runDisplayStatus(focusRun) : null;
   const decisions = state.projectSnapshot.conversationDecisions || [];
+  const threadDecisions = thread ? decisions.filter((item) => item.thread_id === thread.thread_id) : [];
   const executableApproval = latestExecutableApproval(state.projectSnapshot.approvals || []);
   const latestChapter = latestChapterNo(state.projectSnapshot.chapters || []);
 
@@ -1289,6 +1360,39 @@ function deriveConversationAction() {
   }
   if (focusDisplayStatus === "awaiting_approval") {
     return { disabled: true, label: "等待审批", copy: "当前章节还在等待你的审批决定。先处理审批，再决定是否按这些结论继续执行。", action: null };
+  }
+  if (thread?.scope === "chapter_planning") {
+    const patchCount = threadDecisions.filter((item) => item.decision_type === "chapter_card_patch").length;
+    if (!patchCount) {
+      return {
+        disabled: true,
+        label: "先确认章卡方向",
+        copy: "这一条是章卡协商线程。先把至少一条消息采纳为“章卡修订”，再带着确认后的方向开写。",
+        action: null,
+      };
+    }
+    if (focusRun?.status === "failed") {
+      return {
+        disabled: false,
+        label: "按章卡结论重试本章",
+        copy: `这一章已确认 ${patchCount} 条章卡修订。现在重试会优先按这些写前结论重做本章。`,
+        action: { kind: "retry-run", runId: focusRun.run_id },
+      };
+    }
+    if (latestChapter > 0) {
+      return {
+        disabled: false,
+        label: "按章卡结论继续下一章",
+        copy: `当前章卡线程已确认 ${patchCount} 条修订。继续生成时会先带着这些写前结论进入下一章。`,
+        action: { kind: "continue-run" },
+      };
+    }
+    return {
+      disabled: false,
+      label: "按章卡结论开始首章",
+      copy: `当前章卡线程已确认 ${patchCount} 条修订。开始首章时会优先按这些写前结论生成。`,
+      action: { kind: "start-run" },
+    };
   }
   if (executableApproval) {
     return {
@@ -2014,10 +2118,12 @@ function renderConversationPanel() {
   el.conversationExecute.dataset.approvalId = actionPlan.action?.approvalId || "";
   el.conversationInput.placeholder = conversationInputPlaceholder(thread);
   renderInterviewSummary(thread);
+  renderThreadContext(thread);
   renderConversationMessages(state.conversationMessages || []);
   el.conversationSend.disabled = !thread;
   if (!thread && !state.conversationMessages.length) {
     el.conversationInterviewSummary.innerHTML = "";
+    el.conversationThreadContext.innerHTML = "";
     el.conversationMessageList.innerHTML = `<div class="empty">先在当前项目中创建一条创作对话线程。</div>`;
   }
 }

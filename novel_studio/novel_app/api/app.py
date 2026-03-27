@@ -732,6 +732,62 @@ def create_app(
             "adopted_highlights": [item.summary for item in adopted[:3]],
         }
 
+    def latest_artifact_payloads(run_id: str) -> dict[str, dict]:
+        latest: dict[str, dict] = {}
+        for item in app.state.store.list_artifacts(run_id):
+            latest[item.artifact_type] = item.payload
+        return latest
+
+    def build_thread_context(thread) -> dict | None:
+        if thread.scope != "chapter_planning" or not thread.linked_run_id:
+            return None
+        run = app.state.store.get_run(thread.linked_run_id)
+        if run is None:
+            return None
+        latest_by_type = latest_artifact_payloads(run.run_id)
+        result = run.result or {}
+        current_card = result.get("current_card") or latest_by_type.get("current_card") or {}
+        planning_context = result.get("planning_context") or latest_by_type.get("planning_context") or {}
+        issue_ledger = result.get("issue_ledger") or latest_by_type.get("issue_ledger") or {}
+        decisions = [
+            item
+            for item in app.state.store.list_conversation_decisions(project_id=thread.project_id, thread_id=thread.thread_id)
+            if item.decision_type == "chapter_card_patch"
+        ]
+        patch_highlights = [
+            item.payload.get("instruction") or item.payload.get("content") or ""
+            for item in decisions[:3]
+            if str(item.payload.get("instruction") or item.payload.get("content") or "").strip()
+        ]
+        pending_issues = [
+            item.get("fix_instruction") or item.get("applied_guardrail") or item.get("issue_id")
+            for item in (planning_context.get("issue_applications") or [])[:3]
+            if item.get("fix_instruction") or item.get("applied_guardrail") or item.get("issue_id")
+        ]
+        if not pending_issues:
+            pending_issues = [
+                item.get("fix_instruction") or item.get("evidence") or item.get("issue_id")
+                for item in (issue_ledger.get("issues") or [])[:3]
+                if item.get("status") in {"open", "recurring"}
+            ]
+        recommendation = (
+            "已形成章卡修订结论，可以带着这些修订开始本章。"
+            if patch_highlights
+            else "先明确你想改的章卡点，再采纳为章卡修订，然后再开写。"
+        )
+        return {
+            "chapter_no": current_card.get("chapter_no") or thread.linked_chapter_no,
+            "purpose": current_card.get("purpose"),
+            "pov": current_card.get("pov"),
+            "must_include": list(current_card.get("must_include") or [])[:3],
+            "must_not_change": list(current_card.get("must_not_change") or [])[:3],
+            "guardrails": list(planning_context.get("applied_guardrails") or [])[:4],
+            "pending_issues": pending_issues,
+            "patch_count": len(decisions),
+            "patch_highlights": patch_highlights,
+            "recommendation": recommendation,
+        }
+
     def build_thread_opening(*, scope: str, project, run, chapter_no: int | None) -> tuple[str, str, dict]:
         if scope == "project_bootstrap":
             thread_stub = SimpleNamespace(thread_id="", project_id=project.project_id, scope=scope)
@@ -866,6 +922,7 @@ def create_app(
         payload["message_count"] = len(messages)
         project = app.state.store.get_project(thread.project_id)
         payload["interview_state"] = build_interview_state(thread=thread, project=project) if project else None
+        payload["thread_context"] = build_thread_context(thread)
         return payload
 
     def build_conversation_decision_payload(*, thread, message, decision_type: str) -> dict:
