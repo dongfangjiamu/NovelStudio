@@ -118,3 +118,17 @@ class ConversationMessageModel(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     structured_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+
+
+class ConversationDecisionModel(Base):
+    __tablename__ = "conversation_decisions"
+
+    decision_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    thread_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    message_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    decision_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    applied_to_run_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    applied_to_chapter_no: Mapped[int | None] = mapped_column(nullable=True)
+    created_at: Mapped[str] = mapped_column(String(64), nullable=False, index=True)

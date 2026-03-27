@@ -175,3 +175,19 @@ class ConversationMessageResponse(BaseModel):
     content: str
     structured_payload: dict[str, Any] | None = None
     created_at: str
+
+
+class ConversationDecisionCreateRequest(BaseModel):
+    decision_type: Literal["human_instruction", "writer_playbook_rule", "chapter_card_patch"]
+
+
+class ConversationDecisionResponse(BaseModel):
+    decision_id: str
+    project_id: str
+    thread_id: str
+    message_id: str
+    decision_type: Literal["human_instruction", "writer_playbook_rule", "chapter_card_patch"]
+    payload: dict[str, Any]
+    applied_to_run_id: str | None = None
+    applied_to_chapter_no: int | None = None
+    created_at: str

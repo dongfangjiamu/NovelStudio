@@ -117,6 +117,19 @@ class ConversationMessageRecord:
     created_at: str
 
 
+@dataclass(frozen=True)
+class ConversationDecisionRecord:
+    decision_id: str
+    project_id: str
+    thread_id: str
+    message_id: str
+    decision_type: str
+    payload: dict[str, Any]
+    applied_to_run_id: str | None
+    applied_to_chapter_no: int | None
+    created_at: str
+
+
 class InMemoryStore:
     def __init__(self) -> None:
         self._lock = RLock()
@@ -128,6 +141,7 @@ class InMemoryStore:
         self._audit_logs: dict[str, AuditLogRecord] = {}
         self._conversation_threads: dict[str, ConversationThreadRecord] = {}
         self._conversation_messages: dict[str, ConversationMessageRecord] = {}
+        self._conversation_decisions: dict[str, ConversationDecisionRecord] = {}
 
     def create_project(
         self,
@@ -528,6 +542,50 @@ class InMemoryStore:
                 [item for item in self._conversation_messages.values() if item.thread_id == thread_id],
                 key=lambda item: item.created_at,
             )
+
+    def get_conversation_message(self, message_id: str) -> ConversationMessageRecord | None:
+        with self._lock:
+            return self._conversation_messages.get(message_id)
+
+    def create_conversation_decision(
+        self,
+        *,
+        project_id: str,
+        thread_id: str,
+        message_id: str,
+        decision_type: str,
+        payload: dict[str, Any],
+        applied_to_run_id: str | None,
+        applied_to_chapter_no: int | None,
+    ) -> ConversationDecisionRecord:
+        with self._lock:
+            decision = ConversationDecisionRecord(
+                decision_id=f"dec_{uuid4().hex[:12]}",
+                project_id=project_id,
+                thread_id=thread_id,
+                message_id=message_id,
+                decision_type=decision_type,
+                payload=payload,
+                applied_to_run_id=applied_to_run_id,
+                applied_to_chapter_no=applied_to_chapter_no,
+                created_at=utc_now_iso(),
+            )
+            self._conversation_decisions[decision.decision_id] = decision
+            return decision
+
+    def list_conversation_decisions(
+        self,
+        *,
+        project_id: str | None = None,
+        thread_id: str | None = None,
+    ) -> list[ConversationDecisionRecord]:
+        with self._lock:
+            items = list(self._conversation_decisions.values())
+            if project_id is not None:
+                items = [item for item in items if item.project_id == project_id]
+            if thread_id is not None:
+                items = [item for item in items if item.thread_id == thread_id]
+            return sorted(items, key=lambda item: item.created_at, reverse=True)
 
     def health_status(self) -> dict[str, str | None]:
         return {"status": "ready", "backend": "inmemory", "detail": None}

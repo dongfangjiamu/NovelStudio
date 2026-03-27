@@ -146,3 +146,45 @@ def test_sql_store_persists_conversation_threads_and_messages(tmp_path: Path) ->
     assert len(messages) == 2
     assert messages[0].role == "assistant"
     assert messages[1].role == "user"
+
+
+def test_sql_store_persists_conversation_decisions(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'novel_studio.db'}"
+    store = SqlAlchemyStore(database_url)
+    store.create_tables()
+
+    project = store.create_project(
+        name="对话项目",
+        description=None,
+        default_user_brief={"title": "长夜炉火"},
+        default_target_chapters=1,
+    )
+    thread = store.create_conversation_thread(
+        project_id=project.project_id,
+        scope="rewrite_intervention",
+        title="第1章修稿协作",
+        linked_run_id="run_demo",
+        linked_chapter_no=1,
+    )
+    message = store.add_conversation_message(
+        thread_id=thread.thread_id,
+        role="user",
+        message_type="user_message",
+        content="保留主角克制感，但把冲突前置。",
+        structured_payload={"operator_id": "tester"},
+    )
+
+    assert message is not None
+    decision = store.create_conversation_decision(
+        project_id=project.project_id,
+        thread_id=thread.thread_id,
+        message_id=message.message_id,
+        decision_type="human_instruction",
+        payload={"comment": "保留主角克制感，但把冲突前置。"},
+        applied_to_run_id=thread.linked_run_id,
+        applied_to_chapter_no=thread.linked_chapter_no,
+    )
+
+    decisions = store.list_conversation_decisions(project_id=project.project_id)
+    assert decision.decision_id == decisions[0].decision_id
+    assert decisions[0].decision_type == "human_instruction"

@@ -12,6 +12,7 @@ const state = {
     runs: [],
     approvals: [],
     conversationThreads: [],
+    conversationDecisions: [],
   },
   apiToken: localStorage.getItem("novelstudio_api_token") || "",
   operatorId: localStorage.getItem("novelstudio_operator_id") || "editor-1",
@@ -46,6 +47,7 @@ const el = {
   conversationCreateBootstrap: document.getElementById("conversation-create-bootstrap"),
   conversationCreateContext: document.getElementById("conversation-create-context"),
   conversationThreadList: document.getElementById("conversation-thread-list"),
+  conversationDecisionList: document.getElementById("conversation-decision-list"),
   conversationThreadCaption: document.getElementById("conversation-thread-caption"),
   conversationMessageList: document.getElementById("conversation-message-list"),
   conversationForm: document.getElementById("conversation-form"),
@@ -267,6 +269,13 @@ function conversationRoleLabel(role, messageType) {
   if (messageType === "assistant_proposal") return "系统建议";
   if (role === "assistant") return "系统";
   return "系统记录";
+}
+
+function conversationDecisionLabel(value) {
+  if (value === "human_instruction") return "修订指令";
+  if (value === "writer_playbook_rule") return "写作规则";
+  if (value === "chapter_card_patch") return "章卡修订";
+  return value || "已采纳结论";
 }
 
 function reviewerLabel(value) {
@@ -1444,25 +1453,77 @@ function renderConversationThreads(items) {
   });
 }
 
+function messageAdoptActions(thread, item) {
+  if (!thread) return [];
+  if (!["user", "assistant"].includes(item.role)) return [];
+  if (thread.scope === "project_bootstrap") {
+    return [{ label: "采纳为写作规则", decisionType: "writer_playbook_rule" }];
+  }
+  if (thread.scope === "chapter_planning") {
+    return [{ label: "采纳为章卡修订", decisionType: "chapter_card_patch" }];
+  }
+  if (thread.scope === "rewrite_intervention") {
+    return [
+      { label: "采纳为修订指令", decisionType: "human_instruction" },
+      { label: "采纳为章卡修订", decisionType: "chapter_card_patch" },
+    ];
+  }
+  return [{ label: "采纳为写作规则", decisionType: "writer_playbook_rule" }];
+}
+
 function renderConversationMessages(items) {
+  const thread = selectedThread();
   if (!items.length) {
     el.conversationMessageList.innerHTML = `<div class="empty">当前线程还没有消息。</div>`;
     return;
   }
   el.conversationMessageList.innerHTML = items
-    .map((item) => `
+    .map((item) => {
+      const actions = messageAdoptActions(thread, item);
+      return `
       <article class="conversation-message ${item.role}">
         <div class="conversation-role">${conversationRoleLabel(item.role, item.message_type)} · ${formatTimestamp(item.created_at)}</div>
         <div class="conversation-content">${escapeHtml(item.content).replaceAll("\n", "<br>")}</div>
+        ${
+          actions.length
+            ? `<div class="actions">${actions
+                .map((action) => `<button class="button ghost" data-action="adopt-message" data-id="${item.message_id}" data-decision-type="${action.decisionType}">${action.label}</button>`)
+                .join("")}</div>`
+            : ""
+        }
       </article>
+    `;
+    })
+    .join("");
+  el.conversationMessageList.querySelectorAll("[data-action='adopt-message']").forEach((node) => {
+    node.addEventListener("click", () => adoptConversationMessage(node.dataset.id, node.dataset.decisionType));
+  });
+  el.conversationMessageList.scrollTop = el.conversationMessageList.scrollHeight;
+}
+
+function renderConversationDecisions(items) {
+  if (!items.length) {
+    el.conversationDecisionList.innerHTML = `<div class="empty">当前还没有采纳结果。你可以把对话里的结论采纳为规则或修订指令。</div>`;
+    return;
+  }
+  el.conversationDecisionList.innerHTML = items
+    .map((item) => `
+      <div class="card">
+        <div class="card-head">
+          <h4>${conversationDecisionLabel(item.decision_type)}</h4>
+          <span class="status-chip status-approved">已采纳</span>
+        </div>
+        <div class="meta">${formatTimestamp(item.created_at)}</div>
+        <div class="meta">${escapeHtml(item.payload.comment || item.payload.rule || item.payload.instruction || item.payload.content || "已记录")}</div>
+      </div>
     `)
     .join("");
-  el.conversationMessageList.scrollTop = el.conversationMessageList.scrollHeight;
 }
 
 function renderConversationPanel() {
   const threads = state.projectSnapshot.conversationThreads || [];
   renderConversationThreads(threads);
+  renderConversationDecisions(state.projectSnapshot.conversationDecisions || []);
   const thread = selectedThread();
   el.conversationThreadCaption.textContent = thread
     ? `${thread.title} · ${conversationScopeLabel(thread.scope)}`
@@ -1544,6 +1605,22 @@ async function sendConversationMessage(event) {
   }
 }
 
+async function adoptConversationMessage(messageId, decisionType) {
+  try {
+    await api(`/api/conversation-messages/${messageId}/adopt`, {
+      method: "POST",
+      body: JSON.stringify({ decision_type: decisionType }),
+    });
+    await selectProject(state.selectedProjectId);
+    if (state.selectedThreadId) {
+      await loadConversationMessages(state.selectedThreadId);
+    }
+    setStatus(`已采纳为${conversationDecisionLabel(decisionType)}`, "ready");
+  } catch (error) {
+    setStatus(String(error.message || error), "error");
+  }
+}
+
 function renderAudit(items) {
   el.auditList.innerHTML = items.length
     ? items
@@ -1577,13 +1654,14 @@ async function selectProject(projectId) {
     return;
   }
 
-  const [chapters, runs, approvals, conversationThreads] = await Promise.all([
+  const [chapters, runs, approvals, conversationThreads, conversationDecisions] = await Promise.all([
     api(`/api/projects/${projectId}/chapters`),
     api(`/api/projects/${projectId}/runs`),
     api(`/api/projects/${projectId}/approval-requests`),
     api(`/api/projects/${projectId}/conversation-threads`),
+    api(`/api/projects/${projectId}/conversation-decisions`),
   ]);
-  state.projectSnapshot = { chapters, runs, approvals, conversationThreads };
+  state.projectSnapshot = { chapters, runs, approvals, conversationThreads, conversationDecisions };
   const knownRun = runs.find((item) => item.run_id === state.selectedRunId);
   if (!knownRun) {
     state.selectedRunId = pickFocusRun(runs)?.run_id || null;

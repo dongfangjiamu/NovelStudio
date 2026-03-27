@@ -16,6 +16,7 @@ from novel_app.db_models import (
     ArtifactModel,
     AuditLogModel,
     ChapterModel,
+    ConversationDecisionModel,
     ConversationMessageModel,
     ConversationThreadModel,
     ProjectModel,
@@ -26,6 +27,7 @@ from novel_app.services.store import (
     ArtifactRecord,
     AuditLogRecord,
     ChapterRecord,
+    ConversationDecisionRecord,
     ConversationMessageRecord,
     ConversationThreadRecord,
     ProjectRecord,
@@ -157,6 +159,20 @@ class SqlAlchemyStore:
             message_type=row.message_type,
             content=row.content,
             structured_payload=row.structured_payload,
+            created_at=row.created_at,
+        )
+
+    @staticmethod
+    def _conversation_decision_record(row: ConversationDecisionModel) -> ConversationDecisionRecord:
+        return ConversationDecisionRecord(
+            decision_id=row.decision_id,
+            project_id=row.project_id,
+            thread_id=row.thread_id,
+            message_id=row.message_id,
+            decision_type=row.decision_type,
+            payload=row.payload,
+            applied_to_run_id=row.applied_to_run_id,
+            applied_to_chapter_no=row.applied_to_chapter_no,
             created_at=row.created_at,
         )
 
@@ -541,6 +557,54 @@ class SqlAlchemyStore:
                 .order_by(ConversationMessageModel.created_at)
             ).scalars().all()
             return [self._conversation_message_record(row) for row in rows]
+
+    def get_conversation_message(self, message_id: str) -> ConversationMessageRecord | None:
+        with session_scope(self.session_factory) as session:
+            row = session.get(ConversationMessageModel, message_id)
+            if row is None:
+                return None
+            return self._conversation_message_record(row)
+
+    def create_conversation_decision(
+        self,
+        *,
+        project_id: str,
+        thread_id: str,
+        message_id: str,
+        decision_type: str,
+        payload: dict,
+        applied_to_run_id: str | None,
+        applied_to_chapter_no: int | None,
+    ) -> ConversationDecisionRecord:
+        decision = ConversationDecisionRecord(
+            decision_id=f"dec_{uuid4().hex[:12]}",
+            project_id=project_id,
+            thread_id=thread_id,
+            message_id=message_id,
+            decision_type=decision_type,
+            payload=payload,
+            applied_to_run_id=applied_to_run_id,
+            applied_to_chapter_no=applied_to_chapter_no,
+            created_at=utc_now_iso(),
+        )
+        with session_scope(self.session_factory) as session:
+            session.add(ConversationDecisionModel(**decision.__dict__))
+        return decision
+
+    def list_conversation_decisions(
+        self,
+        *,
+        project_id: str | None = None,
+        thread_id: str | None = None,
+    ) -> list[ConversationDecisionRecord]:
+        with session_scope(self.session_factory) as session:
+            stmt = select(ConversationDecisionModel).order_by(ConversationDecisionModel.created_at.desc())
+            if project_id is not None:
+                stmt = stmt.where(ConversationDecisionModel.project_id == project_id)
+            if thread_id is not None:
+                stmt = stmt.where(ConversationDecisionModel.thread_id == thread_id)
+            rows = session.execute(stmt).scalars().all()
+            return [self._conversation_decision_record(row) for row in rows]
 
     def health_status(self) -> dict[str, str | None]:
         ready, detail = ping_database(self.engine)

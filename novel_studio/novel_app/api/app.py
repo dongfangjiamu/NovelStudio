@@ -20,6 +20,8 @@ from novel_app.api.schemas import (
     ChapterResponse,
     ConversationMessageCreateRequest,
     ConversationMessageResponse,
+    ConversationDecisionCreateRequest,
+    ConversationDecisionResponse,
     ConversationThreadCreateRequest,
     ConversationThreadResponse,
     HealthResponse,
@@ -684,6 +686,107 @@ def create_app(
         payload["message_count"] = len(messages)
         return payload
 
+    def build_conversation_decision_payload(*, thread, message, decision_type: str) -> dict:
+        base = {
+            "source": "conversation",
+            "thread_id": thread.thread_id,
+            "message_id": message.message_id,
+            "scope": thread.scope,
+            "content": message.content,
+        }
+        if decision_type == "human_instruction":
+            return {
+                **base,
+                "requested_action": "conversation_guidance",
+                "reason": f"来自{thread.title}的人工协作结论",
+                "operator_id": None,
+                "comment": message.content,
+                "payload": {
+                    "scope": thread.scope,
+                    "linked_run_id": thread.linked_run_id,
+                    "linked_chapter_no": thread.linked_chapter_no,
+                },
+            }
+        if decision_type == "writer_playbook_rule":
+            return {
+                **base,
+                "rule": message.content,
+            }
+        return {
+            **base,
+            "instruction": message.content,
+            "chapter_no": thread.linked_chapter_no,
+        }
+
+    def merge_conversation_decisions_into_request(*, project_id: str, request_payload: dict[str, object]) -> dict[str, object]:
+        decisions = app.state.store.list_conversation_decisions(project_id=project_id)
+        if not decisions:
+            return request_payload
+
+        updated = dict(request_payload)
+        human_guidance = [item for item in decisions if item.decision_type == "human_instruction"]
+        playbook_rules = [item.payload.get("rule") for item in decisions if item.decision_type == "writer_playbook_rule"]
+        chapter_patches = [item.payload.get("instruction") for item in decisions if item.decision_type == "chapter_card_patch"]
+
+        playbook_rules = [str(item).strip() for item in playbook_rules if str(item or "").strip()]
+        chapter_patches = [str(item).strip() for item in chapter_patches if str(item or "").strip()]
+        if playbook_rules:
+            current_playbook = dict(updated.get("writer_playbook") or {})
+            always_apply = list(current_playbook.get("always_apply") or [])
+            for rule in playbook_rules:
+                if rule not in always_apply:
+                    always_apply.append(rule)
+            current_playbook["always_apply"] = always_apply[:16]
+            current_playbook.setdefault("version", 1)
+            current_playbook.setdefault("validated_patterns", [])
+            current_playbook.setdefault("watch_out", [])
+            updated["writer_playbook"] = current_playbook
+
+        if human_guidance or chapter_patches:
+            current_instruction = dict(updated.get("human_instruction") or {})
+            if human_guidance:
+                latest = human_guidance[0].payload
+                current_instruction.setdefault("requested_action", latest.get("requested_action") or "conversation_guidance")
+                current_instruction.setdefault("reason", latest.get("reason") or "来自创作对话的人工结论")
+                current_instruction.setdefault("operator_id", latest.get("operator_id"))
+                comments = []
+                if current_instruction.get("comment"):
+                    comments.append(str(current_instruction["comment"]).strip())
+                comments.extend(
+                    payload.get("comment", "").strip()
+                    for payload in [item.payload for item in human_guidance[:3]]
+                    if str(payload.get("comment", "")).strip()
+                )
+                if chapter_patches:
+                    comments.extend([f"章卡修订：{item}" for item in chapter_patches[:3]])
+                deduped_comments = []
+                for item in comments:
+                    if item and item not in deduped_comments:
+                        deduped_comments.append(item)
+                if deduped_comments:
+                    current_instruction["comment"] = "\n".join(deduped_comments[:4])
+                merged_payload = dict(current_instruction.get("payload") or {})
+                merged_payload["conversation_guidance"] = {
+                    "human_instruction_count": len(human_guidance),
+                    "writer_playbook_rule_count": len(playbook_rules),
+                    "chapter_card_patch_count": len(chapter_patches),
+                    "latest_thread_id": human_guidance[0].thread_id,
+                }
+                current_instruction["payload"] = merged_payload
+            elif chapter_patches:
+                current_instruction.setdefault("requested_action", "chapter_card_patch")
+                current_instruction.setdefault("reason", "来自创作对话的章卡修订结论")
+                current_instruction["comment"] = "\n".join([f"章卡修订：{item}" for item in chapter_patches[:4]])
+                current_instruction["payload"] = {
+                    **dict(current_instruction.get("payload") or {}),
+                    "conversation_guidance": {
+                        "writer_playbook_rule_count": len(playbook_rules),
+                        "chapter_card_patch_count": len(chapter_patches),
+                    },
+                }
+            updated["human_instruction"] = current_instruction
+        return updated
+
     @app.exception_handler(ValueError)
     async def value_error_handler(_: Request, exc: ValueError) -> JSONResponse:
         return JSONResponse(status_code=400, content={"detail": str(exc)})
@@ -775,6 +878,10 @@ def create_app(
                     operator_id=payload.operator_id or request.state.actor,
                 )
                 is_continuation = True
+        request_payload = merge_conversation_decisions_into_request(
+            project_id=project_id,
+            request_payload=request_payload,
+        )
         run = app.state.store.save_run(
             project_id=project_id,
             status="running",
@@ -867,6 +974,10 @@ def create_app(
 
         request_payload = dict(previous_run.request)
         request_payload["operator_id"] = request.state.actor
+        request_payload = merge_conversation_decisions_into_request(
+            project_id=project.project_id,
+            request_payload=request_payload,
+        )
         run = app.state.store.save_run(
             project_id=project.project_id,
             status="running",
@@ -1074,6 +1185,10 @@ def create_app(
             approval=approval,
             requested_action=approval.requested_action,
         )
+        request_payload = merge_conversation_decisions_into_request(
+            project_id=project.project_id,
+            request_payload=request_payload,
+        )
         followup_run = app.state.store.save_run(
             project_id=project.project_id,
             status="running",
@@ -1241,6 +1356,56 @@ def create_app(
         if assistant_message is not None:
             messages.append(assistant_message)
         return [ConversationMessageResponse.model_validate(item.__dict__) for item in messages]
+
+    @app.get("/api/projects/{project_id}/conversation-decisions", response_model=list[ConversationDecisionResponse])
+    async def list_conversation_decisions(project_id: str) -> list[ConversationDecisionResponse]:
+        project = app.state.store.get_project(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="project_not_found")
+        return [
+            ConversationDecisionResponse.model_validate(item.__dict__)
+            for item in app.state.store.list_conversation_decisions(project_id=project_id)
+        ]
+
+    @app.post("/api/conversation-messages/{message_id}/adopt", response_model=ConversationDecisionResponse, status_code=201)
+    async def adopt_conversation_message(
+        message_id: str,
+        payload: ConversationDecisionCreateRequest,
+        request: Request,
+        response: Response,
+    ) -> ConversationDecisionResponse:
+        message = app.state.store.get_conversation_message(message_id)
+        if not message:
+            raise HTTPException(status_code=404, detail="conversation_message_not_found")
+        thread = app.state.store.get_conversation_thread(message.thread_id)
+        if not thread:
+            raise HTTPException(status_code=404, detail="conversation_thread_not_found")
+        decision = app.state.store.create_conversation_decision(
+            project_id=thread.project_id,
+            thread_id=thread.thread_id,
+            message_id=message_id,
+            decision_type=payload.decision_type,
+            payload=build_conversation_decision_payload(
+                thread=thread,
+                message=message,
+                decision_type=payload.decision_type,
+            ),
+            applied_to_run_id=thread.linked_run_id,
+            applied_to_chapter_no=thread.linked_chapter_no,
+        )
+        audit(
+            request=request,
+            response=response,
+            status_code=201,
+            action="conversation_message.adopt",
+            resource_type="conversation_decision",
+            resource_id=decision.decision_id,
+            project_id=thread.project_id,
+            run_id=thread.linked_run_id,
+            approval_id=None,
+            payload={"decision_type": payload.decision_type, "message_id": message_id},
+        )
+        return ConversationDecisionResponse.model_validate(decision.__dict__)
 
     @app.get("/api/audit-logs", response_model=list[AuditLogResponse])
     async def list_audit_logs(limit: int = 100) -> list[AuditLogResponse]:

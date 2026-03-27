@@ -53,6 +53,13 @@ class WorkflowService:
         return self._run_graph(
             input_state={
                 "user_brief": request_payload["user_brief"],
+                "creative_contract": request_payload.get("creative_contract"),
+                "story_bible": request_payload.get("story_bible"),
+                "arc_plan": request_payload.get("arc_plan"),
+                "canon_state": request_payload.get("canon_state"),
+                "writer_playbook": request_payload.get("writer_playbook"),
+                "chapter_lesson": request_payload.get("chapter_lesson"),
+                "issue_ledger": request_payload.get("issue_ledger"),
                 "target_chapters": request_payload["target_chapters"],
                 "human_instruction": request_payload.get("human_instruction"),
             },
