@@ -671,24 +671,36 @@ def create_app(
                         "title": "最想保住的吸引力",
                         "prompt": "先别急着定义卖点。你现在最想保住的，是下面哪种吸引力？也可以自己补一句。",
                         "options": ["爽感往上冲", "情绪拉扯", "悬念感", "人物关系", "我还说不清"],
+                        "extra_options": ["压迫中翻盘", "谜团驱动", "宿命对抗", "反差感"],
+                        "rephrase_prompt": "换个问法：如果只保住一种读者体验，你最怕它最后丢掉什么？",
+                        "support_prompt": "没关系，我们先不要定义专业术语。你可以直接选一个最接近的方向，或者说“更像 A 但又有一点 B”。",
                         "answer_mode": "choice_or_short_text",
                     },
                     {
                         "title": "主角行动方式",
                         "prompt": "如果主角一出场就要让人记住，你更想让他像哪一类人？",
                         "options": ["主动争", "被迫卷入", "隐忍反击", "外冷内烈", "我还没想清"],
+                        "extra_options": ["嘴硬手快", "克制但危险", "看似被动实则有盘算", "先忍后爆"],
+                        "rephrase_prompt": "换个问法：这个主角第一次出手时，你更希望读者觉得他是“马上会动的人”，还是“被逼急才动的人”？",
+                        "support_prompt": "你也可以只说一句感觉，比如“克制但不能太软”“不想写成纯莽夫”。",
                         "answer_mode": "choice_or_short_text",
                     },
                     {
                         "title": "故事推进方式",
                         "prompt": "这本书往前推时，你更希望主要靠什么力量？",
                         "options": ["升级推进", "阴谋推进", "关系推进", "生存推进", "混合推进"],
+                        "extra_options": ["先升级后揭谜", "先压迫后翻盘", "主打关系拉扯", "任务链推进"],
+                        "rephrase_prompt": "换个问法：如果读者一口气追十章，他主要会因为哪种东西舍不得停下来？",
+                        "support_prompt": "不用精确定义结构，你只要说“更像靠阴谋吊着往下看”这种程度也可以。",
                         "answer_mode": "choice_or_short_text",
                     },
                     {
                         "title": "不能写歪的边界",
                         "prompt": "最后再补一个边界：这本书最不能写歪的地方是什么？也可以直接说你明确不接受什么。",
                         "options": ["不要套路化打脸", "不要无代价外挂", "不要人物性格突然变形", "不要文风油腻", "先跳过这个问题"],
+                        "extra_options": ["不要后宫泛滥", "不要一味卖惨", "不要主角降智", "不要反派太工具人"],
+                        "rephrase_prompt": "换个问法：如果后面写着写着跑偏了，你最容易第一时间喊停的会是什么？",
+                        "support_prompt": "如果暂时说不清，也可以先跳过，后面写出几章后再补边界。",
                         "answer_mode": "short_text_with_choices",
                     },
                 ],
@@ -703,24 +715,36 @@ def create_app(
                         "title": "主角第一印象",
                         "prompt": "如果只用一个感觉描述主角，你更希望他给人的第一印象是下面哪种？",
                         "options": ["克制", "危险", "倔强", "聪明", "讨喜", "还没想清"],
+                        "extra_options": ["沉默但压迫感强", "看着冷其实很护短", "嘴上淡但下手果断", "不讨喜但很上头"],
+                        "rephrase_prompt": "换个问法：主角第一次出场时，你更希望读者先喜欢他、先怕他，还是先想看懂他？",
+                        "support_prompt": "你可以只说一种感觉，比如“别太少年气”“要有压迫感但不能油”。",
                         "answer_mode": "choice_or_short_text",
                     },
                     {
                         "title": "主角真正想摆脱什么",
                         "prompt": "主角最想摆脱的是什么？可以是处境、关系、身份、命运，或别的东西。",
                         "options": ["弱小处境", "被控制的人生", "错误身份", "失败命运", "我想自己补充"],
+                        "extra_options": ["羞辱与轻视", "负债或罪名", "家族/宗门束缚", "被当工具使用"],
+                        "rephrase_prompt": "换个问法：主角最受不了现在的哪一点？只要说最刺他的那件事就行。",
+                        "support_prompt": "如果你只知道他“不甘心”，也可以先围绕不甘心补一句最具体的来源。",
                         "answer_mode": "choice_or_short_text",
                     },
                     {
                         "title": "关键关系张力",
                         "prompt": "最关键的关系张力更像哪一种？",
                         "options": ["师徒/前辈压迫", "宿敌对抗", "同伴互相拉扯", "亲密关系试探", "我自己描述"],
+                        "extra_options": ["旧恩旧怨", "利益绑定但互不信任", "强者压迫弱者反抗", "表面合作暗中试探"],
+                        "rephrase_prompt": "换个问法：这本书里最容易写出火花的两个人，为什么一见面就不可能轻松？",
+                        "support_prompt": "你也可以先说“我最想写的是某两个人之间那种既靠近又提防的感觉”。",
                         "answer_mode": "choice_or_short_text",
                     },
                     {
                         "title": "角色边界",
                         "prompt": "什么行为一旦出现，你会立刻觉得这个主角写崩了？",
                         "options": ["突然圣母", "突然莽撞", "突然油腻", "突然降智", "我自己描述"],
+                        "extra_options": ["突然恋爱脑", "突然软弱到失真", "突然嘴炮太多", "突然轻佻没分寸"],
+                        "rephrase_prompt": "换个问法：读者后面看到哪种变化，会觉得“这已经不是开头那个主角了”？",
+                        "support_prompt": "如果不好概括，也可以直接说“不要把他写成……”。",
                         "answer_mode": "choice_or_short_text",
                     },
                 ],
@@ -735,24 +759,36 @@ def create_app(
                         "title": "第一卷主推动力",
                         "prompt": "第一卷最主要靠什么把读者往下带？",
                         "options": ["一层层升级", "阴谋逐步揭开", "人物关系变化", "逃生与生存压力", "混合推进"],
+                        "extra_options": ["副本/任务推进", "追查真相推进", "身份变化推进", "权力斗争推进"],
+                        "rephrase_prompt": "换个问法：如果读者一口气追第一卷，他最可能是被什么持续吊着走？",
+                        "support_prompt": "不必一次说全，你只要先选“更像升级线”还是“更像阴谋线”就够了。",
                         "answer_mode": "choice_or_short_text",
                     },
                     {
                         "title": "升级路径",
                         "prompt": "主角在第一卷里更像怎样逼近目标？",
                         "options": ["一次次小胜推进", "先被压制再反打", "边查真相边成长", "靠关系变化推进", "我自己描述"],
+                        "extra_options": ["先活下来再翻盘", "先学规则再破规则", "先进入核心圈层", "先失去再争回来"],
+                        "rephrase_prompt": "换个问法：第一卷里主角靠什么一步步走到更高的位置？",
+                        "support_prompt": "你也可以先说节奏感觉，比如“前期多吃亏，中段才开始反打”。",
                         "answer_mode": "choice_or_short_text",
                     },
                     {
                         "title": "阶段反转",
                         "prompt": "第一卷中段最值得期待的变化更像什么？",
                         "options": ["身份反转", "阵营反转", "认知反转", "力量反转", "我自己描述"],
+                        "extra_options": ["信任关系翻车", "主角发现自己被利用", "敌我判断被颠覆", "看似赢其实更危险"],
+                        "rephrase_prompt": "换个问法：第一卷中段最该让读者“啊？原来是这样”的那一下，应该落在哪？",
+                        "support_prompt": "如果你只知道“中段必须来一个大变化”，也可以先说变化影响的是人、局势还是真相。",
                         "answer_mode": "choice_or_short_text",
                     },
                     {
                         "title": "卷末高潮",
                         "prompt": "卷末最该兑现给读者的感觉是什么？",
                         "options": ["爽到扬眉吐气", "真相揭开一角", "关系彻底翻转", "危险升级忍不住追更", "我自己描述"],
+                        "extra_options": ["先赢一场大的", "先揭开一个最大的秘密", "先让主角完成一次身份跃迁", "先把代价打满"],
+                        "rephrase_prompt": "换个问法：第一卷结束时，读者最应该带着什么情绪去追第二卷？",
+                        "support_prompt": "如果不好概括，就先说卷末更偏“兑现”还是更偏“吊着继续追”。",
                         "answer_mode": "choice_or_short_text",
                     },
                 ],
@@ -760,23 +796,126 @@ def create_app(
             }
         return None
 
+    def detect_interview_helper_action(content: str) -> str | None:
+        normalized = " ".join(str(content or "").strip().lower().split())
+        if not normalized:
+            return None
+        if "先跳过" in normalized or "skip" in normalized:
+            return "skip"
+        if "换个问法" in normalized or "换种问法" in normalized or "rephrase" in normalized:
+            return "rephrase"
+        if "更多选项" in normalized or "更具体的方向" in normalized or "more options" in normalized:
+            return "more_options"
+        if "我还不确定" in normalized or "没想清" in normalized or "不知道怎么答" in normalized:
+            return "unsure"
+        return None
+
+    def build_interview_user_payload(*, thread, content: str, operator_id: str) -> dict:
+        helper_action = detect_interview_helper_action(content) if interview_blueprint(thread.scope) else None
+        progress_effect = "answered"
+        if helper_action in {"rephrase", "more_options", "unsure"}:
+            progress_effect = "helper"
+        elif helper_action == "skip":
+            progress_effect = "skipped"
+        return {
+            "operator_id": operator_id,
+            "interview_helper_action": helper_action,
+            "interview_progress_effect": progress_effect,
+        }
+
+    def interview_answer_records(messages: list[object]) -> tuple[list[dict], dict | None]:
+        handled: list[dict] = []
+        last_helper: dict | None = None
+        for item in messages:
+            if item.role != "user":
+                continue
+            payload = item.structured_payload or {}
+            effect = payload.get("interview_progress_effect")
+            helper_action = payload.get("interview_helper_action")
+            if effect in {None, "", "answered"}:
+                handled.append({"message": item, "effect": "answered", "helper_action": helper_action})
+                last_helper = None
+                continue
+            if effect == "skipped":
+                handled.append({"message": item, "effect": "skipped", "helper_action": helper_action})
+                last_helper = None
+                continue
+            if effect == "helper":
+                last_helper = {"message": item, "helper_action": helper_action}
+        return handled, last_helper
+
+    def build_interview_draft(*, project, answered_records: list[dict], topics: list[dict]) -> dict | None:
+        if len(answered_records) < 2:
+            return None
+        brief = project.default_user_brief or {}
+        title = brief.get("title") or project.name
+        sections: list[dict[str, str]] = []
+        for index, record in enumerate(answered_records[: min(len(answered_records), len(topics), 4)]):
+            if record["effect"] == "skipped":
+                continue
+            answer = str(record["message"].content or "").strip()
+            if not answer:
+                continue
+            sections.append(
+                {
+                    "label": topics[index]["title"],
+                    "summary": answer[:120],
+                }
+            )
+        if not sections:
+            return None
+        lead = f"《{title}》目前已经有一版可继续确认的方向草案。"
+        if brief.get("idea_seed"):
+            lead = f"基于你最初的灵感“{str(brief['idea_seed'])[:32]}...”，《{title}》已经有一版可继续确认的方向草案。"
+        return {
+            "title": "当前理解草案",
+            "lead": lead,
+            "sections": sections[:4],
+            "recommendation": "如果这版大致对，可以继续补缺口；如果明显不对，就用“换个问法”或直接指出系统理解偏了哪里。",
+        }
+
+    def interview_prompt_variants(*, topic: dict, helper_action: str | None) -> tuple[str, list[str]]:
+        if helper_action == "rephrase":
+            prompt = topic.get("rephrase_prompt") or topic["prompt"]
+            options = list(topic.get("options") or [])
+            return prompt, options
+        if helper_action in {"more_options", "unsure"}:
+            prompt = topic.get("support_prompt") or topic["prompt"]
+            options = list(topic.get("options") or [])
+            for item in topic.get("extra_options") or []:
+                if item not in options:
+                    options.append(item)
+            return prompt, options
+        return topic["prompt"], list(topic.get("options") or [])
+
     def build_interview_state(*, thread, project) -> dict | None:
         blueprint = interview_blueprint(thread.scope)
         if blueprint is None:
             return None
         messages = app.state.store.list_conversation_messages(thread.thread_id)
-        user_messages = [item for item in messages if item.role == "user"]
         topics = blueprint["topics"]
-        completed_count = min(len(user_messages), len(topics))
-        confirmed_topics = [item["title"] for item in topics[:completed_count]]
+        handled_records, last_helper = interview_answer_records(messages)
+        completed_count = min(len(handled_records), len(topics))
+        confirmed_topics: list[str] = []
+        skipped_topics: list[str] = []
+        for index, record in enumerate(handled_records[:completed_count]):
+            title = topics[index]["title"]
+            if record["effect"] == "skipped":
+                skipped_topics.append(title)
+            else:
+                confirmed_topics.append(title)
         unresolved_topics = [item["title"] for item in topics[completed_count:]]
         next_topic = topics[completed_count] if completed_count < len(topics) else None
         next_prompt = (
-            next_topic["prompt"]
+            interview_prompt_variants(topic=next_topic, helper_action=last_helper["helper_action"] if last_helper else None)[0]
             if next_topic is not None
             else blueprint["closing_prompt"]
         )
-        next_options = list(next_topic.get("options") or []) if next_topic is not None else []
+        next_options = (
+            interview_prompt_variants(topic=next_topic, helper_action=last_helper["helper_action"] if last_helper else None)[1]
+            if next_topic is not None
+            else []
+        )
         relevant_types = set(blueprint["decision_types"])
         adopted = [
             item
@@ -798,17 +937,22 @@ def create_app(
             basis.append(f"原始灵感：{str(brief['idea_seed'])[:60]}")
         if brief.get("hook"):
             basis.append(f"当前钩子：{brief['hook']}")
+        answered_count = len(confirmed_topics)
         reflection_summary = (
-            f"目前已确认 {completed_count} 项：{'、'.join(confirmed_topics)}。"
+            f"目前已确认 {answered_count} 项：{'、'.join(confirmed_topics)}。"
             if confirmed_topics
             else "当前还在捕获原始意图，系统会继续用小问题帮你把方向问清。"
         )
+        if skipped_topics:
+            reflection_summary = f"{reflection_summary} 已跳过：{'、'.join(skipped_topics)}。"
+        current_draft = build_interview_draft(project=project, answered_records=handled_records, topics=topics)
         return {
             "goal": blueprint["goal"],
             "completion_count": completed_count,
             "total_topics": len(topics),
             "completion_label": f"{completed_count}/{len(topics)}",
             "confirmed_topics": confirmed_topics,
+            "skipped_topics": skipped_topics,
             "unresolved_topics": unresolved_topics,
             "next_topic_title": next_topic["title"] if next_topic else None,
             "next_prompt": next_prompt,
@@ -818,6 +962,8 @@ def create_app(
             "adopted_count": len(adopted),
             "adopted_highlights": [item.summary for item in adopted[:3]],
             "reflection_summary": reflection_summary,
+            "current_draft": current_draft,
+            "last_helper_action": last_helper["helper_action"] if last_helper else None,
         }
 
     def latest_artifact_payloads(run_id: str) -> dict[str, dict]:
@@ -1063,8 +1209,17 @@ def create_app(
             excerpt = f"{excerpt[:100]}..."
         if thread.scope == "project_bootstrap":
             interview_state = build_interview_state(thread=thread, project=project)
+            helper_action = interview_state.get("last_helper_action")
+            helper_line = ""
+            if helper_action == "rephrase":
+                helper_line = "我已经换了一种问法，尽量不用编辑术语。\n"
+            elif helper_action == "more_options":
+                helper_line = "我给你补了一组更具体的方向，你可以直接挑最接近的一项。\n"
+            elif helper_action == "unsure":
+                helper_line = "没关系，不确定是正常的。我们先缩小范围，不要求一次说清。\n"
             content = (
                 f"已记录你的方向：{excerpt}\n\n"
+                f"{helper_line}"
                 f"当前采访进度：{interview_state['completion_label']}。\n"
                 f"已确认：{'、'.join(interview_state['confirmed_topics']) if interview_state['confirmed_topics'] else '暂未形成稳定结论'}。\n"
                 f"当前理解：{interview_state['reflection_summary']}\n"
@@ -1076,8 +1231,17 @@ def create_app(
             return "assistant_question", content, payload
         if thread.scope == "character_room":
             interview_state = build_interview_state(thread=thread, project=project)
+            helper_action = interview_state.get("last_helper_action")
+            helper_line = ""
+            if helper_action == "rephrase":
+                helper_line = "我已经换了一种问法，尽量先从感觉和边界出发。\n"
+            elif helper_action == "more_options":
+                helper_line = "我补了一组更具体的人物方向，你可以直接挑最接近的一项。\n"
+            elif helper_action == "unsure":
+                helper_line = "不用急着写小传，我们先抓住最像的感觉就够了。\n"
             content = (
                 f"已记录人物方向：{excerpt}\n\n"
+                f"{helper_line}"
                 f"当前采访进度：{interview_state['completion_label']}。\n"
                 f"已确认：{'、'.join(interview_state['confirmed_topics']) if interview_state['confirmed_topics'] else '暂未形成稳定结论'}。\n"
                 f"当前理解：{interview_state['reflection_summary']}\n"
@@ -1089,8 +1253,17 @@ def create_app(
             return "assistant_question", content, payload
         if thread.scope == "outline_room":
             interview_state = build_interview_state(thread=thread, project=project)
+            helper_action = interview_state.get("last_helper_action")
+            helper_line = ""
+            if helper_action == "rephrase":
+                helper_line = "我已经把问题换成更接近追更体验的问法。\n"
+            elif helper_action == "more_options":
+                helper_line = "我补了一组更具体的大纲推进方向，你可以先选最接近的一项。\n"
+            elif helper_action == "unsure":
+                helper_line = "不用一次说清整卷结构，我们先抓住主推动力就行。\n"
             content = (
                 f"已记录大纲方向：{excerpt}\n\n"
+                f"{helper_line}"
                 f"当前采访进度：{interview_state['completion_label']}。\n"
                 f"已确认：{'、'.join(interview_state['confirmed_topics']) if interview_state['confirmed_topics'] else '暂未形成稳定结论'}。\n"
                 f"当前理解：{interview_state['reflection_summary']}\n"
@@ -1842,7 +2015,11 @@ def create_app(
             role="user",
             message_type="user_message",
             content=payload.content,
-            structured_payload={"operator_id": request.state.actor},
+            structured_payload=build_interview_user_payload(
+                thread=thread,
+                content=payload.content,
+                operator_id=request.state.actor,
+            ),
         )
         if user_message is None:
             raise HTTPException(status_code=404, detail="conversation_thread_not_found")

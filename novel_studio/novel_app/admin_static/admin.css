@@ -348,6 +348,14 @@ body {
   margin-bottom: 6px;
 }
 
+.interview-draft {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(31, 107, 68, 0.18);
+  background: rgba(245, 251, 246, 0.92);
+}
+
 .interview-list {
   margin: 8px 0 0;
   padding-left: 18px;

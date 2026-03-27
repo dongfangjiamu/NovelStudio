@@ -933,15 +933,37 @@ function renderInterviewSummary(thread) {
   const adopted = interview.adopted_highlights?.length
     ? `<div class="meta">${interview.adopted_highlights.map((item) => escapeHtml(compactDecisionText(item, 36))).join(" / ")}</div>`
     : `<div class="meta">当前线程还没有采纳结论。</div>`;
+  const skipped = interview.skipped_topics?.length
+    ? `<div class="meta">已跳过：${interview.skipped_topics.map((item) => escapeHtml(item)).join("、")}</div>`
+    : "";
   const optionButtons = interview.next_options?.length
     ? `
       <div class="interview-options">
         ${interview.next_options
           .map((item, index) => `<button class="button ghost interview-option" type="button" data-interview-option="${index}">${escapeHtml(item)}</button>`)
           .join("")}
-        <button class="button ghost interview-option ghost" type="button" data-interview-helper="unsure">我还不确定</button>
         <button class="button ghost interview-option ghost" type="button" data-interview-helper="skip">先跳过</button>
+        <button class="button ghost interview-option ghost" type="button" data-interview-helper="rephrase">换个问法</button>
+        <button class="button ghost interview-option ghost" type="button" data-interview-helper="more-options">给我更多选项</button>
+        <button class="button ghost interview-option ghost" type="button" data-interview-helper="unsure">我还不确定</button>
       </div>
+    `
+    : "";
+  const currentDraft = interview.current_draft
+    ? `
+      <section class="interview-draft">
+        <div class="card-head">
+          <h4>${escapeHtml(interview.current_draft.title || "当前理解草案")}</h4>
+          <span class="status-chip status-approved">可确认</span>
+        </div>
+        <div class="meta">${escapeHtml(interview.current_draft.lead || "")}</div>
+        <ul class="interview-list">
+          ${(interview.current_draft.sections || [])
+            .map((item) => `<li><strong>${escapeHtml(item.label || "")}</strong>：${escapeHtml(item.summary || "")}</li>`)
+            .join("")}
+        </ul>
+        <div class="meta">${escapeHtml(interview.current_draft.recommendation || "")}</div>
+      </section>
     `
     : "";
   el.conversationInterviewSummary.innerHTML = `
@@ -957,6 +979,7 @@ function renderInterviewSummary(thread) {
         <div class="interview-block">
           <strong>已确认事项</strong>
           ${confirmed}
+          ${skipped}
         </div>
         <div class="interview-block">
           <strong>未决问题</strong>
@@ -975,6 +998,7 @@ function renderInterviewSummary(thread) {
           ${adopted}
         </div>
       </div>
+      ${currentDraft}
     </section>
   `;
   el.conversationInterviewSummary.querySelectorAll("[data-interview-option]").forEach((node) => {
@@ -987,14 +1011,20 @@ function renderInterviewSummary(thread) {
     });
   });
   el.conversationInterviewSummary.querySelectorAll("[data-interview-helper]").forEach((node) => {
-    node.addEventListener("click", () => {
+    node.addEventListener("click", async () => {
       const helper =
         node.dataset.interviewHelper === "skip"
           ? "先跳过这个问题，继续问下一个。"
-          : "我还不确定，先给我几个更具体的方向。";
-      el.conversationInput.value = helper;
-      el.conversationInput.focus();
-      setStatus("已把辅助回答带入输入框，你可以直接发送。", "ready");
+          : node.dataset.interviewHelper === "rephrase"
+            ? "换个问法。"
+            : node.dataset.interviewHelper === "more-options"
+              ? "给我更多选项。"
+              : "我还不确定，先给我几个更具体的方向。";
+      try {
+        await submitConversationMessage(helper);
+      } catch (error) {
+        setStatus(String(error.message || error), "error");
+      }
     });
   });
 }

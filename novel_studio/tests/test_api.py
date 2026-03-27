@@ -189,6 +189,86 @@ def test_conversation_scene_scopes_seed_targeted_opening_messages() -> None:
     assert "第一卷最主要靠什么把读者往下带" in outline_messages.json()[0]["content"]
 
 
+def test_interview_helpers_can_rephrase_expand_and_skip_without_wrong_progress() -> None:
+    client = make_client()
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "采访辅助项目",
+            "default_user_brief": {"title": "长夜炉火", "idea_seed": "一个被流放的人，靠炉火秘密翻身。"},
+            "default_target_chapters": 1,
+        },
+    ).json()
+
+    thread = client.post(
+        f"/api/projects/{project['project_id']}/conversation-threads",
+        json={"scope": "project_bootstrap"},
+    ).json()
+
+    more_options = client.post(
+        f"/api/conversation-threads/{thread['thread_id']}/messages",
+        json={"content": "给我更多选项。"},
+    )
+    assert more_options.status_code == 201
+    thread_after_options = client.get(f"/api/conversation-threads/{thread['thread_id']}").json()
+    assert thread_after_options["interview_state"]["completion_label"] == "0/4"
+    assert "压迫中翻盘" in thread_after_options["interview_state"]["next_options"]
+
+    rephrase = client.post(
+        f"/api/conversation-threads/{thread['thread_id']}/messages",
+        json={"content": "换个问法。"},
+    )
+    assert rephrase.status_code == 201
+    thread_after_rephrase = client.get(f"/api/conversation-threads/{thread['thread_id']}").json()
+    assert thread_after_rephrase["interview_state"]["completion_label"] == "0/4"
+    assert "只保住一种读者体验" in thread_after_rephrase["interview_state"]["next_prompt"]
+
+    skip = client.post(
+        f"/api/conversation-threads/{thread['thread_id']}/messages",
+        json={"content": "先跳过这个问题，继续问下一个。"},
+    )
+    assert skip.status_code == 201
+    thread_after_skip = client.get(f"/api/conversation-threads/{thread['thread_id']}").json()
+    assert thread_after_skip["interview_state"]["completion_label"] == "1/4"
+    assert thread_after_skip["interview_state"]["skipped_topics"] == ["最想保住的吸引力"]
+    assert thread_after_skip["interview_state"]["unresolved_topics"][0] == "主角行动方式"
+
+
+def test_interview_state_builds_current_draft_after_two_answers() -> None:
+    client = make_client()
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "采访草案项目",
+            "default_user_brief": {"title": "长夜炉火", "idea_seed": "一个被逐出山门的人，靠炉火中的古老声音翻盘。"},
+            "default_target_chapters": 1,
+        },
+    ).json()
+
+    thread = client.post(
+        f"/api/projects/{project['project_id']}/conversation-threads",
+        json={"scope": "project_bootstrap"},
+    ).json()
+
+    client.post(
+        f"/api/conversation-threads/{thread['thread_id']}/messages",
+        json={"content": "我最想保住的是压迫中翻盘和悬念感。"},
+    )
+    client.post(
+        f"/api/conversation-threads/{thread['thread_id']}/messages",
+        json={"content": "主角要是那种克制但危险的人，平时忍着，关键时刻会立刻动手。"},
+    )
+
+    refreshed = client.get(f"/api/conversation-threads/{thread['thread_id']}").json()
+    draft = refreshed["interview_state"]["current_draft"]
+
+    assert draft["title"] == "当前理解草案"
+    assert len(draft["sections"]) == 2
+    assert draft["sections"][0]["label"] == "最想保住的吸引力"
+    assert draft["sections"][1]["label"] == "主角行动方式"
+    assert "《长夜炉火》" in draft["lead"]
+
+
 def test_conversation_decision_is_persisted_and_applied_to_run_request() -> None:
     app = create_app(
         config=AppConfig(
