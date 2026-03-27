@@ -2223,12 +2223,18 @@ function renderRuns(runs, focusRunId) {
           <h4>第 ${chapterNo} 章 · ${stage.stageTitle}</h4>
           ${statusChip(displayStatus)}
         </div>
-        <div class="meta">创建于 ${formatTimestamp(item.created_at)} · ${item.run_id}</div>
-        <div class="meta">最近更新 ${formatTimestamp(updatedAt)} · 重写 ${progress.rewrite_count ?? 0} 次 · 工件 ${item.artifact_count ?? 0} 个</div>
+        <div class="meta">创建于 ${formatTimestamp(item.created_at)}</div>
         <div class="meta">${stage.stageLead}</div>
         <div class="meta">${summarizeRunCard(item)}</div>
-        <div class="meta">${marker}</div>
         <div class="card-caption">${caption}</div>
+        <details class="run-diagnostics">
+          <summary>查看完整诊断</summary>
+          <div class="meta">最近更新 ${formatTimestamp(updatedAt)} · 重写 ${progress.rewrite_count ?? 0} 次 · 工件 ${item.artifact_count ?? 0} 个</div>
+          <div class="meta">运行标识：${item.run_id}</div>
+          <div class="meta">当前诊断：${marker}</div>
+          <div class="meta">阶段补充：${stage.stageDetail}</div>
+          <div class="meta">系统建议：${stage.stageHint}</div>
+        </details>
         <div class="actions">
           ${actions.join("")}
         </div>

@@ -916,6 +916,22 @@ pre {
   margin-top: 4px;
 }
 
+.run-diagnostics {
+  margin-top: 10px;
+  border-top: 1px dashed var(--line);
+  padding-top: 10px;
+}
+
+.run-diagnostics summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.run-diagnostics[open] summary {
+  margin-bottom: 8px;
+}
+
 .timeline {
   margin-top: 12px;
   display: flex;
