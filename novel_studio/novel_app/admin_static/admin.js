@@ -2540,26 +2540,52 @@ function renderConversationThreads(items) {
     el.conversationThreadList.innerHTML = `<div class="empty">还没有创作对话。你可以直接按上面的创作场景开一个线程。</div>`;
     return;
   }
-  el.conversationThreadList.innerHTML = items
-    .map((item) => {
-      const active = item.thread_id === state.selectedThreadId ? "active" : "";
-      const chapterText = item.linked_chapter_no ? `第 ${item.linked_chapter_no} 章` : "项目级";
-      const progressLabel = conversationThreadProgressLabel(item);
-      const nextPrompt = interviewState(item)?.next_prompt;
-      return `
-        <button class="card ${active}" data-thread-id="${item.thread_id}">
-          <div class="card-head">
-            <h4>${item.title}</h4>
-            <span class="status-chip status-${item.status}">${item.status === "open" ? "进行中" : item.status}</span>
-          </div>
-          <div class="meta">${conversationScopeLabel(item.scope)} · ${chapterText}</div>
-          ${progressLabel ? `<div class="meta">采访进度 ${progressLabel}</div>` : ""}
-          <div class="meta">${item.latest_message_preview || "还没有消息。"}</div>
-          ${nextPrompt ? `<div class="card-caption">下一问：${escapeHtml(compactDecisionText(nextPrompt, 46))}</div>` : ""}
-        </button>
-      `;
-    })
-    .join("");
+  const sorted = [...items].sort((left, right) => {
+    const leftSelected = left.thread_id === state.selectedThreadId ? 1 : 0;
+    const rightSelected = right.thread_id === state.selectedThreadId ? 1 : 0;
+    if (leftSelected !== rightSelected) return rightSelected - leftSelected;
+    const leftOpen = left.status === "open" ? 1 : 0;
+    const rightOpen = right.status === "open" ? 1 : 0;
+    if (leftOpen !== rightOpen) return rightOpen - leftOpen;
+    return new Date(right.updated_at || right.created_at).getTime() - new Date(left.updated_at || left.created_at).getTime();
+  });
+
+  const [focusThread, ...historyThreads] = sorted;
+  const renderThreadCard = (item, { recommendedCard = false } = {}) => {
+    const active = item.thread_id === state.selectedThreadId ? "active" : "";
+    const chapterText = item.linked_chapter_no ? `第 ${item.linked_chapter_no} 章` : "项目级";
+    const progressLabel = conversationThreadProgressLabel(item);
+    const nextPrompt = interviewState(item)?.next_prompt;
+    const classes = ["card", active];
+    if (recommendedCard) classes.push("recommended");
+    if (!recommendedCard) classes.push("history");
+    return `
+      <button class="${classes.filter(Boolean).join(" ")}" data-thread-id="${item.thread_id}">
+        <div class="card-head">
+          <h4>${item.title}</h4>
+          <span class="status-chip status-${item.status}">${item.status === "open" ? "进行中" : item.status}</span>
+        </div>
+        <div class="meta">${conversationScopeLabel(item.scope)} · ${chapterText}</div>
+        ${progressLabel ? `<div class="meta">采访进度 ${progressLabel}</div>` : ""}
+        <div class="meta">${item.latest_message_preview || "还没有消息。"}</div>
+        ${nextPrompt ? `<div class="card-caption">下一问：${escapeHtml(compactDecisionText(nextPrompt, 46))}</div>` : ""}
+        <div class="card-caption">${recommendedCard ? "这是当前最值得继续的一条创作对话。" : "历史线程，默认只在需要时再展开查看。"}</div>
+      </button>
+    `;
+  };
+
+  const blocks = [`<div class="section-caption">当前会话</div>${renderThreadCard(focusThread, { recommendedCard: true })}`];
+  if (historyThreads.length) {
+    blocks.push(`
+      <details class="conversation-thread-history">
+        <summary>查看历史线程（${historyThreads.length}）</summary>
+        <div class="stack compact conversation-thread-history-body">
+          ${historyThreads.map((item) => renderThreadCard(item)).join("")}
+        </div>
+      </details>
+    `);
+  }
+  el.conversationThreadList.innerHTML = blocks.join("");
   el.conversationThreadList.querySelectorAll("[data-thread-id]").forEach((node) => {
     node.addEventListener("click", () => {
       loadConversationMessages(node.dataset.threadId).catch((error) => setStatus(String(error.message || error), "error"));

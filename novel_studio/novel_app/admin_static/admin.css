@@ -822,6 +822,28 @@ textarea {
   margin-top: 4px;
 }
 
+.conversation-thread-history {
+  margin-top: 12px;
+  border: 1px dashed var(--line);
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: rgba(255, 251, 245, 0.72);
+}
+
+.conversation-thread-history summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.conversation-thread-history[open] summary {
+  margin-bottom: 10px;
+}
+
+.conversation-thread-history-body {
+  margin-top: 4px;
+}
+
 .warning-copy {
   color: var(--warning);
 }
