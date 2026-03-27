@@ -334,6 +334,10 @@ body {
   margin-top: 10px;
 }
 
+.recovery-mode-grid {
+  margin-top: 12px;
+}
+
 .conversation-messages {
   min-height: 220px;
   max-height: 560px;

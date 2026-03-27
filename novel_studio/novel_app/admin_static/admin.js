@@ -319,6 +319,71 @@ function recoveryModeDescription(value) {
   return "这次会沿用当前流程结论继续执行，通常用于已经确认可直接续写下一步。";
 }
 
+function recoveryModePlan(value, context = null) {
+  const chapterNo = context?.chapter_no || "?";
+  if (value === "replan") {
+    return {
+      title: `重做第 ${chapterNo} 章章卡`,
+      preserves: [
+        "保留当前项目设定、卷纲、Canon 和记住的写作规则。",
+        "保留这次会诊里已经确认的保留项和禁改项。",
+      ],
+      rewrites: [
+        "重做当前章的章卡目标、节奏和钩子设计。",
+        "随后基于新章卡重写同一章正文。",
+      ],
+      risks: [
+        "当前章的结构会明显变化，之前满意的局部桥段可能被替换。",
+        "耗时通常最长，但最适合章卡本身方向错了的情况。",
+      ],
+      immediate: [
+        "先确认本章必须保留的桥段和不能动的人设边界。",
+        "优先把关键修订采纳为“章卡修订”。",
+      ],
+    };
+  }
+  if (value === "rewrite") {
+    return {
+      title: `重写第 ${chapterNo} 章正文`,
+      preserves: [
+        "保留当前章卡的大方向、章节目标和主钩子。",
+        "保留项目设定、Canon 和记住的长期规则。",
+      ],
+      rewrites: [
+        "直接重写这一章正文，并优先处理会诊里确认的问题。",
+        "不重做整章规划，重点是把当前章写顺、写清楚。",
+      ],
+      risks: [
+        "如果根因其实在章卡，单纯重写正文可能再次不过。",
+        "耗时中等，适合方向基本对、但落地质量不够的情况。",
+      ],
+      immediate: [
+        "先把最关键的修订意见采纳为“修订指令”。",
+        "明确哪些桥段必须保留，避免重写时把有效内容也冲掉。",
+      ],
+    };
+  }
+  return {
+    title: `继续当前流程，推进到第 ${Number(chapterNo || 0) + 1 || "?"} 章`,
+    preserves: [
+      "保留当前章节已经通过的结果和已确认的对话结论。",
+      "沿用当前章卡/正文之外的项目上下文，继续往下一步推进。",
+    ],
+    rewrites: [
+      "不会重做当前章，重点是继续下一步或下一章。",
+      "会把会诊里确认的补充规则带到后续生成里。",
+    ],
+    risks: [
+      "如果当前章本身还有关键问题没说清，继续推进会把问题带到后面。",
+      "最快，但只适合已经确认当前章可接受的情况。",
+    ],
+    immediate: [
+      "先确认这次会诊没有要求重做当前章卡或正文。",
+      "把需要延续到下一章的要求采纳为长期规则或修订指令。",
+    ],
+  };
+}
+
 function latestApprovalForThread(thread) {
   if (!thread?.linked_run_id) return null;
   return latestApprovalForRun(thread.linked_run_id, state.projectSnapshot.approvals || []);
@@ -404,6 +469,7 @@ function renderThreadContext(thread) {
   if (thread.scope === "rewrite_intervention") {
     const approval = latestApprovalForThread(thread);
     const selectedMode = inferRecoveryModeForThread(thread);
+    const plan = recoveryModePlan(selectedMode, context);
     const mustFix = context.must_fix?.length
       ? `<ul class="interview-list">${context.must_fix.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
       : `<div class="meta">当前没有明确的必须先修项。</div>`;
@@ -446,6 +512,28 @@ function renderThreadContext(thread) {
               .join("")}
           </div>
           <div class="meta recovery-mode-copy">当前选择：${recoveryModeLabel(selectedMode)}。${recoveryModeDescription(selectedMode)}</div>
+          <div class="interview-grid recovery-mode-grid">
+            <div class="interview-block">
+              <strong>${escapeHtml(plan.title)}</strong>
+              <div class="meta">执行前先看清：这次到底保留什么、重做什么、风险是什么。</div>
+            </div>
+            <div class="interview-block">
+              <strong>建议立即确认</strong>
+              <ul class="interview-list">${plan.immediate.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+            </div>
+            <div class="interview-block">
+              <strong>这次会保留什么</strong>
+              <ul class="interview-list">${plan.preserves.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+            </div>
+            <div class="interview-block">
+              <strong>这次会重做什么</strong>
+              <ul class="interview-list">${plan.rewrites.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+            </div>
+            <div class="interview-block">
+              <strong>风险与代价</strong>
+              <ul class="interview-list">${plan.risks.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+            </div>
+          </div>
         </div>
         <div class="interview-grid">
           <div class="interview-block">
@@ -1514,6 +1602,7 @@ function deriveConversationAction() {
   if (thread?.scope === "rewrite_intervention") {
     const approval = latestApprovalForThread(thread);
     const selectedMode = inferRecoveryModeForThread(thread);
+    const plan = recoveryModePlan(selectedMode, threadContext(thread));
     if (!approval) {
       return {
         disabled: true,
@@ -1549,7 +1638,7 @@ function deriveConversationAction() {
     return {
       disabled: false,
       label: recoveryModeExecuteLabel(selectedMode),
-      copy: recoveryModeDescription(selectedMode),
+      copy: `${recoveryModeDescription(selectedMode)} 当前会保留：${plan.preserves[0]} 风险：${plan.risks[0]}`,
       action: { kind: "execute-approval", approvalId: approval.approval_id, recoveryMode: selectedMode },
     };
   }
@@ -1731,8 +1820,9 @@ function renderFocusRun(summary) {
     ? `<div class="focus-metric"><strong>已带入对话结论</strong><div class="meta">${guidance.decision_count} 条，其中写作规则 ${guidance.writer_playbook_rule_count || 0} 条，人物设定 ${guidance.character_note_count || 0} 条，卷纲约束 ${guidance.outline_constraint_count || 0} 条，修订指令 ${guidance.human_instruction_count || 0} 条，章卡修订 ${guidance.chapter_card_patch_count || 0} 条。</div></div>`
     : "";
   const checkpoint = humanCheckpoint(run);
+  const checkpointPlan = checkpoint ? recoveryModePlan(checkpoint.recommended_recovery_mode || "continue", checkpoint) : null;
   const checkpointBlock = checkpoint
-    ? `<div class="focus-metric"><strong>人工检查点</strong><div class="meta">${escapeHtml(checkpoint.reason || "流程已暂停。")}${checkpoint.thread_id ? ` 已自动创建会诊线程。` : ""}</div><div class="meta">建议恢复路径：${recoveryModeLabel(checkpoint.recommended_recovery_mode || "continue")}</div></div>`
+    ? `<div class="focus-metric"><strong>人工检查点</strong><div class="meta">${escapeHtml(checkpoint.reason || "流程已暂停。")}${checkpoint.thread_id ? ` 已自动创建会诊线程。` : ""}</div><div class="meta">建议恢复路径：${recoveryModeLabel(checkpoint.recommended_recovery_mode || "continue")}</div>${checkpointPlan ? `<div class="meta">会保留：${escapeHtml(checkpointPlan.preserves[0])}</div><div class="meta">风险：${escapeHtml(checkpointPlan.risks[0])}</div>` : ""}</div>`
     : "";
   const actionButtons = [
     renderViewArtifactsButton(run.run_id, run.artifact_count),
@@ -1983,12 +2073,13 @@ function renderApprovals(items) {
         .map((item) => {
           const actions = [];
           const interventionThread = conversationThreadForRun(item.run_id, "rewrite_intervention");
+          const recoveryMode = interventionThread ? inferRecoveryModeForThread(interventionThread) : (isRecoveryMode(item.requested_action) ? item.requested_action : "continue");
+          const recoveryPlan = recoveryModePlan(recoveryMode, { chapter_no: item.chapter_no });
           if (item.status === "pending") {
             actions.push({ action: "approve", id: item.approval_id, label: "通过" });
             actions.push({ action: "reject", id: item.approval_id, label: "驳回" });
           }
           if (item.status === "approved" && !item.executed_run_id) {
-            const recoveryMode = interventionThread ? inferRecoveryModeForThread(interventionThread) : (isRecoveryMode(item.requested_action) ? item.requested_action : "continue");
             actions.push({ action: `execute-${recoveryMode}`, id: item.approval_id, label: `执行：${recoveryModeLabel(recoveryMode)}` });
           }
           if (interventionThread) {
@@ -1998,7 +2089,12 @@ function renderApprovals(items) {
             item.requested_action === "continue" ? "继续写下一章" : item.requested_action,
             `${STATUS_LABELS[item.status] || item.status}<br>${item.reason}`,
             actions,
-            item.executed_run_id ? `<div class="meta">executed: ${item.executed_run_id}</div>` : ""
+            `
+              <div class="meta">当前恢复路径：${recoveryModeLabel(recoveryMode)}</div>
+              <div class="meta">${escapeHtml(recoveryPlan.preserves[0])}</div>
+              <div class="meta">风险：${escapeHtml(recoveryPlan.risks[0])}</div>
+              ${item.executed_run_id ? `<div class="meta">executed: ${item.executed_run_id}</div>` : ""}
+            `
           );
         })
         .join("")
