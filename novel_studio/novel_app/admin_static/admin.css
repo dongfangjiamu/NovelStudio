@@ -200,6 +200,42 @@ body {
   margin-bottom: 18px;
 }
 
+.conversation-scene-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.scene-button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: rgba(255, 252, 247, 0.95);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.scene-button strong {
+  font-size: 0.98rem;
+}
+
+.scene-button span {
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.4;
+}
+
+.scene-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
 .conversation-layout {
   margin-top: 14px;
   display: grid;

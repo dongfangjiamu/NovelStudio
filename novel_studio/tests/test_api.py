@@ -92,7 +92,7 @@ def test_conversation_thread_flow() -> None:
     thread = create_thread.json()
     assert thread["scope"] == "project_bootstrap"
     assert thread["message_count"] == 1
-    assert "项目共创" in thread["title"]
+    assert "立项共创" in thread["title"]
 
     list_threads = client.get(f"/api/projects/{project['project_id']}/conversation-threads")
     assert list_threads.status_code == 200
@@ -115,6 +115,40 @@ def test_conversation_thread_flow() -> None:
     refreshed_thread = client.get(f"/api/conversation-threads/{thread['thread_id']}")
     assert refreshed_thread.status_code == 200
     assert refreshed_thread.json()["message_count"] == 3
+
+
+def test_conversation_scene_scopes_seed_targeted_opening_messages() -> None:
+    client = make_client()
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "场景对话项目",
+            "default_user_brief": {"title": "长夜炉火", "genre": "东方玄幻"},
+            "default_target_chapters": 1,
+        },
+    ).json()
+
+    character_thread = client.post(
+        f"/api/projects/{project['project_id']}/conversation-threads",
+        json={"scope": "character_room"},
+    )
+    outline_thread = client.post(
+        f"/api/projects/{project['project_id']}/conversation-threads",
+        json={"scope": "outline_room"},
+    )
+
+    assert character_thread.status_code == 201
+    assert outline_thread.status_code == 201
+    assert character_thread.json()["title"] == "人物讨论"
+    assert outline_thread.json()["title"] == "大纲讨论"
+
+    character_messages = client.get(f"/api/conversation-threads/{character_thread.json()['thread_id']}/messages")
+    outline_messages = client.get(f"/api/conversation-threads/{outline_thread.json()['thread_id']}/messages")
+
+    assert "人物讨论线程" in character_messages.json()[0]["content"]
+    assert "主角当前缺陷" in character_messages.json()[0]["content"]
+    assert "大纲讨论线程" in outline_messages.json()[0]["content"]
+    assert "第一卷主线冲突" in outline_messages.json()[0]["content"]
 
 
 def test_conversation_decision_is_persisted_and_applied_to_run_request() -> None:

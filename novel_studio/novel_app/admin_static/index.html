@@ -198,12 +198,34 @@
               <h2>创作对话</h2>
               <div id="conversation-caption" class="muted">用对话逐步收敛创作结论，而不是只靠填表和按钮。</div>
             </div>
-            <div class="action-row">
-              <button id="conversation-create-bootstrap" class="button secondary" disabled>新建共创对话</button>
-              <button id="conversation-create-context" class="button ghost" disabled>基于当前 Run 协作</button>
-            </div>
           </div>
-          <div class="muted panel-tip">第一期先支持项目共创和当前 Run 协作。对话会自动带上项目或章节上下文。</div>
+          <div class="muted panel-tip">先按你当前想解决的创作问题开一个线程。系统会按场景给出不同的追问和协作方式。</div>
+          <div class="conversation-scene-grid">
+            <button id="conversation-create-bootstrap" class="scene-button" disabled>
+              <strong>立项共创</strong>
+              <span>适合先确定主题、卖点、主角欲望和写作禁区。</span>
+            </button>
+            <button id="conversation-create-characters" class="scene-button" disabled>
+              <strong>人物讨论</strong>
+              <span>适合把主角缺陷、人物关系和行为边界聊清楚。</span>
+            </button>
+            <button id="conversation-create-outline" class="scene-button" disabled>
+              <strong>大纲讨论</strong>
+              <span>适合先讨论第一卷主线、升级路径和卷末高潮。</span>
+            </button>
+            <button id="conversation-create-planning" class="scene-button" disabled>
+              <strong>章卡讨论</strong>
+              <span>适合当前章节还没写顺，先把本章目的和钩子说透。</span>
+            </button>
+            <button id="conversation-create-rewrite" class="scene-button" disabled>
+              <strong>修稿会诊</strong>
+              <span>适合不过稿、卡住或需要人工介入时集中会诊。</span>
+            </button>
+            <button id="conversation-create-retro" class="scene-button" disabled>
+              <strong>章节复盘</strong>
+              <span>适合一章完成后总结哪些写法值得保留，哪些风险仍在。</span>
+            </button>
+          </div>
           <div class="conversation-layout">
             <div class="conversation-sidebar">
               <div class="section-caption">线程</div>

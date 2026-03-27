@@ -45,7 +45,11 @@ const el = {
   learningPanel: document.getElementById("learning-panel"),
   conversationCaption: document.getElementById("conversation-caption"),
   conversationCreateBootstrap: document.getElementById("conversation-create-bootstrap"),
-  conversationCreateContext: document.getElementById("conversation-create-context"),
+  conversationCreateCharacters: document.getElementById("conversation-create-characters"),
+  conversationCreateOutline: document.getElementById("conversation-create-outline"),
+  conversationCreatePlanning: document.getElementById("conversation-create-planning"),
+  conversationCreateRewrite: document.getElementById("conversation-create-rewrite"),
+  conversationCreateRetro: document.getElementById("conversation-create-retro"),
   conversationThreadList: document.getElementById("conversation-thread-list"),
   conversationDecisionList: document.getElementById("conversation-decision-list"),
   conversationThreadCaption: document.getElementById("conversation-thread-caption"),
@@ -78,11 +82,22 @@ const STATUS_LABELS = {
 };
 
 const CONVERSATION_SCOPE_LABELS = {
-  project_bootstrap: "项目共创",
+  project_bootstrap: "立项共创",
+  character_room: "人物讨论",
+  outline_room: "大纲讨论",
   chapter_planning: "章卡协商",
-  rewrite_intervention: "修稿协作",
+  rewrite_intervention: "修稿会诊",
   chapter_retro: "章节复盘",
 };
+
+const CONVERSATION_SCENE_CONFIG = [
+  { scope: "project_bootstrap", element: "conversationCreateBootstrap" },
+  { scope: "character_room", element: "conversationCreateCharacters" },
+  { scope: "outline_room", element: "conversationCreateOutline" },
+  { scope: "chapter_planning", element: "conversationCreatePlanning" },
+  { scope: "rewrite_intervention", element: "conversationCreateRewrite" },
+  { scope: "chapter_retro", element: "conversationCreateRetro" },
+];
 
 const NODE_LABELS = {
   interviewer_contract: "整理创作约束",
@@ -278,6 +293,10 @@ function conversationDecisionLabel(value) {
   if (value === "writer_playbook_rule") return "写作规则";
   if (value === "chapter_card_patch") return "章卡修订";
   return value || "已采纳结论";
+}
+
+function scopeNeedsRunContext(scope) {
+  return ["chapter_planning", "rewrite_intervention", "chapter_retro"].includes(scope);
 }
 
 function conversationGuidance(run) {
@@ -1507,11 +1526,14 @@ function renderArtifacts(items) {
 }
 
 function renderConversationThreads(items) {
-  el.conversationCreateBootstrap.disabled = !state.selectedProjectId;
   const focusRun = pickFocusRun(state.projectSnapshot.runs || []);
-  el.conversationCreateContext.disabled = !state.selectedProjectId || !focusRun;
+  CONVERSATION_SCENE_CONFIG.forEach(({ scope, element }) => {
+    const node = el[element];
+    if (!node) return;
+    node.disabled = !state.selectedProjectId || (scopeNeedsRunContext(scope) && !focusRun);
+  });
   if (!items.length) {
-    el.conversationThreadList.innerHTML = `<div class="empty">还没有创作对话。你可以先发起项目共创，或基于当前 Run 发起协作。</div>`;
+    el.conversationThreadList.innerHTML = `<div class="empty">还没有创作对话。你可以直接按上面的创作场景开一个线程。</div>`;
     return;
   }
   el.conversationThreadList.innerHTML = items
@@ -1540,7 +1562,7 @@ function renderConversationThreads(items) {
 function messageAdoptActions(thread, item) {
   if (!thread) return [];
   if (!["user", "assistant"].includes(item.role)) return [];
-  if (thread.scope === "project_bootstrap") {
+  if (["project_bootstrap", "character_room", "outline_room"].includes(thread.scope)) {
     return [{ label: "采纳为写作规则", decisionType: "writer_playbook_rule" }];
   }
   if (thread.scope === "chapter_planning") {
@@ -1661,7 +1683,7 @@ async function createConversationThread(scope) {
   if (!state.selectedProjectId) return;
   const focusRun = pickFocusRun(state.projectSnapshot.runs || []);
   const body = { scope };
-  if (scope !== "project_bootstrap" && focusRun) {
+  if (scopeNeedsRunContext(scope) && focusRun) {
     body.linked_run_id = focusRun.run_id;
     body.linked_chapter_no = chapterForRun(focusRun);
   }
@@ -2029,13 +2051,11 @@ async function boot() {
   el.createRunQuick.addEventListener("click", () => createRun({ quickMode: true }));
   el.conversationExecute.addEventListener("click", () => executeConversationAction().catch((error) => setStatus(String(error.message || error), "error")));
   el.conversationCreateBootstrap.addEventListener("click", () => createConversationThread("project_bootstrap").catch((error) => setStatus(String(error.message || error), "error")));
-  el.conversationCreateContext.addEventListener("click", () => {
-    const focusRun = pickFocusRun(state.projectSnapshot.runs || []);
-    const scope = focusRun?.status === "failed" || runDisplayStatus(focusRun || {}) === "awaiting_approval" || runDisplayStatus(focusRun || {}) === "awaiting_execution"
-      ? "rewrite_intervention"
-      : "chapter_planning";
-    createConversationThread(scope).catch((error) => setStatus(String(error.message || error), "error"));
-  });
+  el.conversationCreateCharacters.addEventListener("click", () => createConversationThread("character_room").catch((error) => setStatus(String(error.message || error), "error")));
+  el.conversationCreateOutline.addEventListener("click", () => createConversationThread("outline_room").catch((error) => setStatus(String(error.message || error), "error")));
+  el.conversationCreatePlanning.addEventListener("click", () => createConversationThread("chapter_planning").catch((error) => setStatus(String(error.message || error), "error")));
+  el.conversationCreateRewrite.addEventListener("click", () => createConversationThread("rewrite_intervention").catch((error) => setStatus(String(error.message || error), "error")));
+  el.conversationCreateRetro.addEventListener("click", () => createConversationThread("chapter_retro").catch((error) => setStatus(String(error.message || error), "error")));
   el.conversationForm.addEventListener("submit", sendConversationMessage);
 
   try {

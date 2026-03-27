@@ -136,7 +136,14 @@ class ApprovalExecuteResponse(BaseModel):
 
 
 class ConversationThreadCreateRequest(BaseModel):
-    scope: Literal["project_bootstrap", "chapter_planning", "rewrite_intervention", "chapter_retro"] = "project_bootstrap"
+    scope: Literal[
+        "project_bootstrap",
+        "character_room",
+        "outline_room",
+        "chapter_planning",
+        "rewrite_intervention",
+        "chapter_retro",
+    ] = "project_bootstrap"
     title: str | None = Field(default=None, max_length=255)
     linked_run_id: str | None = Field(default=None, min_length=1, max_length=32)
     linked_chapter_no: int | None = Field(default=None, ge=1)
@@ -145,7 +152,14 @@ class ConversationThreadCreateRequest(BaseModel):
 class ConversationThreadResponse(BaseModel):
     thread_id: str
     project_id: str
-    scope: Literal["project_bootstrap", "chapter_planning", "rewrite_intervention", "chapter_retro"]
+    scope: Literal[
+        "project_bootstrap",
+        "character_room",
+        "outline_room",
+        "chapter_planning",
+        "rewrite_intervention",
+        "chapter_retro",
+    ]
     status: Literal["open", "resolved", "archived"]
     title: str
     linked_run_id: str | None = None

@@ -597,7 +597,11 @@ def create_app(
 
     def conversation_title(*, scope: str, chapter_no: int | None) -> str:
         if scope == "project_bootstrap":
-            return "项目共创对话"
+            return "立项共创"
+        if scope == "character_room":
+            return "人物讨论"
+        if scope == "outline_room":
+            return "大纲讨论"
         if scope == "chapter_planning":
             return f"第 {chapter_no or '?'} 章章卡协商"
         if scope == "rewrite_intervention":
@@ -613,11 +617,31 @@ def create_app(
             genre = brief.get("genre") or "未定题材"
             hook = brief.get("hook") or "请先明确一句话卖点。"
             content = (
-                f"我们先把《{title}》的创作方向问清楚。当前已知题材是 {genre}。\n\n"
+                f"我们先把《{title}》的立项方向问清楚。当前已知题材是 {genre}。\n\n"
                 f"当前核心钩子：{hook}\n\n"
                 "建议优先确认 4 件事：一句话卖点、主角核心欲望、第一卷卖点、必须避免的写法。"
             )
             return "assistant_question", content, {"suggested_topics": ["核心爽点", "主角欲望", "第一卷卖点", "写作禁区"]}
+
+        if scope == "character_room":
+            brief = project.default_user_brief or {}
+            title = brief.get("title") or project.name
+            content = (
+                f"这是《{title}》的人物讨论线程。\n\n"
+                "建议先把 4 件事说清楚：主角当前缺陷、主角真正想要什么、主角最怕失去什么、关键配角和主角的关系张力。\n\n"
+                "如果你还没想清楚，也可以直接告诉我你想要的人物气质，我会帮你继续追问。"
+            )
+            return "assistant_question", content, {"suggested_topics": ["主角缺陷", "主角欲望", "主角恐惧", "关键关系张力"]}
+
+        if scope == "outline_room":
+            brief = project.default_user_brief or {}
+            title = brief.get("title") or project.name
+            content = (
+                f"这是《{title}》的大纲讨论线程。\n\n"
+                "建议先确认 4 件事：第一卷主线冲突、升级路径、阶段性反转、卷末必须兑现的高潮。\n\n"
+                "如果你已有模糊想法，也可以先说一个版本，我来帮你拆成更可执行的卷纲。"
+            )
+            return "assistant_question", content, {"suggested_topics": ["第一卷主线冲突", "升级路径", "阶段反转", "卷末高潮"]}
 
         if scope == "rewrite_intervention" and run is not None:
             result = run.result or {}
@@ -657,6 +681,20 @@ def create_app(
                 "我建议下一步继续补齐：一句话卖点、主角核心欲望、第一卷卖点、必须避免的写法。"
             )
             payload = {"suggested_topics": ["一句话卖点", "主角核心欲望", "第一卷卖点", "必须避免的写法"]}
+            return "assistant_question", content, payload
+        if thread.scope == "character_room":
+            content = (
+                f"已记录人物方向：{excerpt}\n\n"
+                "我建议下一步继续收紧：主角的缺陷代价、行动风格、和关键配角的冲突关系。"
+            )
+            payload = {"suggested_topics": ["缺陷代价", "行动风格", "关键关系冲突", "角色边界"]}
+            return "assistant_question", content, payload
+        if thread.scope == "outline_room":
+            content = (
+                f"已记录大纲方向：{excerpt}\n\n"
+                "我建议下一步继续明确：第一卷要解决什么、每段升级怎么推进、卷末高潮必须兑现什么。"
+            )
+            payload = {"suggested_topics": ["第一卷目标", "升级推进", "阶段反转", "卷末兑现"]}
             return "assistant_question", content, payload
         if thread.scope == "rewrite_intervention":
             content = (
