@@ -2015,66 +2015,84 @@ function renderFocusRun(summary) {
 
   el.focusRunCaption.textContent = `第 ${chapterForRun(run)} 章 · ${STATUS_LABELS[displayStatus] || displayStatus}`;
   el.focusRun.innerHTML = `
-    <div class="focus-run-grid">
-      <div class="focus-metric">
-        <strong>当前阶段</strong>
-        <div class="meta">${stage.stageTitle}</div>
+    <div class="card focus-run-hero">
+      <div class="card-head">
+        <h4>${stage.stageTitle}</h4>
+        ${statusChip(displayStatus)}
       </div>
-      <div class="focus-metric">
-        <strong>章节</strong>
-        <div class="meta">第 ${chapterForRun(run)} 章</div>
+      <div class="meta">第 ${chapterForRun(run)} 章 · 最近更新 ${formatTimestamp(updatedAt)}</div>
+      <div class="focus-run-lead">${stage.stageLead}</div>
+      <div class="focus-run-brief">
+        <div class="focus-metric">
+          <strong>当前目标</strong>
+          <div class="meta">${stageGoal}</div>
+        </div>
+        <div class="focus-metric">
+          <strong>下一步建议</strong>
+          <div class="meta">${stage.stageHint}</div>
+        </div>
+        <div class="focus-metric">
+          <strong>最新事件</strong>
+          <div class="meta">${latestEvent}</div>
+        </div>
       </div>
-      <div class="focus-metric">
-        <strong>状态</strong>
-        <div class="meta">${statusChip(displayStatus)}</div>
+      <div class="actions">
+        ${actionButtons.join("")}
       </div>
-      <div class="focus-metric">
-        <strong>系统现在在做什么</strong>
-        <div class="meta">${stage.stageLead}</div>
-      </div>
-      <div class="focus-metric">
-        <strong>最近更新时间</strong>
-        <div class="meta">${formatTimestamp(updatedAt)}</div>
-      </div>
-      <div class="focus-metric">
-        <strong>最新事件</strong>
-        <div class="meta">${latestEvent}</div>
-      </div>
-      <div class="focus-metric">
-        <strong>目标章节</strong>
-        <div class="meta">第 ${progress.chapter_no || latestChapterNo(state.projectSnapshot.chapters) + 1 || 1} 章</div>
-      </div>
-      <div class="focus-metric">
-        <strong>重写次数</strong>
-        <div class="meta">${progress.rewrite_count ?? 0}</div>
-      </div>
-      <div class="focus-metric">
-        <strong>静止时长</strong>
-        <div class="meta">${staleLabel}</div>
-      </div>
-      <div class="focus-metric">
-        <strong>阶段决策</strong>
-        <div class="meta">${progress.phase_decision || "未记录"}</div>
-      </div>
-      <div class="focus-metric">
-        <strong>当前目标</strong>
-        <div class="meta">${stageGoal}</div>
-      </div>
-      <div class="focus-metric">
-        <strong>下一步建议</strong>
-        <div class="meta">${stage.stageHint}</div>
-      </div>
-      <div class="focus-metric">
-        <strong>技术节点</strong>
-        <div class="meta">${currentNode}</div>
-      </div>
-      ${guidanceBlock}
-      ${checkpointBlock}
-      ${interventionBlock}
-      ${causeBlock}
-      ${errorBlock}
     </div>
-    <div class="card">
+    <details class="focus-run-more">
+      <summary>查看详细诊断</summary>
+      <div class="focus-run-grid">
+        <div class="focus-metric">
+          <strong>当前阶段</strong>
+          <div class="meta">${stage.stageTitle}</div>
+        </div>
+        <div class="focus-metric">
+          <strong>章节</strong>
+          <div class="meta">第 ${chapterForRun(run)} 章</div>
+        </div>
+        <div class="focus-metric">
+          <strong>状态</strong>
+          <div class="meta">${statusChip(displayStatus)}</div>
+        </div>
+        <div class="focus-metric">
+          <strong>系统现在在做什么</strong>
+          <div class="meta">${stage.stageLead}</div>
+        </div>
+        <div class="focus-metric">
+          <strong>最近更新时间</strong>
+          <div class="meta">${formatTimestamp(updatedAt)}</div>
+        </div>
+        <div class="focus-metric">
+          <strong>目标章节</strong>
+          <div class="meta">第 ${progress.chapter_no || latestChapterNo(state.projectSnapshot.chapters) + 1 || 1} 章</div>
+        </div>
+        <div class="focus-metric">
+          <strong>重写次数</strong>
+          <div class="meta">${progress.rewrite_count ?? 0}</div>
+        </div>
+        <div class="focus-metric">
+          <strong>静止时长</strong>
+          <div class="meta">${staleLabel}</div>
+        </div>
+        <div class="focus-metric">
+          <strong>阶段决策</strong>
+          <div class="meta">${progress.phase_decision || "未记录"}</div>
+        </div>
+        <div class="focus-metric">
+          <strong>技术节点</strong>
+          <div class="meta">${currentNode}</div>
+        </div>
+        ${guidanceBlock}
+        ${checkpointBlock}
+        ${interventionBlock}
+        ${causeBlock}
+        ${errorBlock}
+      </div>
+    </details>
+    <details class="focus-run-more">
+      <summary>查看阶段时间线</summary>
+      <div class="card">
       <div class="card-head">
         <h4>阶段时间线</h4>
         ${statusChip(displayStatus)}
@@ -2094,26 +2112,27 @@ function renderFocusRun(summary) {
           )
           .join("")}
       </div>
-    </div>
+      </div>
+    </details>
     ${renderReviewProgressCard(reviewProgress)}
-    <div class="card">
-      <div class="card-head">
-        <h4>最近事件尾部</h4>
-        ${statusChip(displayStatus)}
+    <details class="focus-run-more">
+      <summary>查看最近事件与带入结论</summary>
+      <div class="card">
+        <div class="card-head">
+          <h4>最近事件尾部</h4>
+          ${statusChip(displayStatus)}
+        </div>
+        <div class="meta">${logTail.length ? logTail.join(" -> ") : "暂无事件日志"}</div>
+        ${
+          guidance?.adopted_decisions?.length
+            ? `<div class="meta">本次实际带入：${guidance.adopted_decisions
+                .slice(0, 3)
+                .map((item) => `${conversationDecisionLabel(item.decision_type)}：${escapeHtml(String(item.summary || "").slice(0, 24))}`)
+                .join(" / ")}</div>`
+            : ""
+        }
       </div>
-      <div class="meta">${logTail.length ? logTail.join(" -> ") : "暂无事件日志"}</div>
-      ${
-        guidance?.adopted_decisions?.length
-          ? `<div class="meta">本次实际带入：${guidance.adopted_decisions
-              .slice(0, 3)
-              .map((item) => `${conversationDecisionLabel(item.decision_type)}：${escapeHtml(String(item.summary || "").slice(0, 24))}`)
-              .join(" / ")}</div>`
-          : ""
-      }
-      <div class="actions">
-        ${actionButtons.join("")}
-      </div>
-    </div>
+    </details>
   `;
   el.focusRun.querySelectorAll("[data-action]:not([disabled])").forEach((node) => {
     node.addEventListener("click", () => {

@@ -764,6 +764,42 @@ textarea {
   box-shadow: 0 0 0 2px rgba(138, 59, 18, 0.08);
 }
 
+.focus-run-hero {
+  border-color: rgba(138, 59, 18, 0.3);
+  background: linear-gradient(180deg, rgba(255, 251, 246, 1), rgba(255, 246, 237, 0.96));
+}
+
+.focus-run-lead {
+  margin-top: 10px;
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+.focus-run-brief {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.focus-run-more {
+  margin-top: 12px;
+  border: 1px dashed var(--line);
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: rgba(255, 251, 245, 0.72);
+}
+
+.focus-run-more summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.focus-run-more[open] summary {
+  margin-bottom: 10px;
+}
+
 .warning-copy {
   color: var(--warning);
 }
