@@ -2304,6 +2304,72 @@ function renderApprovals(items) {
   });
 }
 
+function artifactReadingSections(items) {
+  const groups = [
+    {
+      title: "本章方向",
+      description: "先看这一章到底想写什么、必须兑现什么、边界在哪里。",
+      types: ["creative_contract", "story_bible", "arc_plan", "current_card", "planning_context", "human_guidance", "human_checkpoint", "blockers"],
+    },
+    {
+      title: "正文进展",
+      description: "再看正文是否成形，现在写到哪一步，已经能读到什么程度。",
+      types: ["current_draft", "drafting_context", "publish_package"],
+    },
+    {
+      title: "审校结论",
+      description: "这里解释为什么通过、为什么打回、当前卡在哪类问题。",
+      types: ["latest_review_reports", "phase_decision", "review_resolution_trace"],
+    },
+    {
+      title: "经验沉淀",
+      description: "最后看这一章沉淀出了哪些经验、规则和后续注意事项。",
+      types: ["feedback_summary", "chapter_lesson", "writer_playbook", "issue_ledger", "canon_state", "event_log"],
+    },
+  ];
+  return groups
+    .map((group) => ({
+      ...group,
+      items: items.filter((item) => group.types.includes(item.artifact_type)),
+    }))
+    .filter((group) => group.items.length);
+}
+
+function renderArtifactCard(item) {
+  const summary = summarizeArtifact(item);
+  const hint = item.artifact_type === "publish_package"
+    ? "这是最接近对外可读结果的版本。"
+    : item.artifact_type === "current_draft"
+      ? "这是当前章节的正文草稿。"
+      : item.artifact_type === "current_card"
+        ? "这是系统准备写这一章前的章卡。"
+        : item.artifact_type === "latest_review_reports"
+          ? "这里能看到系统为什么判定通过、重写或重规划。"
+          : "这是流程中的中间材料。";
+  const bulletsHtml = summary.bullets.length
+    ? `<ul class="artifact-bullets">${summary.bullets.map((entry) => `<li>${escapeHtml(entry)}</li>`).join("")}</ul>`
+    : `<div class="meta">暂无进一步摘要</div>`;
+  const excerptHtml = summary.excerpt
+    ? `<div class="artifact-excerpt">${escapeHtml(summary.excerpt).replaceAll("\n", "<br>")}</div>`
+    : "";
+  return `
+    <div class="card artifact-card">
+      <h4>${artifactLabel(item.artifact_type)}</h4>
+      <div class="meta">${formatTimestamp(item.created_at)}</div>
+      <div class="card-caption">${hint}</div>
+      <div class="artifact-summary">
+        <div class="artifact-lead">${escapeHtml(summary.lead)}</div>
+        ${bulletsHtml}
+        ${excerptHtml}
+      </div>
+      <details class="artifact-raw">
+        <summary>查看原始数据</summary>
+        <pre>${escapeHtml(JSON.stringify(item.payload, null, 2))}</pre>
+      </details>
+    </div>
+  `;
+}
+
 function renderArtifacts(items) {
   if (!items.length) {
     state.artifactItems = [];
@@ -2318,41 +2384,21 @@ function renderArtifacts(items) {
   });
 
   state.artifactItems = sorted;
-  el.artifactsList.innerHTML = sorted
-    .map((item) => {
-      const summary = summarizeArtifact(item);
-      const hint = item.artifact_type === "publish_package"
-        ? "这是最接近对外可读结果的版本。"
-        : item.artifact_type === "current_draft"
-          ? "这是当前章节的正文草稿。"
-          : item.artifact_type === "current_card"
-            ? "这是系统准备写这一章前的章卡。"
-            : item.artifact_type === "latest_review_reports"
-            ? "这里能看到系统为什么判定通过、重写或重规划。"
-              : "这是流程中的中间材料。";
-      const bulletsHtml = summary.bullets.length
-        ? `<ul class="artifact-bullets">${summary.bullets.map((entry) => `<li>${escapeHtml(entry)}</li>`).join("")}</ul>`
-        : `<div class="meta">暂无进一步摘要</div>`;
-      const excerptHtml = summary.excerpt
-        ? `<div class="artifact-excerpt">${escapeHtml(summary.excerpt).replaceAll("\n", "<br>")}</div>`
-        : "";
-      return `
-        <div class="card artifact-card">
-          <h4>${artifactLabel(item.artifact_type)}</h4>
-          <div class="meta">${formatTimestamp(item.created_at)}</div>
-          <div class="card-caption">${hint}</div>
-          <div class="artifact-summary">
-            <div class="artifact-lead">${escapeHtml(summary.lead)}</div>
-            ${bulletsHtml}
-            ${excerptHtml}
+  const sections = artifactReadingSections(sorted);
+  el.artifactsList.innerHTML = sections
+    .map(
+      (section) => `
+        <section class="artifact-reading-section">
+          <div class="artifact-reading-head">
+            <div class="section-caption">${section.title}</div>
+            <div class="muted">${section.description}</div>
           </div>
-          <details class="artifact-raw">
-            <summary>查看原始数据</summary>
-            <pre>${escapeHtml(JSON.stringify(item.payload, null, 2))}</pre>
-          </details>
-        </div>
-      `;
-    })
+          <div class="stack compact">
+            ${section.items.map((item) => renderArtifactCard(item)).join("")}
+          </div>
+        </section>
+      `
+    )
     .join("");
 }
 

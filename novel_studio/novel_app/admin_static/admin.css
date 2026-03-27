@@ -787,6 +787,14 @@ pre {
   margin-top: 10px;
 }
 
+.artifact-reading-section + .artifact-reading-section {
+  margin-top: 18px;
+}
+
+.artifact-reading-head {
+  margin-bottom: 10px;
+}
+
 .artifact-summary {
   margin-top: 10px;
   display: flex;
