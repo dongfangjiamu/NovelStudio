@@ -368,6 +368,15 @@ body {
   background: rgba(255, 242, 214, 0.92);
 }
 
+.decision-summary-pill.active {
+  background: rgba(226, 244, 235, 0.95);
+}
+
+.decision-summary-pill.active-subtle {
+  background: rgba(240, 247, 242, 0.94);
+  border-color: rgba(31, 107, 68, 0.16);
+}
+
 .decision-summary-pill.draft {
   border-style: dashed;
 }

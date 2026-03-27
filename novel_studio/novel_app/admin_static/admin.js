@@ -344,6 +344,20 @@ function summarizeDecisionGroup(groupItems, groupDrafts) {
   };
 }
 
+function summarizeAppliedGuidanceGroup(run, groupKey) {
+  const guidance = conversationGuidance(run);
+  const adopted = guidance?.adopted_decisions || [];
+  const matches = adopted
+    .filter((item) => conversationDecisionGroup(item.decision_type) === groupKey)
+    .map((item) => compactDecisionText(item.summary))
+    .filter(Boolean)
+    .slice(0, 3);
+  return {
+    appliedCount: matches.length,
+    highlights: matches,
+  };
+}
+
 function scopeNeedsRunContext(scope) {
   return ["chapter_planning", "rewrite_intervention", "chapter_retro"].includes(scope);
 }
@@ -1721,6 +1735,7 @@ function renderDecisionDraftCard(item) {
 }
 
 function renderConversationDecisions(items) {
+  const focusRun = pickFocusRun(state.projectSnapshot.runs || []);
   const groups = [
     {
       key: "characters",
@@ -1766,6 +1781,7 @@ function renderConversationDecisions(items) {
       const groupItems = itemsByGroup[group.key] || [];
       const groupDrafts = draftsByGroup[group.key] || [];
       const summary = summarizeDecisionGroup(groupItems, groupDrafts);
+      const applied = summarizeAppliedGuidanceGroup(focusRun, group.key);
       const body = [
         ...groupDrafts.map((item) => renderDecisionDraftCard(item)),
         ...groupItems.map((item) => `
@@ -1797,11 +1813,23 @@ function renderConversationDecisions(items) {
                 <span class="decision-summary-pill">已采纳 ${summary.adoptedCount} 条</span>
                 ${summary.draftCount ? `<span class="decision-summary-pill warn">草稿 ${summary.draftCount} 条</span>` : ""}
                 ${
+                  applied.appliedCount
+                    ? `<span class="decision-summary-pill active">本次运行已用 ${applied.appliedCount} 条</span>`
+                    : ""
+                }
+                ${
                   summary.highlights.length
                     ? summary.highlights
                         .map((item) => `<span class="decision-summary-pill ${item.draft ? "draft" : ""}">${escapeHtml(item.text)}</span>`)
                         .join("")
                     : `<span class="decision-summary-pill muted">当前还没有核心结论</span>`
+                }
+                ${
+                  applied.highlights.length
+                    ? applied.highlights
+                        .map((item) => `<span class="decision-summary-pill active-subtle">${escapeHtml(item)}</span>`)
+                        .join("")
+                    : ""
                 }
               </div>
             </div>
