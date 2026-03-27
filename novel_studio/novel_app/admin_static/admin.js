@@ -320,6 +320,30 @@ function draftDecisionLabel(decisionType) {
   return conversationDecisionLabel(decisionType);
 }
 
+function compactDecisionText(value, maxLength = 44) {
+  const text = String(value || "").trim().replace(/\s+/g, " ");
+  if (!text) return "";
+  return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
+}
+
+function summarizeDecisionGroup(groupItems, groupDrafts) {
+  const highlights = [
+    ...groupDrafts.map((item) => ({ text: item.content, draft: true })),
+    ...groupItems.map((item) => ({ text: editableDecisionContent(item), draft: false })),
+  ]
+    .map((item) => ({
+      ...item,
+      text: compactDecisionText(item.text),
+    }))
+    .filter((item) => item.text)
+    .slice(0, 3);
+  return {
+    adoptedCount: groupItems.length,
+    draftCount: groupDrafts.length,
+    highlights,
+  };
+}
+
 function scopeNeedsRunContext(scope) {
   return ["chapter_planning", "rewrite_intervention", "chapter_retro"].includes(scope);
 }
@@ -1741,6 +1765,7 @@ function renderConversationDecisions(items) {
     .map((group) => {
       const groupItems = itemsByGroup[group.key] || [];
       const groupDrafts = draftsByGroup[group.key] || [];
+      const summary = summarizeDecisionGroup(groupItems, groupDrafts);
       const body = [
         ...groupDrafts.map((item) => renderDecisionDraftCard(item)),
         ...groupItems.map((item) => `
@@ -1768,6 +1793,17 @@ function renderConversationDecisions(items) {
             <div>
               <div class="section-caption">${group.title}</div>
               <div class="muted">${group.description}</div>
+              <div class="decision-group-summary">
+                <span class="decision-summary-pill">已采纳 ${summary.adoptedCount} 条</span>
+                ${summary.draftCount ? `<span class="decision-summary-pill warn">草稿 ${summary.draftCount} 条</span>` : ""}
+                ${
+                  summary.highlights.length
+                    ? summary.highlights
+                        .map((item) => `<span class="decision-summary-pill ${item.draft ? "draft" : ""}">${escapeHtml(item.text)}</span>`)
+                        .join("")
+                    : `<span class="decision-summary-pill muted">当前还没有核心结论</span>`
+                }
+              </div>
             </div>
             <button class="button ghost" data-action="create-draft-decision" data-decision-type="${group.createType}">${group.createLabel}</button>
           </div>
