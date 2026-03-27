@@ -795,11 +795,52 @@ pre {
   margin-bottom: 10px;
 }
 
+.artifact-reading-meta {
+  margin-top: 6px;
+}
+
+.artifact-reading-brief {
+  margin-top: 10px;
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(248, 242, 231, 0.75);
+  border: 1px solid var(--line);
+}
+
+.artifact-reading-lead {
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.artifact-reading-points {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.artifact-reading-points span {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #fff;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .artifact-summary {
   margin-top: 10px;
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.artifact-spotlight {
+  border-color: rgba(138, 59, 18, 0.35);
+  box-shadow: 0 0 0 2px rgba(138, 59, 18, 0.06);
+  background: linear-gradient(180deg, rgba(255, 251, 246, 1), rgba(255, 247, 239, 0.95));
 }
 
 .artifact-lead {

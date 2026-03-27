@@ -2307,21 +2307,25 @@ function renderApprovals(items) {
 function artifactReadingSections(items) {
   const groups = [
     {
+      key: "direction",
       title: "本章方向",
       description: "先看这一章到底想写什么、必须兑现什么、边界在哪里。",
       types: ["creative_contract", "story_bible", "arc_plan", "current_card", "planning_context", "human_guidance", "human_checkpoint", "blockers"],
     },
     {
+      key: "draft",
       title: "正文进展",
       description: "再看正文是否成形，现在写到哪一步，已经能读到什么程度。",
       types: ["current_draft", "drafting_context", "publish_package"],
     },
     {
+      key: "review",
       title: "审校结论",
       description: "这里解释为什么通过、为什么打回、当前卡在哪类问题。",
       types: ["latest_review_reports", "phase_decision", "review_resolution_trace"],
     },
     {
+      key: "learning",
       title: "经验沉淀",
       description: "最后看这一章沉淀出了哪些经验、规则和后续注意事项。",
       types: ["feedback_summary", "chapter_lesson", "writer_playbook", "issue_ledger", "canon_state", "event_log"],
@@ -2335,8 +2339,32 @@ function artifactReadingSections(items) {
     .filter((group) => group.items.length);
 }
 
-function renderArtifactCard(item) {
+function artifactSectionSpotlight(section) {
+  const preferredTypes = {
+    direction: ["current_card", "planning_context", "human_checkpoint", "human_guidance", "arc_plan", "creative_contract"],
+    draft: ["publish_package", "current_draft", "drafting_context"],
+    review: ["phase_decision", "review_resolution_trace", "latest_review_reports"],
+    learning: ["chapter_lesson", "writer_playbook", "feedback_summary", "issue_ledger"],
+  };
+  const preferred = preferredTypes[section.key] || [];
+  return preferred.map((type) => section.items.find((item) => item.artifact_type === type)).find(Boolean) || section.items[0];
+}
+
+function artifactSectionSummary(section) {
+  const spotlight = artifactSectionSpotlight(section);
+  const summary = summarizeArtifact(spotlight);
+  const bullets = summary.bullets.slice(0, 2);
+  return {
+    spotlight,
+    summary,
+    bullets,
+    meta: `本段 ${section.items.length} 份材料 · 建议先看：${artifactLabel(spotlight.artifact_type)}`,
+  };
+}
+
+function renderArtifactCard(item, options = {}) {
   const summary = summarizeArtifact(item);
+  const spotlightBadge = options.spotlight ? `<div class="section-caption">优先看这一项</div>` : "";
   const hint = item.artifact_type === "publish_package"
     ? "这是最接近对外可读结果的版本。"
     : item.artifact_type === "current_draft"
@@ -2353,7 +2381,8 @@ function renderArtifactCard(item) {
     ? `<div class="artifact-excerpt">${escapeHtml(summary.excerpt).replaceAll("\n", "<br>")}</div>`
     : "";
   return `
-    <div class="card artifact-card">
+    <div class="card artifact-card ${options.spotlight ? "artifact-spotlight" : ""}">
+      ${spotlightBadge}
       <h4>${artifactLabel(item.artifact_type)}</h4>
       <div class="meta">${formatTimestamp(item.created_at)}</div>
       <div class="card-caption">${hint}</div>
@@ -2386,19 +2415,28 @@ function renderArtifacts(items) {
   state.artifactItems = sorted;
   const sections = artifactReadingSections(sorted);
   el.artifactsList.innerHTML = sections
-    .map(
-      (section) => `
+    .map((section) => {
+      const info = artifactSectionSummary(section);
+      const remainder = section.items.filter((item) => item !== info.spotlight);
+      return `
         <section class="artifact-reading-section">
           <div class="artifact-reading-head">
             <div class="section-caption">${section.title}</div>
             <div class="muted">${section.description}</div>
+            <div class="meta artifact-reading-meta">${info.meta}</div>
+            <div class="artifact-reading-brief">
+              <div class="artifact-reading-lead">${escapeHtml(info.summary.lead)}</div>
+              ${info.bullets.length ? `<div class="artifact-reading-points">${info.bullets.map((entry) => `<span>${escapeHtml(entry)}</span>`).join("")}</div>` : ""}
+            </div>
           </div>
           <div class="stack compact">
-            ${section.items.map((item) => renderArtifactCard(item)).join("")}
+            ${renderArtifactCard(info.spotlight, { spotlight: true })}
+            ${remainder.length ? `<div class="section-caption">其他材料</div>` : ""}
+            ${remainder.map((item) => renderArtifactCard(item)).join("")}
           </div>
         </section>
-      `
-    )
+      `;
+    })
     .join("");
 }
 
