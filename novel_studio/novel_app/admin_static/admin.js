@@ -428,6 +428,141 @@ function approvalDecisionActions(item) {
   return "当前没有额外建议动作。";
 }
 
+function runStageSummary(run) {
+  const displayStatus = runDisplayStatus(run);
+  const progress = run.result?.progress || {};
+  const reviewProgress = progress.review_progress || {};
+  const chapterNo = chapterForRun(run);
+  const currentNode = progress.current_node || "";
+  const latestEvent = progress.latest_event || "run_started";
+  const updatedAt = progress.updated_at ? formatTimestamp(progress.updated_at) : formatTimestamp(run.created_at);
+  const staleMs = progress.updated_at ? Date.now() - new Date(progress.updated_at).getTime() : 0;
+  const stale = staleMs > 180000;
+  const stageGoal = progress.stage_goal || "等待下一步目标。";
+  const waitingReviewers = remainingReviewers(reviewProgress).map((item) => reviewerLabel(item));
+
+  if (run.status === "running") {
+    if (reviewProgress.stage_status === "running") {
+      return {
+        stageTitle: "正在并行审校",
+        stageLead: `第 ${chapterNo} 章已经写完，正在让 4 个审校并行复核。`,
+        stageDetail: `已完成 ${reviewProgress.completed_count || 0}/${reviewProgress.total_count || 4}。${reviewerStallLabel(reviewProgress) ? `当前最慢：${reviewerStallLabel(reviewProgress)}。` : waitingReviewers.length ? `还在等：${waitingReviewers.join("、")}。` : "正在等待主编汇总。"}`,
+        stageHint: stale
+          ? `这条运行已经 ${formatDuration(staleMs)} 没有推进，更像是卡住了。`
+          : "当前不需要重复点击，等审校返回即可。",
+        stagePill: `并行审校 ${reviewProgress.completed_count || 0}/${reviewProgress.total_count || 4}`,
+      };
+    }
+    if (["interviewer_contract", "lore_builder", "arc_planner", "chapter_planner"].includes(currentNode)) {
+      return {
+        stageTitle: "正在定方向",
+        stageLead: `系统正在为第 ${chapterNo} 章做前期收敛，先把题材、设定、卷纲和章卡方向定稳。`,
+        stageDetail: `当前环节：${nodeLabel(currentNode)}。目标：${stageGoal}`,
+        stageHint: stale ? `这一步已经 ${formatDuration(staleMs)} 没进展，建议留意是否卡住。` : "这一步产出的是章卡和写前方向，不是正文。",
+        stagePill: "正在定方向",
+      };
+    }
+    if (["draft_writer", "patch_writer"].includes(currentNode)) {
+      return {
+        stageTitle: currentNode === "patch_writer" ? "正在重写正文" : "正在写正文",
+        stageLead: `系统正在处理第 ${chapterNo} 章正文。`,
+        stageDetail: `当前环节：${nodeLabel(currentNode)}。已重写 ${progress.rewrite_count ?? 0} 次。`,
+        stageHint: stale ? `正文阶段已经 ${formatDuration(staleMs)} 没推进，可能需要稍后收口或重试。` : "这一段通常最耗时，尤其是真实模型模式下。",
+        stagePill: currentNode === "patch_writer" ? "正在重写正文" : "正在写正文",
+      };
+    }
+    if (currentNode === "chief_editor") {
+      return {
+        stageTitle: "正在做主编裁决",
+        stageLead: `第 ${chapterNo} 章的审校结果已经回来，系统正在判断是通过、重做还是转人工。`,
+        stageDetail: `最近事件：${eventLabel(latestEvent)}。最近更新时间：${updatedAt}。`,
+        stageHint: stale ? `主编裁决已经 ${formatDuration(staleMs)} 没推进，可能需要人工关注。` : "这一步会决定是否进入人工检查点。",
+        stagePill: "主编裁决中",
+      };
+    }
+    if (["release_prepare", "canon_commit", "feedback_ingest"].includes(currentNode)) {
+      return {
+        stageTitle: "正在整理结果",
+        stageLead: `正文已经基本完成，系统正在整理发布包、回写 Canon 和沉淀经验。`,
+        stageDetail: `当前环节：${nodeLabel(currentNode)}。最近更新时间：${updatedAt}。`,
+        stageHint: "这一步离最终结果很近了，通常不用再介入。",
+        stagePill: "正在整理结果",
+      };
+    }
+    return {
+      stageTitle: "正在推进本章",
+      stageLead: `系统正在后台处理第 ${chapterNo} 章。`,
+      stageDetail: `当前环节：${nodeLabel(currentNode)}。最近更新时间：${updatedAt}。`,
+      stageHint: stale ? `这条运行已经 ${formatDuration(staleMs)} 没推进，可能需要人工收口。` : "当前不需要重复点击，等系统继续推进即可。",
+      stagePill: `运行中：${nodeLabel(currentNode)}`,
+    };
+  }
+
+  if (displayStatus === "awaiting_approval") {
+    return {
+      stageTitle: "等你裁决",
+      stageLead: `第 ${chapterNo} 章已经跑到人工检查点，系统暂停等你决定下一步。`,
+      stageDetail: humanCheckpoint(run)?.reason || "当前需要你决定是否接受当前结果，或切换恢复路径。",
+      stageHint: "先进入会诊看清保留项、重做范围和风险，再决定。",
+      stagePill: "等待你裁决",
+    };
+  }
+  if (displayStatus === "awaiting_execution") {
+    return {
+      stageTitle: "等你启动下一步",
+      stageLead: `第 ${chapterNo} 章的处理方案已经通过，但还没真正执行。`,
+      stageDetail: "当前只差你点击执行，系统就会按选定路径继续。",
+      stageHint: "先确认这次要继续、重做章卡，还是重写正文，再执行。",
+      stagePill: "等待执行",
+    };
+  }
+  if (displayStatus === "approved") {
+    return {
+      stageTitle: "已经接力到下一步",
+      stageLead: `第 ${chapterNo} 章的方案已被接受，后续运行已经启动或完成。`,
+      stageDetail: "这条记录主要用于复盘，不需要重复处理。",
+      stageHint: "去看最新那条运行记录更有价值。",
+      stagePill: "已完成交接",
+    };
+  }
+  if (displayStatus === "rejected") {
+    return {
+      stageTitle: "这章需要重新商量",
+      stageLead: `第 ${chapterNo} 章当前方案没有被接受。`,
+      stageDetail: run.error || "建议先回到会诊线程，把保留项和修改边界说清楚。",
+      stageHint: "不要急着直接重跑，先明确为什么不接受当前方案。",
+      stagePill: "需要重新商量",
+    };
+  }
+  if (run.status === "failed") {
+    return {
+      stageTitle: "这章卡住了",
+      stageLead: `第 ${chapterNo} 章这次没有顺利完成。`,
+      stageDetail: run.error || "这条运行已经失败或被系统收口。",
+      stageHint: run.result?.manual_intervention?.action === "auto_timeout"
+        ? "这更像是长时间无进度，不是一直在写。建议查看工件后决定是否重试。"
+        : "建议先看过程材料，再决定是否重试当前章。",
+      stagePill: "需要补救",
+    };
+  }
+  if (run.status === "completed") {
+    return {
+      stageTitle: "这章已经准备好",
+      stageLead: `第 ${chapterNo} 章已经完成，可以先阅读结果。`,
+      stageDetail: run.result?.publish_package?.blurb || "当前系统空闲，等你决定是否继续下一章。",
+      stageHint: "先看发布包、正文和审校结果，再决定是否继续。",
+      stagePill: "章节已完成",
+    };
+  }
+  return {
+    stageTitle: "等待下一步",
+    stageLead: `第 ${chapterNo} 章当前没有明确动作。`,
+    stageDetail: "请查看这条运行的详细状态。",
+    stageHint: "如果没有阻塞，可以继续下一章。",
+    stagePill: "等待下一步",
+  };
+}
+
 function latestApprovalForThread(thread) {
   if (!thread?.linked_run_id) return null;
   return latestApprovalForRun(thread.linked_run_id, state.projectSnapshot.approvals || []);
@@ -995,31 +1130,32 @@ function summarizeRunCard(run) {
   const publish = run.result?.publish_package || {};
   const guidanceSummary = conversationGuidanceSummary(run);
   const checkpoint = humanCheckpoint(run);
+  const stage = runStageSummary(run);
   if (run.status === "running") {
     if (reviewProgress.stage_status === "running") {
-      return `${guidanceSummary ? `${guidanceSummary}；` : ""}4 个审校正在并行进行，已完成 ${reviewProgress.completed_count || 0}/${reviewProgress.total_count || 4}。`;
+      return `${guidanceSummary ? `${guidanceSummary}；` : ""}${stage.stageLead} ${stage.stageDetail}`;
     }
-    return `${guidanceSummary ? `${guidanceSummary}；` : ""}系统正在 ${nodeLabel(progress.current_node)}。`;
+    return `${guidanceSummary ? `${guidanceSummary}；` : ""}${stage.stageLead}`;
   }
   if (displayStatus === "awaiting_execution") {
-    return `${guidanceSummary ? `${guidanceSummary}；` : ""}这一章已经审批通过，等待你执行继续写下一章。`;
+    return `${guidanceSummary ? `${guidanceSummary}；` : ""}${stage.stageLead}`;
   }
   if (displayStatus === "approved") {
-    return `${guidanceSummary ? `${guidanceSummary}；` : ""}这一章已经审批通过，后续续写运行已启动或已完成。`;
+    return `${guidanceSummary ? `${guidanceSummary}；` : ""}${stage.stageLead}`;
   }
   if (displayStatus === "rejected") {
-    return `${guidanceSummary ? `${guidanceSummary}；` : ""}这一章的审批已驳回，建议先看工件再决定是否重试。`;
+    return `${guidanceSummary ? `${guidanceSummary}；` : ""}${stage.stageLead}`;
   }
   if (displayStatus === "awaiting_approval") {
-    return `${guidanceSummary ? `${guidanceSummary}；` : ""}${checkpoint?.thread_id ? "系统已自动创建人工检查点，可直接进入会诊；" : ""}这一章已经生成，正在等你决定是否继续。`;
+    return `${guidanceSummary ? `${guidanceSummary}；` : ""}${checkpoint?.thread_id ? "系统已自动创建人工检查点，可直接进入会诊；" : ""}${stage.stageLead}`;
   }
   if (run.status === "failed") {
     return run.result?.manual_intervention?.action === "auto_timeout"
-      ? `${guidanceSummary ? `${guidanceSummary}；` : ""}这次运行长时间无进度，系统已自动收口。`
-      : `${guidanceSummary ? `${guidanceSummary}；` : ""}这次运行没有顺利完成。`;
+      ? `${guidanceSummary ? `${guidanceSummary}；` : ""}${stage.stageLead}`
+      : `${guidanceSummary ? `${guidanceSummary}；` : ""}${stage.stageLead}`;
   }
   if (run.status === "completed") {
-    return publish.blurb || `${guidanceSummary ? `${guidanceSummary}；` : ""}这一章已经生成完成，可先阅读结果。`;
+    return publish.blurb || `${guidanceSummary ? `${guidanceSummary}；` : ""}${stage.stageLead}`;
   }
   return "查看这条运行的详细结果。";
 }
@@ -1504,29 +1640,20 @@ function deriveSummary(project, snapshot) {
 
   if (focusRun?.status === "running") {
     const targetChapter = progress.chapter_no || latestChapter + 1 || 1;
-    const currentNode = progress.current_node || "等待节点反馈";
-    const latestEvent = progress.latest_event || "run_started";
+    const stage = runStageSummary(focusRun);
     const staleMs = progress.updated_at ? Date.now() - new Date(progress.updated_at).getTime() : 0;
     const stale = staleMs > 180000;
     return {
       goal: `完成第 ${targetChapter} 章的生成。`,
-      system: reviewProgress.stage_status === "running"
-        ? `系统正在并行审校，已完成 ${reviewProgress.completed_count || 0}/${reviewProgress.total_count || 4}；当前目标是：${stageGoal}`
-        : `系统正在后台执行，当前节点是 ${currentNode}；当前目标是：${stageGoal}`,
-      event: reviewProgress.stage_status === "running"
-        ? `最近事件：${latestEvent}；${reviewerStallLabel(reviewProgress) ? `当前最慢的是 ${reviewerStallLabel(reviewProgress)}` : remainingReviewers(reviewProgress).length ? `仍在等待 ${remainingReviewers(reviewProgress).map((item) => reviewerLabel(item)).join("、")}` : "等待最后汇总"}；最近更新时间：${updatedAt}。`
-        : `最近事件：${latestEvent}；最近更新时间：${updatedAt}；当前重写次数：${progress.rewrite_count ?? 0}。`,
+      system: stage.stageLead,
+      event: `${stage.stageDetail} 最近更新时间：${updatedAt}。`,
       next: stale
         ? `这条 Run 已经 ${formatDuration(staleMs)} 没有新进度。它更像是卡住，而不是一直重写。先点“刷新”确认；如果仍不动，就点“标记失败”，然后再“重新尝试”。`
-        : reviewProgress.stage_status === "running"
-        ? `当前 4 个审校在并行工作，不要重复点击“生成章节”。等待自动刷新，留意哪些审校已返回、还剩谁没回。`
-          : `当前已经有 Run 在执行，不要重复点击“生成章节”。等待自动刷新，或点“查看工件”跟踪当前 Run。`,
+        : stage.stageHint,
       heroNote: stale
         ? "系统判断这条运行更像是卡住，而不是正常生成中。建议先收口这条失败，再决定是否重试。"
-        : reviewProgress.stage_status === "running"
-          ? "当前不是串行审核，而是 4 个审校并行中。最重要的是看还有谁没返回。"
-          : "当前已经在写作流程中。你现在最需要做的是观察，不是重复点击。",
-      pill: stale ? `Run 可能卡住: ${focusRun.run_id}` : reviewProgress.stage_status === "running" ? `并行审校中 ${reviewProgress.completed_count || 0}/${reviewProgress.total_count || 4}` : `Run 执行中: ${currentNode}`,
+        : stage.stageLead,
+      pill: stale ? `Run 可能卡住: ${focusRun.run_id}` : stage.stagePill,
       kind: "warn",
       focusRun,
       disableRunButton: true,
@@ -1537,11 +1664,12 @@ function deriveSummary(project, snapshot) {
   }
 
   if (pendingApproval) {
+    const focusStage = focusRun ? runStageSummary(focusRun) : null;
     return {
       goal: "决定当前章节是否通过人工审批。",
-      system: "系统已暂停，等待人工决定。",
-      event: `待处理审批：${pendingApproval.reason}`,
-      next: "去“审批”栏点击“通过”或“驳回”。如果通过后要继续写下一章，再点击“执行”。",
+      system: focusStage?.stageLead || "系统已暂停，等待人工决定。",
+      event: focusStage?.stageDetail || `待处理审批：${pendingApproval.reason}`,
+      next: "去“审批”栏选择接受当前方案，或先打回再讨论。接受后再按恢复路径执行。",
       heroNote: "现在系统不会继续自动写。你做出审批决定后，它才会进入下一步。",
       pill: "等待人工审批",
       kind: "warn",
@@ -1554,11 +1682,12 @@ function deriveSummary(project, snapshot) {
   }
 
   if (approvedWaitingExecution) {
+    const focusStage = focusRun ? runStageSummary(focusRun) : null;
     return {
       goal: "启动已审批通过的续写任务。",
-      system: "系统等待你执行下一步续写。",
-      event: `审批已通过，但尚未执行：${approvedWaitingExecution.approval_id}`,
-      next: "在“审批”栏点击“执行”，启动下一条后台 Run。",
+      system: focusStage?.stageLead || "系统等待你执行下一步续写。",
+      event: focusStage?.stageDetail || `审批已通过，但尚未执行：${approvedWaitingExecution.approval_id}`,
+      next: "在“审批”栏确认恢复路径无误后，点击对应执行按钮启动下一条后台 Run。",
       heroNote: "审批已经通过，但还没有开始续写。这里最重要的是启动下一条运行。",
       pill: "等待执行续写",
       kind: "warn",
@@ -1571,10 +1700,11 @@ function deriveSummary(project, snapshot) {
   }
 
   if (focusRun?.status === "failed") {
+    const stage = runStageSummary(focusRun);
     return {
       goal: `重新尝试生成第 ${progress.chapter_no || latestChapter + 1 || 1} 章。`,
-      system: "上一条 Run 已失败，系统目前空闲。",
-      event: focusRun.error ? `失败原因：${focusRun.error}` : `失败 Run：${focusRun.run_id}`,
+      system: stage.stageLead,
+      event: stage.stageDetail,
       next: interventionAction === "auto_timeout"
         ? "系统已经自动把长时间无进度的运行收口成失败。先看过程材料，再决定是否点“重新尝试”。"
         : "优先处理这条最新失败记录。先查看工件确认问题，再决定是否点“重新尝试”。更老的失败记录默认只作参考。",
@@ -1592,10 +1722,11 @@ function deriveSummary(project, snapshot) {
   }
 
   if (latestChapter > 0) {
+    const stage = focusRun ? runStageSummary(focusRun) : null;
     return {
       goal: `复核已生成的第 ${latestChapter} 章结果。`,
-      system: "系统空闲，最近一次 Run 已完成。",
-      event: `最近已生成到第 ${latestChapter} 章。`,
+      system: stage?.stageLead || "系统空闲，最近一次 Run 已完成。",
+      event: stage?.stageDetail || `最近已生成到第 ${latestChapter} 章。`,
       next: "先查看当前章节工件和审校结果；如果没有待审批项且你想继续，可以再次点击“生成章节”。",
       heroNote: "当前没有阻塞。你可以先复核结果，再决定是否继续写下一章。",
       pill: "最近 Run 已完成",
@@ -1845,6 +1976,7 @@ function renderFocusRun(summary) {
   const staleMs = updatedAt ? Date.now() - new Date(updatedAt).getTime() : 0;
   const staleLabel = staleMs > 0 ? formatDuration(staleMs) : "未记录";
   const currentNode = nodeLabel(progress.current_node);
+  const stage = runStageSummary(run);
   const stageGoal = progress.stage_goal || "未记录";
   const possibleCause = progress.possible_cause;
   const intervention = run.result?.manual_intervention || null;
@@ -1885,6 +2017,10 @@ function renderFocusRun(summary) {
   el.focusRun.innerHTML = `
     <div class="focus-run-grid">
       <div class="focus-metric">
+        <strong>当前阶段</strong>
+        <div class="meta">${stage.stageTitle}</div>
+      </div>
+      <div class="focus-metric">
         <strong>章节</strong>
         <div class="meta">第 ${chapterForRun(run)} 章</div>
       </div>
@@ -1893,8 +2029,8 @@ function renderFocusRun(summary) {
         <div class="meta">${statusChip(displayStatus)}</div>
       </div>
       <div class="focus-metric">
-        <strong>当前节点</strong>
-        <div class="meta">${currentNode}</div>
+        <strong>系统现在在做什么</strong>
+        <div class="meta">${stage.stageLead}</div>
       </div>
       <div class="focus-metric">
         <strong>最近更新时间</strong>
@@ -1923,6 +2059,14 @@ function renderFocusRun(summary) {
       <div class="focus-metric">
         <strong>当前目标</strong>
         <div class="meta">${stageGoal}</div>
+      </div>
+      <div class="focus-metric">
+        <strong>下一步建议</strong>
+        <div class="meta">${stage.stageHint}</div>
+      </div>
+      <div class="focus-metric">
+        <strong>技术节点</strong>
+        <div class="meta">${currentNode}</div>
       </div>
       ${guidanceBlock}
       ${checkpointBlock}
@@ -2046,9 +2190,10 @@ function renderRuns(runs, focusRunId) {
     const displayStatus = runDisplayStatus(item);
     const progress = item.result?.progress || {};
     const updatedAt = progress.updated_at || item.created_at;
-    const marker = item.status === "running"
+    const stage = runStageSummary(item);
+    const marker = stage.stageDetail || (item.status === "running"
       ? progress.latest_event || nodeLabel(progress.current_node) || "等待反馈"
-      : item.error || progress.latest_event || "无附加信息";
+      : item.error || progress.latest_event || "无附加信息");
     const chapterNo = chapterForRun(item);
     const classes = ["card"];
     if (item.run_id === state.selectedRunId || item.run_id === focusRunId) classes.push("active-run");
@@ -2075,11 +2220,12 @@ function renderRuns(runs, focusRunId) {
     return `
       <div class="${classes.join(" ")}">
         <div class="card-head">
-          <h4>第 ${chapterNo} 章 · ${STATUS_LABELS[displayStatus] || displayStatus}</h4>
+          <h4>第 ${chapterNo} 章 · ${stage.stageTitle}</h4>
           ${statusChip(displayStatus)}
         </div>
         <div class="meta">创建于 ${formatTimestamp(item.created_at)} · ${item.run_id}</div>
         <div class="meta">最近更新 ${formatTimestamp(updatedAt)} · 重写 ${progress.rewrite_count ?? 0} 次 · 工件 ${item.artifact_count ?? 0} 个</div>
+        <div class="meta">${stage.stageLead}</div>
         <div class="meta">${summarizeRunCard(item)}</div>
         <div class="meta">${marker}</div>
         <div class="card-caption">${caption}</div>
