@@ -2431,8 +2431,18 @@ function renderArtifacts(items) {
           </div>
           <div class="stack compact">
             ${renderArtifactCard(info.spotlight, { spotlight: true })}
-            ${remainder.length ? `<div class="section-caption">其他材料</div>` : ""}
-            ${remainder.map((item) => renderArtifactCard(item)).join("")}
+            ${
+              remainder.length
+                ? `
+                  <details class="artifact-reading-more">
+                    <summary>查看其他材料（${remainder.length}）</summary>
+                    <div class="stack compact artifact-reading-more-body">
+                      ${remainder.map((item) => renderArtifactCard(item)).join("")}
+                    </div>
+                  </details>
+                `
+                : ""
+            }
           </div>
         </section>
       `;

@@ -877,6 +877,27 @@ pre {
   font-size: 13px;
 }
 
+.artifact-reading-more {
+  border: 1px dashed var(--line);
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: rgba(255, 251, 245, 0.72);
+}
+
+.artifact-reading-more summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.artifact-reading-more[open] summary {
+  margin-bottom: 10px;
+}
+
+.artifact-reading-more-body {
+  margin-top: 4px;
+}
+
 .timeline {
   margin-top: 12px;
   display: flex;
