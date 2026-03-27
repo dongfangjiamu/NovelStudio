@@ -75,6 +75,52 @@ class WorkflowService:
         approval: ApprovalRequestRecord,
         requested_action: str,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
+        human_instruction = {
+            "requested_action": approval.requested_action,
+            "reason": approval.reason,
+            "operator_id": approval.resolution_operator_id,
+            "comment": approval.resolution_comment,
+            "payload": approval.payload,
+        }
+        return self._prepare_continuation_request(
+            project=project,
+            original_request=original_request,
+            artifacts=artifacts,
+            operator_id=original_request.get("operator_id") or self._config.operator_id,
+            requested_action=requested_action,
+            human_instruction=human_instruction,
+            approval=approval,
+        )
+
+    def prepare_continuation_request(
+        self,
+        *,
+        project: ProjectRecord,
+        original_request: dict[str, Any],
+        artifacts: list[dict[str, Any]],
+        operator_id: str | None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        return self._prepare_continuation_request(
+            project=project,
+            original_request=original_request,
+            artifacts=artifacts,
+            operator_id=operator_id or self._config.operator_id,
+            requested_action="continue",
+            human_instruction=None,
+            approval=None,
+        )
+
+    def _prepare_continuation_request(
+        self,
+        *,
+        project: ProjectRecord,
+        original_request: dict[str, Any],
+        artifacts: list[dict[str, Any]],
+        operator_id: str,
+        requested_action: str,
+        human_instruction: dict[str, Any] | None,
+        approval: ApprovalRequestRecord | None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         latest_by_type: dict[str, Any] = {}
         for item in artifacts:
             latest_by_type[item["artifact_type"]] = item["payload"]
@@ -86,18 +132,10 @@ class WorkflowService:
         else:
             chapters_completed = max(0, last_chapter_no - 1)
             target_chapters = max(1, last_chapter_no)
-
-        human_instruction = {
-            "requested_action": approval.requested_action,
-            "reason": approval.reason,
-            "operator_id": approval.resolution_operator_id,
-            "comment": approval.resolution_comment,
-            "payload": approval.payload,
-        }
         request_payload = {
             "user_brief": original_request.get("user_brief") or project.default_user_brief,
             "target_chapters": target_chapters,
-            "operator_id": original_request.get("operator_id") or self._config.operator_id,
+            "operator_id": operator_id,
             "quick_mode": original_request.get("quick_mode", False),
             "creative_contract": latest_by_type.get("creative_contract"),
             "story_bible": latest_by_type.get("story_bible"),
@@ -109,13 +147,14 @@ class WorkflowService:
             "writer_playbook": latest_by_type.get("writer_playbook"),
             "chapter_lesson": latest_by_type.get("chapter_lesson"),
             "issue_ledger": latest_by_type.get("issue_ledger"),
-            "human_instruction": human_instruction,
             "chapters_completed": chapters_completed,
         }
+        if human_instruction is not None:
+            request_payload["human_instruction"] = human_instruction
         return request_payload
 
     @staticmethod
-    def _last_generated_chapter_no(*, latest_by_type: dict[str, Any], approval: ApprovalRequestRecord) -> int:
+    def _last_generated_chapter_no(*, latest_by_type: dict[str, Any], approval: ApprovalRequestRecord | None) -> int:
         candidates = [
             ((latest_by_type.get("publish_package") or {}).get("chapter_no")),
             ((latest_by_type.get("current_card") or {}).get("chapter_no")),
@@ -123,7 +162,7 @@ class WorkflowService:
             ((latest_by_type.get("drafting_context") or {}).get("chapter_no")),
             ((latest_by_type.get("chapter_lesson") or {}).get("chapter_no")),
             ((latest_by_type.get("feedback_summary") or {}).get("chapter_no")),
-            approval.chapter_no,
+            approval.chapter_no if approval else None,
         ]
         for candidate in candidates:
             try:
@@ -165,7 +204,7 @@ class WorkflowService:
                 "writer_playbook": request_payload.get("writer_playbook"),
                 "chapter_lesson": request_payload.get("chapter_lesson"),
                 "issue_ledger": request_payload.get("issue_ledger"),
-                "human_instruction": request_payload["human_instruction"],
+                "human_instruction": request_payload.get("human_instruction"),
                 "target_chapters": request_payload["target_chapters"],
                 "chapters_completed": request_payload["chapters_completed"],
             },

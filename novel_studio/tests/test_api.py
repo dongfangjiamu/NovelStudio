@@ -121,6 +121,100 @@ def test_run_flow() -> None:
     assert any(item["artifact_type"] == "publish_package" for item in artifacts_response.json())
 
 
+def test_create_run_continues_latest_completed_chapter() -> None:
+    app = create_app(
+        config=AppConfig(
+            stub_mode=True,
+            openai_api_key=None,
+            admin_token=None,
+            database_url="sqlite:///:memory:",
+            model_name="gpt-5-nano",
+            project_id="api-test",
+            operator_id="tester",
+        ),
+        store=InMemoryStore(),
+    )
+
+    class FakeWorkflow:
+        def prepare_project_request(self, *, project, user_brief, target_chapters, operator_id, quick_mode=False):
+            return {
+                "user_brief": user_brief or project.default_user_brief,
+                "target_chapters": target_chapters or project.default_target_chapters,
+                "operator_id": operator_id or "tester",
+                "quick_mode": quick_mode,
+            }
+
+        def prepare_continuation_request(self, *, project, original_request, artifacts, operator_id):
+            service = WorkflowService(
+                AppConfig(
+                    stub_mode=True,
+                    openai_api_key=None,
+                    admin_token=None,
+                    database_url="sqlite:///:memory:",
+                    model_name="gpt-5-nano",
+                    project_id="api-test",
+                    operator_id="tester",
+                )
+            )
+            return service.prepare_continuation_request(
+                project=project,
+                original_request=original_request,
+                artifacts=artifacts,
+                operator_id=operator_id,
+            )
+
+        def run_project(self, *, project, request_payload, on_update=None):
+            raise AssertionError("expected continuation path, not fresh run")
+
+        def run_followup(self, *, project, request_payload, on_update=None):
+            return {
+                "current_card": {"chapter_no": 2, "purpose": "第2章章卡"},
+                "publish_package": {"chapter_no": 2, "title": "第2章", "full_text": "正文"},
+                "canon_state": {"story_clock": {"current_chapter": 2}},
+                "feedback_summary": {"chapter_no": 2},
+                "event_log": ["chapter_card_ready:2", "release_package_ready:2", "feedback_ingested:2"],
+            }
+
+    app.state.workflow = FakeWorkflow()
+    client = TestClient(app)
+
+    project = client.post(
+        "/api/projects",
+        json={"name": "续写测试", "default_user_brief": {"title": "测试"}, "default_target_chapters": 1},
+    ).json()
+    source_run = app.state.store.save_run(
+        project_id=project["project_id"],
+        status="completed",
+        request={"user_brief": {"title": "测试"}, "target_chapters": 1, "operator_id": "tester"},
+        result={
+            "publish_package": {"chapter_no": 1, "title": "第1章", "full_text": "正文"},
+            "feedback_summary": {"chapter_no": 1},
+            "canon_state": {"story_clock": {"current_chapter": 1}},
+        },
+        error=None,
+    )
+    app.state.store.save_run_outputs(
+        run=source_run,
+        result={
+            "publish_package": {"chapter_no": 1, "title": "第1章", "full_text": "正文"},
+            "feedback_summary": {"chapter_no": 1},
+            "canon_state": {"story_clock": {"current_chapter": 1}},
+        },
+    )
+
+    run_response = client.post(f"/api/projects/{project['project_id']}/runs", json={"operator_id": "editor-1"})
+
+    assert run_response.status_code == 201
+    payload = run_response.json()
+    assert payload["request"]["target_chapters"] == 2
+    stored_run = app.state.store.get_run(payload["run_id"])
+    assert stored_run is not None
+    assert stored_run.request["chapters_completed"] == 1
+
+    completed = wait_for_run(client, payload["run_id"])
+    assert completed["result"]["publish_package"]["chapter_no"] == 2
+
+
 def test_quick_mode_run_request_is_persisted() -> None:
     client = make_client()
     project = client.post(

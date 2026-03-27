@@ -637,6 +637,7 @@ def create_app(
         if not project:
             raise HTTPException(status_code=404, detail="project_not_found")
 
+        is_continuation = False
         request_payload = app.state.workflow.prepare_project_request(
             project=project,
             user_brief=payload.user_brief,
@@ -644,6 +645,20 @@ def create_app(
             operator_id=payload.operator_id,
             quick_mode=payload.quick_mode,
         )
+        if payload.user_brief is None and payload.target_chapters is None and not payload.quick_mode:
+            source_run = next(
+                (item for item in app.state.store.list_runs(project_id) if item.status == "completed"),
+                None,
+            )
+            if source_run and app.state.store.list_chapters(project_id):
+                source_artifacts = [item.__dict__ for item in app.state.store.list_artifacts(source_run.run_id)]
+                request_payload = app.state.workflow.prepare_continuation_request(
+                    project=project,
+                    original_request=source_run.request,
+                    artifacts=source_artifacts,
+                    operator_id=payload.operator_id or request.state.actor,
+                )
+                is_continuation = True
         run = app.state.store.save_run(
             project_id=project_id,
             status="running",
@@ -651,13 +666,23 @@ def create_app(
             result=initial_progress_snapshot(current_node="interviewer_contract"),
             error=None,
         )
+        if is_continuation:
+            def work(on_update):
+                return app.state.workflow.run_followup(
+                    project=project,
+                    request_payload=request_payload,
+                    on_update=on_update,
+                )
+        else:
+            def work(on_update):
+                return app.state.workflow.run_project(
+                    project=project,
+                    request_payload=request_payload,
+                    on_update=on_update,
+                )
         launch_background_run(
             run_id=run.run_id,
-            work=lambda on_update: app.state.workflow.run_project(
-                project=project,
-                request_payload=request_payload,
-                on_update=on_update,
-            ),
+            work=work,
         )
 
         audit(
@@ -675,6 +700,7 @@ def create_app(
                 "operator_id": run.request["operator_id"],
                 "status": run.status,
                 "quick_mode": run.request.get("quick_mode", False),
+                "continuation": is_continuation,
             },
         )
         return RunResponse.model_validate(run.__dict__)
