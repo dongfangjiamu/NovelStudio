@@ -750,6 +750,16 @@ def create_app(
                 **base,
                 "rule": message.content,
             }
+        if decision_type == "character_note":
+            return {
+                **base,
+                "note": message.content,
+            }
+        if decision_type == "outline_constraint":
+            return {
+                **base,
+                "constraint": message.content,
+            }
         return {
             **base,
             "instruction": message.content,
@@ -764,6 +774,8 @@ def create_app(
         updated = dict(request_payload)
         human_guidance = [item for item in decisions if item.decision_type == "human_instruction"]
         playbook_rules = [item.payload.get("rule") for item in decisions if item.decision_type == "writer_playbook_rule"]
+        character_notes = [item.payload.get("note") for item in decisions if item.decision_type == "character_note"]
+        outline_constraints = [item.payload.get("constraint") for item in decisions if item.decision_type == "outline_constraint"]
         chapter_patches = [item.payload.get("instruction") for item in decisions if item.decision_type == "chapter_card_patch"]
         adopted_decisions = [
             {
@@ -782,11 +794,29 @@ def create_app(
         ]
 
         playbook_rules = [str(item).strip() for item in playbook_rules if str(item or "").strip()]
+        character_notes = [str(item).strip() for item in character_notes if str(item or "").strip()]
+        outline_constraints = [str(item).strip() for item in outline_constraints if str(item or "").strip()]
         chapter_patches = [str(item).strip() for item in chapter_patches if str(item or "").strip()]
+        current_brief = dict(updated.get("user_brief") or {})
+        if character_notes:
+            merged_character_notes = list(current_brief.get("character_notes") or [])
+            for note in character_notes:
+                if note not in merged_character_notes:
+                    merged_character_notes.append(note)
+            current_brief["character_notes"] = merged_character_notes[:12]
+        if outline_constraints:
+            merged_outline_notes = list(current_brief.get("outline_notes") or [])
+            for note in outline_constraints:
+                if note not in merged_outline_notes:
+                    merged_outline_notes.append(note)
+            current_brief["outline_notes"] = merged_outline_notes[:12]
+        updated["user_brief"] = current_brief
         updated["conversation_guidance"] = {
             "decision_count": len(decisions),
             "human_instruction_count": len(human_guidance),
             "writer_playbook_rule_count": len(playbook_rules),
+            "character_note_count": len(character_notes),
+            "outline_constraint_count": len(outline_constraints),
             "chapter_card_patch_count": len(chapter_patches),
             "adopted_decisions": adopted_decisions,
         }
@@ -829,6 +859,8 @@ def create_app(
                 merged_payload["conversation_guidance"] = {
                     "human_instruction_count": len(human_guidance),
                     "writer_playbook_rule_count": len(playbook_rules),
+                    "character_note_count": len(character_notes),
+                    "outline_constraint_count": len(outline_constraints),
                     "chapter_card_patch_count": len(chapter_patches),
                     "latest_thread_id": human_guidance[0].thread_id,
                 }
@@ -841,6 +873,8 @@ def create_app(
                     **dict(current_instruction.get("payload") or {}),
                     "conversation_guidance": {
                         "writer_playbook_rule_count": len(playbook_rules),
+                        "character_note_count": len(character_notes),
+                        "outline_constraint_count": len(outline_constraints),
                         "chapter_card_patch_count": len(chapter_patches),
                     },
                 }

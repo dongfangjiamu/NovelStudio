@@ -291,6 +291,8 @@ function conversationRoleLabel(role, messageType) {
 function conversationDecisionLabel(value) {
   if (value === "human_instruction") return "修订指令";
   if (value === "writer_playbook_rule") return "写作规则";
+  if (value === "character_note") return "人物设定";
+  if (value === "outline_constraint") return "卷纲约束";
   if (value === "chapter_card_patch") return "章卡修订";
   return value || "已采纳结论";
 }
@@ -1222,7 +1224,7 @@ function renderFocusRun(summary) {
     ? `<div class="focus-metric"><strong>系统处理</strong><div class="meta">${intervention.action === "auto_timeout" ? "系统已自动收口这条超时运行" : "这条运行已被人工收口"}</div></div>`
     : "";
   const guidanceBlock = guidance?.decision_count
-    ? `<div class="focus-metric"><strong>已带入对话结论</strong><div class="meta">${guidance.decision_count} 条，其中写作规则 ${guidance.writer_playbook_rule_count || 0} 条，修订指令 ${guidance.human_instruction_count || 0} 条，章卡修订 ${guidance.chapter_card_patch_count || 0} 条。</div></div>`
+    ? `<div class="focus-metric"><strong>已带入对话结论</strong><div class="meta">${guidance.decision_count} 条，其中写作规则 ${guidance.writer_playbook_rule_count || 0} 条，人物设定 ${guidance.character_note_count || 0} 条，卷纲约束 ${guidance.outline_constraint_count || 0} 条，修订指令 ${guidance.human_instruction_count || 0} 条，章卡修订 ${guidance.chapter_card_patch_count || 0} 条。</div></div>`
     : "";
   const actionButtons = [
     renderViewArtifactsButton(run.run_id, run.artifact_count),
@@ -1562,8 +1564,14 @@ function renderConversationThreads(items) {
 function messageAdoptActions(thread, item) {
   if (!thread) return [];
   if (!["user", "assistant"].includes(item.role)) return [];
-  if (["project_bootstrap", "character_room", "outline_room"].includes(thread.scope)) {
+  if (thread.scope === "project_bootstrap") {
     return [{ label: "采纳为写作规则", decisionType: "writer_playbook_rule" }];
+  }
+  if (thread.scope === "character_room") {
+    return [{ label: "采纳为人物设定", decisionType: "character_note" }];
+  }
+  if (thread.scope === "outline_room") {
+    return [{ label: "采纳为卷纲约束", decisionType: "outline_constraint" }];
   }
   if (thread.scope === "chapter_planning") {
     return [{ label: "采纳为章卡修订", decisionType: "chapter_card_patch" }];

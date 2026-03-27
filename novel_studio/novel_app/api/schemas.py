@@ -193,7 +193,13 @@ class ConversationMessageResponse(BaseModel):
 
 
 class ConversationDecisionCreateRequest(BaseModel):
-    decision_type: Literal["human_instruction", "writer_playbook_rule", "chapter_card_patch"]
+    decision_type: Literal[
+        "human_instruction",
+        "writer_playbook_rule",
+        "character_note",
+        "outline_constraint",
+        "chapter_card_patch",
+    ]
 
 
 class ConversationDecisionResponse(BaseModel):
@@ -201,7 +207,13 @@ class ConversationDecisionResponse(BaseModel):
     project_id: str
     thread_id: str
     message_id: str
-    decision_type: Literal["human_instruction", "writer_playbook_rule", "chapter_card_patch"]
+    decision_type: Literal[
+        "human_instruction",
+        "writer_playbook_rule",
+        "character_note",
+        "outline_constraint",
+        "chapter_card_patch",
+    ]
     payload: dict[str, Any]
     applied_to_run_id: str | None = None
     applied_to_chapter_no: int | None = None

@@ -215,6 +215,87 @@ def test_conversation_decision_is_persisted_and_applied_to_run_request() -> None
     assert "主角的主动动作要在前半章出现。" in completed["result"]["writer_playbook"]["always_apply"]
 
 
+def test_structured_conversation_decisions_are_merged_into_user_brief() -> None:
+    app = create_app(
+        config=AppConfig(
+            stub_mode=True,
+            openai_api_key=None,
+            admin_token=None,
+            database_url="sqlite:///:memory:",
+            model_name="gpt-5-nano",
+            project_id="api-test",
+            operator_id="tester",
+        ),
+        store=InMemoryStore(),
+    )
+
+    class FakeWorkflow:
+        def prepare_project_request(self, *, project, user_brief, target_chapters, operator_id, quick_mode=False):
+            return {
+                "user_brief": user_brief or project.default_user_brief,
+                "target_chapters": target_chapters or project.default_target_chapters,
+                "operator_id": operator_id or "tester",
+                "quick_mode": quick_mode,
+            }
+
+        def run_project(self, *, project, request_payload, on_update=None):
+            return {
+                "current_card": {"chapter_no": 1, "purpose": "第1章章卡"},
+                "publish_package": {"chapter_no": 1, "title": "第1章", "full_text": "正文"},
+                "feedback_summary": {"chapter_no": 1},
+                "brief_snapshot": request_payload.get("user_brief"),
+                "event_log": ["chapter_card_ready:1", "release_package_ready:1", "feedback_ingested:1"],
+            }
+
+    app.state.workflow = FakeWorkflow()
+    client = TestClient(app)
+    project = client.post(
+        "/api/projects",
+        json={"name": "结构化对话项目", "default_user_brief": {"title": "长夜炉火"}, "default_target_chapters": 1},
+    ).json()
+
+    character_thread = client.post(
+        f"/api/projects/{project['project_id']}/conversation-threads",
+        json={"scope": "character_room"},
+    ).json()
+    character_messages = client.post(
+        f"/api/conversation-threads/{character_thread['thread_id']}/messages",
+        json={"content": "主角外冷内烈，平时克制，但遇到底线问题会立刻出手。"},
+    ).json()
+    adopt_character = client.post(
+        f"/api/conversation-messages/{character_messages[0]['message_id']}/adopt",
+        json={"decision_type": "character_note"},
+    )
+    assert adopt_character.status_code == 201
+
+    outline_thread = client.post(
+        f"/api/projects/{project['project_id']}/conversation-threads",
+        json={"scope": "outline_room"},
+    ).json()
+    outline_messages = client.post(
+        f"/api/conversation-threads/{outline_thread['thread_id']}/messages",
+        json={"content": "第一卷必须先立住师门压迫，再逐步揭开逐出真相，卷末要给出一次身份反转。"},
+    ).json()
+    adopt_outline = client.post(
+        f"/api/conversation-messages/{outline_messages[0]['message_id']}/adopt",
+        json={"decision_type": "outline_constraint"},
+    )
+    assert adopt_outline.status_code == 201
+
+    run_response = client.post(f"/api/projects/{project['project_id']}/runs", json={})
+
+    assert run_response.status_code == 201
+    request_payload = run_response.json()["request"]
+    assert request_payload["conversation_guidance"]["character_note_count"] == 1
+    assert request_payload["conversation_guidance"]["outline_constraint_count"] == 1
+    assert "主角外冷内烈" in request_payload["user_brief"]["character_notes"][0]
+    assert "第一卷必须先立住师门压迫" in request_payload["user_brief"]["outline_notes"][0]
+
+    completed = wait_for_run(client, run_response.json()["run_id"])
+    assert "character_notes" in completed["result"]["brief_snapshot"]
+    assert "outline_notes" in completed["result"]["brief_snapshot"]
+
+
 def test_run_flow() -> None:
     client = make_client()
     project = client.post(
