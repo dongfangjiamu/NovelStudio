@@ -218,6 +218,17 @@ body {
   gap: 12px;
 }
 
+.conversation-action-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: rgba(255, 249, 240, 0.9);
+}
+
 .conversation-messages {
   min-height: 220px;
   max-height: 560px;

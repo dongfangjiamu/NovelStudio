@@ -49,6 +49,8 @@ const el = {
   conversationThreadList: document.getElementById("conversation-thread-list"),
   conversationDecisionList: document.getElementById("conversation-decision-list"),
   conversationThreadCaption: document.getElementById("conversation-thread-caption"),
+  conversationActionCopy: document.getElementById("conversation-action-copy"),
+  conversationExecute: document.getElementById("conversation-execute"),
   conversationMessageList: document.getElementById("conversation-message-list"),
   conversationForm: document.getElementById("conversation-form"),
   conversationInput: document.getElementById("conversation-input"),
@@ -388,6 +390,12 @@ function chapterForRun(run) {
 function latestApprovalForRun(runId, approvals = state.projectSnapshot.approvals || []) {
   return approvals
     .filter((item) => item.run_id === runId)
+    .sort((left, right) => right.created_at.localeCompare(left.created_at))[0] || null;
+}
+
+function latestExecutableApproval(approvals = state.projectSnapshot.approvals || []) {
+  return approvals
+    .filter((item) => item.status === "approved" && !item.executed_run_id)
     .sort((left, right) => right.created_at.localeCompare(left.created_at))[0] || null;
 }
 
@@ -1036,6 +1044,58 @@ function deriveSummary(project, snapshot) {
   };
 }
 
+function deriveConversationAction() {
+  const project = selectedProject();
+  const focusRun = pickFocusRun(state.projectSnapshot.runs || []);
+  const focusDisplayStatus = focusRun ? runDisplayStatus(focusRun) : null;
+  const decisions = state.projectSnapshot.conversationDecisions || [];
+  const executableApproval = latestExecutableApproval(state.projectSnapshot.approvals || []);
+  const latestChapter = latestChapterNo(state.projectSnapshot.chapters || []);
+
+  if (!project) {
+    return { disabled: true, label: "按当前结论执行", copy: "先选择项目，才能用当前已采纳结论驱动下一步动作。", action: null };
+  }
+  if (!decisions.length) {
+    return { disabled: true, label: "按当前结论执行", copy: "先把对话中的一条消息采纳为规则或修订指令，再执行。", action: null };
+  }
+  if (focusRun?.status === "running") {
+    return { disabled: true, label: "Run 进行中", copy: "当前已有 Run 在执行。等它结束后，再决定是否带着这些结论继续下一步。", action: null };
+  }
+  if (focusDisplayStatus === "awaiting_approval") {
+    return { disabled: true, label: "等待审批", copy: "当前章节还在等待你的审批决定。先处理审批，再决定是否按这些结论继续执行。", action: null };
+  }
+  if (executableApproval) {
+    return {
+      disabled: false,
+      label: "按结论执行续写",
+      copy: `当前已有已审批但未执行的续写。执行后会自动带上已采纳的对话结论。`,
+      action: { kind: "execute-approval", approvalId: executableApproval.approval_id },
+    };
+  }
+  if (focusRun?.status === "failed") {
+    return {
+      disabled: false,
+      label: "按结论重试当前章",
+      copy: `最新失败的是第 ${chapterForRun(focusRun)} 章。现在重试会自动带上已采纳的规则和修订指令。`,
+      action: { kind: "retry-run", runId: focusRun.run_id },
+    };
+  }
+  if (latestChapter > 0) {
+    return {
+      disabled: false,
+      label: "按结论继续下一章",
+      copy: `当前项目已生成到第 ${latestChapter} 章。继续生成时会自动带上已采纳的对话结论。`,
+      action: { kind: "continue-run" },
+    };
+  }
+  return {
+    disabled: false,
+    label: "按结论开始首章",
+    copy: "当前还没有章节。开始首章时会自动带上已采纳的对话结论。",
+    action: { kind: "start-run" },
+  };
+}
+
 function renderSummary(summary) {
   el.summaryGoal.textContent = summary.goal;
   el.summarySystem.textContent = summary.system;
@@ -1549,12 +1609,19 @@ function renderConversationPanel() {
   renderConversationThreads(threads);
   renderConversationDecisions(state.projectSnapshot.conversationDecisions || []);
   const thread = selectedThread();
+  const actionPlan = deriveConversationAction();
   el.conversationThreadCaption.textContent = thread
     ? `${thread.title} · ${conversationScopeLabel(thread.scope)}`
     : "未选择线程";
   el.conversationCaption.textContent = state.selectedProjectId
     ? "用对话逐步收敛创作结论，并把人工判断沉淀成可执行上下文。"
     : "先选择项目，才能进入创作对话。";
+  el.conversationActionCopy.textContent = actionPlan.copy;
+  el.conversationExecute.disabled = actionPlan.disabled;
+  el.conversationExecute.textContent = actionPlan.label;
+  el.conversationExecute.dataset.actionKind = actionPlan.action?.kind || "";
+  el.conversationExecute.dataset.runId = actionPlan.action?.runId || "";
+  el.conversationExecute.dataset.approvalId = actionPlan.action?.approvalId || "";
   renderConversationMessages(state.conversationMessages || []);
   el.conversationSend.disabled = !thread;
   if (!thread && !state.conversationMessages.length) {
@@ -1927,6 +1994,22 @@ async function createRun({ quickMode = false } = {}) {
   }
 }
 
+async function executeConversationAction() {
+  const kind = el.conversationExecute.dataset.actionKind;
+  if (!kind || el.conversationExecute.disabled) return;
+  if (kind === "execute-approval") {
+    await handleApprovalAction("execute", el.conversationExecute.dataset.approvalId);
+    return;
+  }
+  if (kind === "retry-run") {
+    await handleRunAction("retry-run", el.conversationExecute.dataset.runId);
+    return;
+  }
+  if (kind === "continue-run" || kind === "start-run") {
+    await createRun({ quickMode: false });
+  }
+}
+
 function saveAuth() {
   state.apiToken = el.apiToken.value.trim();
   state.operatorId = el.operatorId.value.trim() || "editor-1";
@@ -1944,6 +2027,7 @@ async function boot() {
   el.projectForm.addEventListener("submit", createProject);
   el.createRun.addEventListener("click", () => createRun({ quickMode: false }));
   el.createRunQuick.addEventListener("click", () => createRun({ quickMode: true }));
+  el.conversationExecute.addEventListener("click", () => executeConversationAction().catch((error) => setStatus(String(error.message || error), "error")));
   el.conversationCreateBootstrap.addEventListener("click", () => createConversationThread("project_bootstrap").catch((error) => setStatus(String(error.message || error), "error")));
   el.conversationCreateContext.addEventListener("click", () => {
     const focusRun = pickFocusRun(state.projectSnapshot.runs || []);
