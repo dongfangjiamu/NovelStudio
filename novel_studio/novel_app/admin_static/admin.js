@@ -2283,41 +2283,80 @@ function renderRuns(runs, focusRunId) {
 }
 
 function renderApprovals(items) {
-  el.approvalsList.innerHTML = items.length
-    ? items
-        .map((item) => {
-          const actions = [];
-          const interventionThread = conversationThreadForRun(item.run_id, "rewrite_intervention");
-          const recoveryMode = interventionThread ? inferRecoveryModeForThread(interventionThread) : (isRecoveryMode(item.requested_action) ? item.requested_action : "continue");
-          const recoveryPlan = recoveryModePlan(recoveryMode, { chapter_no: item.chapter_no });
-          const title = approvalDecisionTitle(item, recoveryMode);
-          const summary = approvalDecisionSummary(item, recoveryMode, recoveryPlan);
-          const nextStep = approvalDecisionActions(item);
-          if (item.status === "pending") {
-            actions.push({ action: "approve", id: item.approval_id, label: "接受当前方案" });
-            actions.push({ action: "reject", id: item.approval_id, label: "先打回再讨论" });
-          }
-          if (item.status === "approved" && !item.executed_run_id) {
-            actions.push({ action: `execute-${recoveryMode}`, id: item.approval_id, label: recoveryModeExecuteLabel(recoveryMode) });
-          }
-          if (interventionThread) {
-            actions.push({ action: "open-thread", id: interventionThread.thread_id, label: "进入会诊" });
-          }
-          return card(
-            title,
-            `${summary}<br>${nextStep}`,
-            actions,
-            `
-              <div class="meta">当前恢复路径：${recoveryModeLabel(recoveryMode)}</div>
-              <div class="meta">会保留：${escapeHtml(recoveryPlan.preserves[0])}</div>
-              <div class="meta">会重做：${escapeHtml(recoveryPlan.rewrites[0])}</div>
-              <div class="meta">风险：${escapeHtml(recoveryPlan.risks[0])}</div>
-              ${item.executed_run_id ? `<div class="meta">executed: ${item.executed_run_id}</div>` : ""}
-            `
-          );
-        })
-        .join("")
-    : `<div class="empty">暂无审批单</div>`;
+  if (!items.length) {
+    el.approvalsList.innerHTML = `<div class="empty">暂无审批单</div>`;
+    return;
+  }
+
+  const approvalPriority = (item) => {
+    if (item.status === "pending") return 0;
+    if (item.status === "approved" && !item.executed_run_id) return 1;
+    if (item.status === "rejected") return 2;
+    if (item.status === "approved" && item.executed_run_id) return 3;
+    return 4;
+  };
+
+  const sorted = [...items].sort((left, right) => {
+    const diff = approvalPriority(left) - approvalPriority(right);
+    if (diff !== 0) return diff;
+    return new Date(right.created_at).getTime() - new Date(left.created_at).getTime();
+  });
+
+  const [focusApproval, ...historyApprovals] = sorted;
+  const renderApprovalCard = (item, { recommendedCard = false } = {}) => {
+    const actions = [];
+    const interventionThread = conversationThreadForRun(item.run_id, "rewrite_intervention");
+    const recoveryMode = interventionThread ? inferRecoveryModeForThread(interventionThread) : (isRecoveryMode(item.requested_action) ? item.requested_action : "continue");
+    const recoveryPlan = recoveryModePlan(recoveryMode, { chapter_no: item.chapter_no });
+    const title = approvalDecisionTitle(item, recoveryMode);
+    const summary = approvalDecisionSummary(item, recoveryMode, recoveryPlan);
+    const nextStep = approvalDecisionActions(item);
+    if (item.status === "pending") {
+      actions.push({ action: "approve", id: item.approval_id, label: "接受当前方案" });
+      actions.push({ action: "reject", id: item.approval_id, label: "先打回再讨论" });
+    }
+    if (item.status === "approved" && !item.executed_run_id) {
+      actions.push({ action: `execute-${recoveryMode}`, id: item.approval_id, label: recoveryModeExecuteLabel(recoveryMode) });
+    }
+    if (interventionThread) {
+      actions.push({ action: "open-thread", id: interventionThread.thread_id, label: "进入会诊" });
+    }
+    const classes = ["card"];
+    if (recommendedCard) classes.push("recommended");
+    if (!recommendedCard) classes.push("history");
+    return `
+      <div class="${classes.join(" ")}">
+        <div class="card-head">
+          <h4>${title}</h4>
+          <span class="status-chip status-${item.status}">${item.status === "approved" && !item.executed_run_id ? "待执行" : item.status}</span>
+        </div>
+        <div class="meta">${summary}</div>
+        <div class="meta">${nextStep}</div>
+        <div class="meta">当前恢复路径：${recoveryModeLabel(recoveryMode)}</div>
+        <div class="meta">会保留：${escapeHtml(recoveryPlan.preserves[0])}</div>
+        <div class="meta">会重做：${escapeHtml(recoveryPlan.rewrites[0])}</div>
+        <div class="meta">风险：${escapeHtml(recoveryPlan.risks[0])}</div>
+        ${item.executed_run_id ? `<div class="meta">已执行到：${item.executed_run_id}</div>` : ""}
+        <div class="card-caption">${recommendedCard ? "这是当前最值得处理的一条审批决策。" : "历史审批记录，默认只用于参考。"}</div>
+        <div class="actions">
+          ${actions.map((action) => `<button class="button ghost" data-action="${action.action}" data-id="${action.id}">${action.label}</button>`).join("")}
+        </div>
+      </div>
+    `;
+  };
+
+  const blocks = [`<div class="section-caption">当前推荐决策</div>${renderApprovalCard(focusApproval, { recommendedCard: true })}`];
+  if (historyApprovals.length) {
+    blocks.push(`
+      <details class="approval-history">
+        <summary>查看审批历史（${historyApprovals.length}）</summary>
+        <div class="stack compact approval-history-body">
+          ${historyApprovals.map((item) => renderApprovalCard(item)).join("")}
+        </div>
+      </details>
+    `);
+  }
+  el.approvalsList.innerHTML = blocks.join("");
   el.approvalsList.querySelectorAll("[data-action]").forEach((node) => {
     node.addEventListener("click", () => {
       if (node.dataset.action === "open-thread") {
