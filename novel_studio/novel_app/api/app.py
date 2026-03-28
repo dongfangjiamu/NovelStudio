@@ -918,6 +918,7 @@ def create_app(
                 }
             )
         project_summary = None
+        stage_summary = None
         if scope == "project_bootstrap":
             brief = project.default_user_brief or {}
             summary_items: list[dict[str, str]] = []
@@ -929,6 +930,21 @@ def create_app(
                 "title": "第一版项目设定摘要",
                 "items": summary_items[:5],
                 "readiness": readiness,
+            }
+            stage_summary = project_summary
+        elif scope == "character_room":
+            summary_items = provisional_items[:4]
+            stage_summary = {
+                "title": "人物设定摘要",
+                "items": summary_items,
+                "readiness": "还需要继续补 1 到 2 个点，才能形成更稳的人物设定。" if unresolved_topics else "这版已经足够作为人物设定摘要，适合写回项目设定。",
+            }
+        elif scope == "outline_room":
+            summary_items = provisional_items[:4]
+            stage_summary = {
+                "title": "第一卷方向摘要",
+                "items": summary_items,
+                "readiness": "还需要继续补 1 到 2 个点，才能形成更稳的大纲方向。" if unresolved_topics else "这版已经足够作为第一卷方向摘要，适合写回项目设定。",
             }
         stage_stub = SimpleNamespace(thread_id="", scope=scope)
         decision_plan = build_stage_decision_plan(
@@ -957,6 +973,7 @@ def create_app(
             "open_questions": unresolved_topics[:4],
             "next_steps": next_steps,
             "project_summary": project_summary,
+            "stage_summary": stage_summary,
             "decision_split_preview": decision_split_preview,
         }
 
@@ -997,6 +1014,30 @@ def create_app(
             brief["intent_profile"] = intent_profile
         if not brief.get("title"):
             brief["title"] = project.name
+        return brief
+
+    def build_scope_stage_brief(*, project, thread, interview_state: dict[str, object]) -> dict | None:
+        stage_confirmation = interview_state.get("stage_confirmation") or {}
+        stage_summary = stage_confirmation.get("stage_summary")
+        if not stage_summary:
+            return None
+        brief = dict(project.default_user_brief or {})
+        merged_summary = {
+            **stage_summary,
+            "confirmed_items": list(stage_confirmation.get("confirmed_items") or [])[:4],
+            "provisional_items": list(stage_confirmation.get("provisional_items") or [])[:4],
+            "open_questions": list(stage_confirmation.get("open_questions") or [])[:4],
+            "source_thread_id": thread.thread_id,
+            "source_scope": thread.scope,
+        }
+        if interview_state.get("current_draft"):
+            merged_summary["draft_recap"] = interview_state["current_draft"]
+        if thread.scope == "character_room":
+            brief["character_summary"] = merged_summary
+        elif thread.scope == "outline_room":
+            brief["outline_summary"] = merged_summary
+        else:
+            return None
         return brief
 
     def infer_stage_decision_type(label: str) -> str | None:
@@ -2309,6 +2350,64 @@ def create_app(
             run_id=None,
             approval_id=None,
             payload={"thread_id": thread.thread_id, "scope": thread.scope, "capture_stage": "clarified"},
+        )
+        return ProjectResponse.model_validate(updated_project.__dict__)
+
+    @app.post("/api/conversation-threads/{thread_id}/apply-stage-summary", response_model=ProjectResponse)
+    async def apply_conversation_stage_summary(
+        thread_id: str,
+        request: Request,
+        response: Response,
+    ) -> ProjectResponse:
+        thread = app.state.store.get_conversation_thread(thread_id)
+        if not thread:
+            raise HTTPException(status_code=404, detail="conversation_thread_not_found")
+        project = app.state.store.get_project(thread.project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="project_not_found")
+        interview_state = build_interview_state(thread=thread, project=project)
+        if interview_state is None or not (interview_state.get("stage_confirmation") or {}).get("stage_summary"):
+            raise HTTPException(status_code=409, detail="stage_summary_not_ready")
+        if thread.scope == "project_bootstrap":
+            updated_brief = build_project_summary_brief(project=project, thread=thread, interview_state=interview_state)
+            source = "project_summary_apply"
+            action = "project_summary.apply"
+            success_message = "已把这版阶段确认摘要写回项目设定。接下来可以继续进入人物讨论或大纲讨论。"
+        else:
+            updated_brief = build_scope_stage_brief(project=project, thread=thread, interview_state=interview_state)
+            source = "stage_summary_apply"
+            action = "stage_summary.apply"
+            success_message = "已把这版阶段摘要写回项目设定。现在项目页会显示这条线的最新确认结果。"
+        if updated_brief is None:
+            raise HTTPException(status_code=409, detail="stage_summary_not_ready")
+        updated_project = app.state.store.update_project_brief(
+            project_id=project.project_id,
+            default_user_brief=updated_brief,
+        )
+        if updated_project is None:
+            raise HTTPException(status_code=404, detail="project_not_found")
+        app.state.store.add_conversation_message(
+            thread_id=thread.thread_id,
+            role="system",
+            message_type="system_action_result",
+            content=success_message,
+            structured_payload={
+                "source": source,
+                "project_id": project.project_id,
+                "scope": thread.scope,
+            },
+        )
+        audit(
+            request=request,
+            response=response,
+            status_code=200,
+            action=action,
+            resource_type="project",
+            resource_id=updated_project.project_id,
+            project_id=updated_project.project_id,
+            run_id=None,
+            approval_id=None,
+            payload={"thread_id": thread.thread_id, "scope": thread.scope},
         )
         return ProjectResponse.model_validate(updated_project.__dict__)
 

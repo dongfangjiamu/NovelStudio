@@ -1154,30 +1154,28 @@ function renderInterviewSummary(thread) {
             : ""
         }
         ${
-          interview.stage_confirmation.project_summary
+          interview.stage_confirmation.stage_summary
             ? `
               <section class="interview-draft summary">
                 <div class="card-head">
-                  <h4>${escapeHtml(interview.stage_confirmation.project_summary.title || "第一版项目设定摘要")}</h4>
-                  <span class="status-chip status-approved">首版摘要</span>
+                  <h4>${escapeHtml(interview.stage_confirmation.stage_summary.title || "阶段摘要")}</h4>
+                  <span class="status-chip status-approved">阶段摘要</span>
                 </div>
                 <ul class="interview-list">
-                  ${(interview.stage_confirmation.project_summary.items || [])
+                  ${(interview.stage_confirmation.stage_summary.items || [])
                     .map((item) => `<li><strong>${escapeHtml(item.label || "")}</strong>：${escapeHtml(item.summary || "")}</li>`)
                     .join("")}
                 </ul>
-                <div class="meta">${escapeHtml(interview.stage_confirmation.project_summary.readiness || "")}</div>
-                ${
-                  thread.scope === "project_bootstrap"
-                    ? `<div class="actions"><button class="button secondary" type="button" data-apply-project-summary="${thread.thread_id}">写回项目设定</button></div>`
-                    : ""
-                }
+                <div class="meta">${escapeHtml(interview.stage_confirmation.stage_summary.readiness || "")}</div>
+                <div class="actions">
+                  <button class="button secondary" type="button" data-apply-stage-summary="${thread.thread_id}">写回项目设定</button>
+                </div>
               </section>
             `
             : ""
         }
       </section>
-    `
+  `
     : "";
   el.conversationInterviewSummary.innerHTML = `
     <section class="interview-card">
@@ -1286,10 +1284,10 @@ function renderInterviewSummary(thread) {
       }
     });
   });
-  el.conversationInterviewSummary.querySelectorAll("[data-apply-project-summary]").forEach((node) => {
+  el.conversationInterviewSummary.querySelectorAll("[data-apply-stage-summary]").forEach((node) => {
     node.addEventListener("click", async () => {
       try {
-        await applyProjectSummary(node.dataset.applyProjectSummary);
+        await applyStageSummary(node.dataset.applyStageSummary);
       } catch (error) {
         setStatus(String(error.message || error), "error");
       }
@@ -1319,6 +1317,30 @@ function projectSummarySource(project) {
   return null;
 }
 
+function scopedSummarySource(project, scope) {
+  if (!project) return null;
+  const key = scope === "character_room" ? "character_summary" : scope === "outline_room" ? "outline_summary" : null;
+  if (!key) return null;
+  const applied = project.default_user_brief?.[key];
+  if (applied) {
+    return {
+      summary: applied,
+      status: "applied",
+      threadId: applied.source_thread_id || null,
+    };
+  }
+  const thread = latestThreadByScope(scope);
+  const draftSummary = thread?.interview_state?.stage_confirmation?.stage_summary;
+  if (draftSummary) {
+    return {
+      summary: draftSummary,
+      status: "draft",
+      threadId: thread.thread_id,
+    };
+  }
+  return null;
+}
+
 function renderProjectBriefSummary(project) {
   if (!el.projectBriefSummary) return;
   if (!project) {
@@ -1333,8 +1355,43 @@ function renderProjectBriefSummary(project) {
     return;
   }
   const summarySource = projectSummarySource(project);
+  const characterSource = scopedSummarySource(project, "character_room");
+  const outlineSource = scopedSummarySource(project, "outline_room");
   const intentProfile = project.default_user_brief?.intent_profile || {};
   if (!summarySource) {
+    const renderScopeSummary = (label, source, openScope) => {
+      if (!source) {
+        return `
+          <div class="summary-card">
+            <div class="summary-label">${label}</div>
+            <div class="meta">这条线还没有形成阶段摘要。</div>
+            <div class="actions">
+              <button class="button ghost" type="button" data-project-summary-open="${openScope}">进入${conversationScopeLabel(openScope)}</button>
+            </div>
+          </div>
+        `;
+      }
+      return `
+        <div class="summary-card">
+          <div class="summary-label">${label}</div>
+          <ul class="interview-list">
+            ${(source.summary.items || [])
+              .slice(0, 3)
+              .map((item) => `<li><strong>${escapeHtml(item.label || "")}</strong>：${escapeHtml(item.summary || "")}</li>`)
+              .join("")}
+          </ul>
+          <div class="meta">${escapeHtml(source.summary.readiness || "")}</div>
+          <div class="actions">
+            ${
+              source.status === "draft"
+                ? `<button class="button secondary" type="button" data-apply-stage-summary="${escapeHtml(source.threadId || "")}">写回项目设定</button>`
+                : ""
+            }
+            <button class="button ghost" type="button" data-project-summary-open="${openScope}">进入${conversationScopeLabel(openScope)}</button>
+          </div>
+        </div>
+      `;
+    };
     el.projectBriefSummary.innerHTML = `
       <div class="panel-head">
         <div>
@@ -1387,6 +1444,8 @@ function renderProjectBriefSummary(project) {
               : `<div class="meta">意图画像会在立项共创确认后写回这里。</div>`
           }
         </div>
+        ${renderScopeSummary("人物设定摘要", characterSource, "character_room")}
+        ${renderScopeSummary("第一卷方向摘要", outlineSource, "outline_room")}
       </div>
     `;
   }
@@ -1402,7 +1461,16 @@ function renderProjectBriefSummary(project) {
   el.projectBriefSummary.querySelectorAll("[data-project-summary-apply]").forEach((node) => {
     node.addEventListener("click", async () => {
       try {
-        await applyProjectSummary(node.dataset.projectSummaryApply);
+        await applyStageSummary(node.dataset.projectSummaryApply);
+      } catch (error) {
+        setStatus(String(error.message || error), "error");
+      }
+    });
+  });
+  el.projectBriefSummary.querySelectorAll("[data-apply-stage-summary]").forEach((node) => {
+    node.addEventListener("click", async () => {
+      try {
+        await applyStageSummary(node.dataset.applyStageSummary);
       } catch (error) {
         setStatus(String(error.message || error), "error");
       }
@@ -3563,9 +3631,9 @@ async function createConversationDecisionFromDraft({ threadId, decisionType, con
   setStatus(`已从草案采纳为${conversationDecisionLabel(decisionType)}`, "ready");
 }
 
-async function applyProjectSummary(threadId) {
+async function applyStageSummary(threadId) {
   if (!threadId) return;
-  await api(`/api/conversation-threads/${threadId}/apply-project-summary`, {
+  await api(`/api/conversation-threads/${threadId}/apply-stage-summary`, {
     method: "POST",
   });
   await loadProjects();
@@ -3576,7 +3644,7 @@ async function applyProjectSummary(threadId) {
     await loadConversationMessages(state.selectedThreadId, { activateTab: false });
   }
   setWorkspaceTab("project");
-  setStatus("已把这版阶段确认摘要写回项目设定", "ready");
+  setStatus("已把这版阶段摘要写回项目设定", "ready");
 }
 
 async function splitStageSummary(threadId) {

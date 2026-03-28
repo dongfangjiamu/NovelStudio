@@ -440,6 +440,68 @@ def test_character_and_outline_rooms_expose_carry_over_context() -> None:
     assert "卷末高潮" in outline_context["missing_items"]
 
 
+def test_character_and_outline_stage_summaries_can_be_applied_to_project_brief() -> None:
+    client = make_client()
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "阶段摘要写回项目",
+            "default_user_brief": {"title": "长夜炉火", "idea_seed": "一个被逐出山门的人，靠炉火中的古老声音翻盘。"},
+            "default_target_chapters": 1,
+        },
+    ).json()
+
+    bootstrap = client.post(
+        f"/api/projects/{project['project_id']}/conversation-threads",
+        json={"scope": "project_bootstrap"},
+    ).json()
+    for content in [
+        "我最想保住的是压迫中翻盘和悬念感。",
+        "主角要是那种克制但危险的人，平时忍着，关键时刻会立刻动手。",
+        "我希望前期更偏阴谋和压迫感推进，而不是纯升级刷图。",
+    ]:
+        client.post(
+            f"/api/conversation-threads/{bootstrap['thread_id']}/messages",
+            json={"content": content},
+        )
+    client.post(f"/api/conversation-threads/{bootstrap['thread_id']}/apply-stage-summary")
+    client.post(f"/api/conversation-threads/{bootstrap['thread_id']}/split-stage-summary")
+
+    character_thread = client.post(
+        f"/api/projects/{project['project_id']}/conversation-threads",
+        json={"scope": "character_room"},
+    ).json()
+    client.post(
+        f"/api/conversation-threads/{character_thread['thread_id']}/messages",
+        json={"content": "他真正想摆脱的是被宗门轻易决定命运的处境。"},
+    )
+    client.post(
+        f"/api/conversation-threads/{character_thread['thread_id']}/messages",
+        json={"content": "最关键的关系张力，是他和旧师门首席之间既互相防备又互相需要。"},
+    )
+    applied_character = client.post(f"/api/conversation-threads/{character_thread['thread_id']}/apply-stage-summary")
+    assert applied_character.status_code == 200
+    assert applied_character.json()["default_user_brief"]["character_summary"]["title"] == "人物设定摘要"
+
+    outline_thread = client.post(
+        f"/api/projects/{project['project_id']}/conversation-threads",
+        json={"scope": "outline_room"},
+    ).json()
+    client.post(
+        f"/api/conversation-threads/{outline_thread['thread_id']}/messages",
+        json={"content": "第一卷主推动力是主角借宗门试炼追查自己被逐出的真相。"},
+    )
+    client.post(
+        f"/api/conversation-threads/{outline_thread['thread_id']}/messages",
+        json={"content": "中段最值得期待的变化，是主角发现自己一直在替真正幕后黑手扫尾。"},
+    )
+    applied_outline = client.post(f"/api/conversation-threads/{outline_thread['thread_id']}/apply-stage-summary")
+    assert applied_outline.status_code == 200
+    brief = applied_outline.json()["default_user_brief"]
+    assert brief["outline_summary"]["title"] == "第一卷方向摘要"
+    assert brief["outline_summary"]["source_scope"] == "outline_room"
+
+
 def test_draft_recap_section_can_be_adopted_directly() -> None:
     app = create_app(
         config=AppConfig(
