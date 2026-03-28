@@ -2442,12 +2442,12 @@ function buildLearningSummary(items) {
   };
 }
 
-function buildReviewOutcomeSummary(items) {
-  const run = artifactRunRecord();
+function buildReviewOutcomeSummary(items = null, runOverride = null) {
+  const run = runOverride || artifactRunRecord();
   const formalLaunch = formalLaunchInstruction(run);
-  const phaseDecision = artifactPayload(items, "phase_decision") || {};
-  const reviewTrace = artifactPayload(items, "review_resolution_trace") || {};
-  const reviewReports = artifactPayload(items, "latest_review_reports") || [];
+  const phaseDecision = artifactPayload(items || [], "phase_decision") || run?.result?.phase_decision || {};
+  const reviewTrace = artifactPayload(items || [], "review_resolution_trace") || run?.result?.review_resolution_trace || {};
+  const reviewReports = artifactPayload(items || [], "latest_review_reports") || run?.result?.latest_review_reports || [];
   const finalDecision = phaseDecision.final_decision || null;
   const unresolvedCount = reviewTrace.recurring_count ?? reviewTrace.open_count ?? 0;
   const resolvedCount = reviewTrace.resolved_count ?? 0;
@@ -2484,6 +2484,7 @@ function buildReviewOutcomeSummary(items) {
   ].filter(Boolean);
 
   return {
+    visible: Boolean(formalLaunch || finalDecision || reviewReports.length || unresolvedCount || resolvedCount),
     lead,
     items: itemsList.slice(0, 4),
   };
@@ -2985,6 +2986,7 @@ function renderFocusRun(summary) {
   const checkpointBlock = checkpoint
     ? `<div class="focus-metric"><strong>人工检查点</strong><div class="meta">${escapeHtml(checkpoint.reason || "流程已暂停。")}${checkpoint.thread_id ? ` 已自动创建会诊线程。` : ""}</div><div class="meta">建议恢复路径：${recoveryModeLabel(checkpoint.recommended_recovery_mode || "continue")}</div>${checkpointPlan ? `<div class="meta">会保留：${escapeHtml(checkpointPlan.preserves[0])}</div><div class="meta">风险：${escapeHtml(checkpointPlan.risks[0])}</div>` : ""}</div>`
     : "";
+  const reviewSummaryBlock = renderFocusRunReviewSummary(run);
   const actionButtons = [
     renderViewArtifactsButton(run.run_id, run.artifact_count),
   ];
@@ -3020,6 +3022,7 @@ function renderFocusRun(summary) {
           <strong>最新事件</strong>
           <div class="meta">${latestEvent}</div>
         </div>
+        ${reviewSummaryBlock}
       </div>
       <div class="actions">
         ${actionButtons.join("")}
@@ -3480,6 +3483,25 @@ function renderReviewSummaryCard(items) {
             : `<div class="meta">当前还没有更多摘要。</div>`
         }
       </div>
+    </div>
+  `;
+}
+
+function renderFocusRunReviewSummary(run) {
+  const summary = buildReviewOutcomeSummary(
+    state.artifactRunId === run.run_id ? state.artifactItems : null,
+    run
+  );
+  if (!summary.visible) return "";
+  return `
+    <div class="focus-metric">
+      <strong>这章现在能不能继续</strong>
+      <div class="meta">${escapeHtml(summary.lead)}</div>
+      ${
+        summary.items.length
+          ? summary.items.slice(0, 2).map((entry) => `<div class="meta">${escapeHtml(entry)}</div>`).join("")
+          : ""
+      }
     </div>
   `;
 }
