@@ -1850,10 +1850,13 @@ function artifactGuidanceBullets(artifactType) {
     if (grouped.chapter[0]) labels.push(`本章修订输入：${grouped.chapter[0]}`);
   }
   if (formalLaunch?.chapterFocus && ["current_card", "planning_context"].includes(artifactType)) {
-    labels.push(`首章启动重点：${formalLaunch.chapterFocus}`);
+    labels.push(`本次系统优先照顾：${formalLaunch.chapterFocus}`);
+  }
+  if (formalLaunch?.chapterFocus && ["current_draft", "drafting_context", "publish_package"].includes(artifactType)) {
+    labels.push(`正文阶段继续围绕：${formalLaunch.chapterFocus}`);
   }
   if (formalLaunch?.launchNote && ["current_draft", "drafting_context", "publish_package"].includes(artifactType)) {
-    labels.push(`本次启动备注已带入正文要求：${formalLaunch.launchNote}`);
+    labels.push(`你还需要继续盯：${formalLaunch.launchNote}`);
   }
   return labels;
 }
