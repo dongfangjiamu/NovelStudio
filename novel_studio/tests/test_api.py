@@ -134,6 +134,61 @@ def test_strategy_suggestions_expose_system_and_project_recommendations() -> Non
     assert "当前进化建议" in project_suggestions.json()["headline"]
 
 
+def test_strategy_suggestion_can_be_adopted_into_project_rules() -> None:
+    client = make_client()
+
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "策略采纳项目",
+            "default_user_brief": {"title": "长夜炉火", "genre": "东方玄幻"},
+            "default_target_chapters": 1,
+        },
+    ).json()
+
+    app = client.app
+    run = app.state.store.save_run(
+        project_id=project["project_id"],
+        status="completed",
+        request={"user_brief": project["default_user_brief"], "target_chapters": 1, "operator_id": "tester"},
+        result={
+            "issue_ledger": {
+                "chapter_no": 1,
+                "status": "needs_revision",
+                "open_count": 2,
+                "issues": [
+                    {"issue_id": "iss_1", "category": "pacing", "status": "open"},
+                    {"issue_id": "iss_2", "category": "hook", "status": "recurring"},
+                ],
+            }
+        },
+        error=None,
+    )
+    app.state.store.save_run_outputs(run=run, result=run.result or {})
+
+    suggestions = client.get(f"/api/strategy-suggestions?project_id={project['project_id']}")
+    assert suggestions.status_code == 200
+    item = next((entry for entry in suggestions.json()["items"] if entry["suggestion_key"] == "codify_pacing_and_hook_rules"), None)
+    assert item is not None
+    assert item["can_adopt"] is True
+
+    adopt = client.post(
+        f"/api/projects/{project['project_id']}/strategy-suggestions/codify_pacing_and_hook_rules/actions",
+        json={"action": "adopt"},
+    )
+    assert adopt.status_code == 200
+    assert adopt.json()["status"] == "adopted"
+    assert adopt.json()["adopted_decision_id"]
+
+    decisions = client.get(f"/api/projects/{project['project_id']}/conversation-decisions")
+    assert decisions.status_code == 200
+    assert any(item["decision_type"] == "writer_playbook_rule" for item in decisions.json())
+
+    suggestions_after = client.get(f"/api/strategy-suggestions?project_id={project['project_id']}")
+    assert suggestions_after.status_code == 200
+    assert all(item["suggestion_key"] != "codify_pacing_and_hook_rules" for item in suggestions_after.json()["items"])
+
+
 def test_project_create_and_list() -> None:
     client = make_client()
 

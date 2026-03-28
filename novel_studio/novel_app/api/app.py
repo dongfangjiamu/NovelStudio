@@ -39,6 +39,8 @@ from novel_app.api.schemas import (
     RunCreateRequest,
     RunResponse,
     StrategySuggestionItemResponse,
+    StrategySuggestionActionRequest,
+    StrategySuggestionActionResponse,
     StrategySuggestionsResponse,
 )
 from novel_app.config import AppConfig, load_config
@@ -576,6 +578,187 @@ def create_app(
             sections=sections,
         )
 
+    def build_strategy_candidates(
+        *,
+        diagnostics: dict[str, object],
+    ) -> list[dict[str, object]]:
+        top_blockers = diagnostics["top_blockers"]
+        top_issue_categories = diagnostics["top_issue_categories"]
+        recovery_counts = diagnostics["recovery_counts"]
+        approval_pending_count = int(diagnostics["approval_pending_count"] or 0)
+        avg_duration = diagnostics["avg_duration"]
+        blocker_map = dict(top_blockers)
+        issue_map = dict(top_issue_categories)
+        candidates: list[dict[str, object]] = []
+
+        def add_candidate(
+            *,
+            suggestion_key: str,
+            title: str,
+            priority: str,
+            category: str,
+            why_now: str,
+            action: str,
+            evidence: list[str],
+            tone: str = "neutral",
+            can_adopt: bool = False,
+            adoption_label: str | None = None,
+            adoption_decision_type: str | None = None,
+            adoption_content: str | None = None,
+        ) -> None:
+            candidates.append(
+                {
+                    "suggestion_key": suggestion_key,
+                    "title": title,
+                    "priority": priority,
+                    "category": category,
+                    "why_now": why_now,
+                    "action": action,
+                    "evidence": evidence,
+                    "tone": tone,
+                    "can_adopt": can_adopt,
+                    "adoption_label": adoption_label,
+                    "adoption_decision_type": adoption_decision_type,
+                    "adoption_content": adoption_content,
+                }
+            )
+
+        if blocker_map.get("方向不稳，需要回到章卡", 0) > 0:
+            count = blocker_map["方向不稳，需要回到章卡"]
+            add_candidate(
+                suggestion_key="frontload_chapter_confirmation",
+                title="把章卡确认放到写正文之前",
+                priority="high",
+                category="workflow",
+                why_now=f"最近有 {count} 次运行在进入人工阶段后被判定要回到章卡，说明方向还没站稳就开始写正文了。",
+                action="进入“章卡讨论”时，先把本章目标、视角、必须兑现的点补到可确认，再用“重做章卡”恢复，而不是直接重写正文。",
+                evidence=[
+                    f"最近“方向不稳，需要回到章卡”出现 {count} 次。",
+                    "这类问题通常说明前置协商不足，而不是单纯文笔问题。",
+                ],
+                tone="warn",
+            )
+
+        if blocker_map.get("生成或审校超时", 0) > 0:
+            count = blocker_map["生成或审校超时"]
+            add_candidate(
+                suggestion_key="reduce_timeout_scope",
+                title="先缩小单次推进范围，减少超时",
+                priority="high",
+                category="workflow",
+                why_now=f"最近有 {count} 次运行卡在生成或审校超时，单章等待成本已经开始影响体验。",
+                action="首章或高风险章节优先用“快速试写”摸方向；正式模式下坚持一次只推进一章，并把本章优先兑现点写短、写清。",
+                evidence=[
+                    f"最近“生成或审校超时”出现 {count} 次。",
+                    f"当前已完成运行的平均时长约 {avg_duration} 分钟。" if avg_duration is not None else "当前还需要继续积累时长样本。",
+                ],
+                tone="warn",
+            )
+
+        if issue_map.get("节奏推进", 0) > 0 or issue_map.get("章末钩子", 0) > 0:
+            pacing_count = issue_map.get("节奏推进", 0)
+            hook_count = issue_map.get("章末钩子", 0)
+            add_candidate(
+                suggestion_key="codify_pacing_and_hook_rules",
+                title="把节奏和钩子问题固化成长期规则",
+                priority="medium",
+                category="writer_rule",
+                why_now=f"最近高频问题里，节奏推进 {pacing_count} 项，章末钩子 {hook_count} 项，这类问题最适合提前写进长期规则。",
+                action="在“对话协作”里把“主角主动动作前置”“章末必须落到更危险的选择”之类结论采纳为长期规则，让下一章自动带入。",
+                evidence=[
+                    f"高频问题：节奏推进 {pacing_count} 项。",
+                    f"高频问题：章末钩子 {hook_count} 项。",
+                ],
+                tone="neutral",
+                can_adopt=True,
+                adoption_label="采纳为长期规则",
+                adoption_decision_type="writer_playbook_rule",
+                adoption_content="长期规则：主角主动动作前置，章末必须落到更危险的选择，避免节奏后置和钩子发虚。",
+            )
+
+        rewrite_stats = recovery_counts.get("rewrite", {})
+        replan_stats = recovery_counts.get("replan", {})
+        continue_stats = recovery_counts.get("continue", {})
+        if rewrite_stats.get("failed", 0) > 0 and replan_stats.get("completed", 0) >= rewrite_stats.get("completed", 0):
+            add_candidate(
+                suggestion_key="prefer_replan_for_direction_issues",
+                title="遇到方向问题时，优先回章卡，不要硬改正文",
+                priority="medium",
+                category="recovery",
+                why_now="最近“重写正文”并不总能把问题收住，而“重做章卡”对方向性问题更稳。",
+                action="如果审校主要在质疑目标、视角、冲突落点，优先选“重做章卡”；只有方向没问题时，再用“重写正文”。",
+                evidence=[
+                    f"重写正文：恢复成功 {rewrite_stats.get('completed', 0)} 次，恢复后失败 {rewrite_stats.get('failed', 0)} 次。",
+                    f"重做章卡：恢复成功 {replan_stats.get('completed', 0)} 次，恢复后失败 {replan_stats.get('failed', 0)} 次。",
+                ],
+                tone="neutral",
+            )
+        elif continue_stats.get("completed", 0) > 0 and continue_stats.get("failed", 0) == 0:
+            add_candidate(
+                suggestion_key="continue_when_stable",
+                title="已经站稳的章节，优先沿当前路径继续",
+                priority="low",
+                category="recovery",
+                why_now="最近“继续当前流程”这条路径的恢复结果相对稳定，说明部分章节其实不需要大动干戈。",
+                action="当审校结论已经判断“这章现在能继续”时，不必过度重做，优先保留当前章并继续推进下一步。",
+                evidence=[
+                    f"继续当前流程：恢复成功 {continue_stats.get('completed', 0)} 次，恢复后失败 {continue_stats.get('failed', 0)} 次。",
+                ],
+                tone="good",
+            )
+
+        if approval_pending_count > 0:
+            add_candidate(
+                suggestion_key="clear_pending_approvals",
+                title="先清掉待拍板项，再继续堆新运行",
+                priority="medium",
+                category="workflow",
+                why_now=f"当前还有 {approval_pending_count} 条待处理审批。待拍板项累积太多，会把真实问题淹没掉。",
+                action="先处理当前推荐决策卡，再决定是否继续开新章节；不要在旧审批没处理完时连续叠加新运行。",
+                evidence=[f"当前待处理审批 {approval_pending_count} 条。"],
+                tone="warn" if approval_pending_count > 1 else "neutral",
+            )
+
+        if not candidates:
+            add_candidate(
+                suggestion_key="collect_more_samples",
+                title="继续积累样本，再判断下一步怎么优化",
+                priority="low",
+                category="workflow",
+                why_now="当前还没有形成足够稳定的卡点或恢复分布，过早下结论容易把系统带偏。",
+                action="先继续完成几次正式开书、章节运行和人工恢复，让系统积累更多可复盘样本。",
+                evidence=["当前还没有形成明显的集中问题分布。"],
+                tone="good",
+            )
+        return candidates
+
+    def ensure_strategy_thread(*, project) -> object:
+        existing = next(
+            (
+                item
+                for item in app.state.store.list_conversation_threads(project.project_id)
+                if item.scope == "project_bootstrap" and item.status == "open" and item.linked_run_id is None
+            ),
+            None,
+        )
+        if existing is not None:
+            return existing
+        thread = app.state.store.create_conversation_thread(
+            project_id=project.project_id,
+            scope="project_bootstrap",
+            title=conversation_title(scope="project_bootstrap", chapter_no=None),
+            linked_run_id=None,
+            linked_chapter_no=None,
+        )
+        app.state.store.add_conversation_message(
+            thread_id=thread.thread_id,
+            role="system",
+            message_type="system_action_result",
+            content="系统已为这本书创建策略协作入口。这里更适合沉淀长期规则和阶段性做法。",
+            structured_payload={"source": "strategy_pool"},
+        )
+        return app.state.store.get_conversation_thread(thread.thread_id) or thread
+
     def build_strategy_suggestions(project_id: str | None = None) -> StrategySuggestionsResponse:
         all_projects = app.state.store.list_projects()
         if project_id is not None:
@@ -590,128 +773,32 @@ def create_app(
             scope = "system"
 
         diagnostics = collect_business_diagnostics(projects)
-        top_blockers = diagnostics["top_blockers"]
-        top_issue_categories = diagnostics["top_issue_categories"]
-        recovery_counts = diagnostics["recovery_counts"]
-        approval_pending_count = int(diagnostics["approval_pending_count"] or 0)
-        avg_duration = diagnostics["avg_duration"]
+        candidates = build_strategy_candidates(diagnostics=diagnostics)
+        records = {}
+        if scope == "project" and project is not None:
+            records = {item.suggestion_key: item for item in app.state.store.list_strategy_suggestions(project_id=project.project_id)}
 
         suggestions: list[StrategySuggestionItemResponse] = []
-
-        def add_suggestion(
-            *,
-            title: str,
-            priority: str,
-            why_now: str,
-            action: str,
-            evidence: list[str],
-            tone: str = "neutral",
-        ) -> None:
+        for item in candidates:
+            record = records.get(item["suggestion_key"])
+            status = record.status if record is not None else "pending"
+            if status != "pending":
+                continue
             suggestions.append(
                 StrategySuggestionItemResponse(
-                    title=title,
-                    priority=priority,
-                    why_now=why_now,
-                    action=action,
-                    evidence=evidence,
-                    tone=tone,
-                )
-            )
-
-        blocker_map = dict(top_blockers)
-        issue_map = dict(top_issue_categories)
-
-        if blocker_map.get("方向不稳，需要回到章卡", 0) > 0:
-            count = blocker_map["方向不稳，需要回到章卡"]
-            add_suggestion(
-                title="把章卡确认放到写正文之前",
-                priority="high",
-                why_now=f"最近有 {count} 次运行在进入人工阶段后被判定要回到章卡，说明方向还没站稳就开始写正文了。",
-                action="进入“章卡讨论”时，先把本章目标、视角、必须兑现的点补到可确认，再用“重做章卡”恢复，而不是直接重写正文。",
-                evidence=[
-                    f"最近“方向不稳，需要回到章卡”出现 {count} 次。",
-                    "这类问题通常说明前置协商不足，而不是单纯文笔问题。",
-                ],
-                tone="warn",
-            )
-
-        if blocker_map.get("生成或审校超时", 0) > 0:
-            count = blocker_map["生成或审校超时"]
-            add_suggestion(
-                title="先缩小单次推进范围，减少超时",
-                priority="high",
-                why_now=f"最近有 {count} 次运行卡在生成或审校超时，单章等待成本已经开始影响体验。",
-                action="首章或高风险章节优先用“快速试写”摸方向；正式模式下坚持一次只推进一章，并把本章优先兑现点写短、写清。",
-                evidence=[
-                    f"最近“生成或审校超时”出现 {count} 次。",
-                    f"当前已完成运行的平均时长约 {avg_duration} 分钟。" if avg_duration is not None else "当前还需要继续积累时长样本。",
-                ],
-                tone="warn",
-            )
-
-        if issue_map.get("节奏推进", 0) > 0 or issue_map.get("章末钩子", 0) > 0:
-            pacing_count = issue_map.get("节奏推进", 0)
-            hook_count = issue_map.get("章末钩子", 0)
-            add_suggestion(
-                title="把节奏和钩子问题固化成长期规则",
-                priority="medium",
-                why_now=f"最近高频问题里，节奏推进 {pacing_count} 项，章末钩子 {hook_count} 项，这类问题最适合提前写进长期规则。",
-                action="在“对话协作”里把“主角主动动作前置”“章末必须落到更危险的选择”之类结论采纳为长期规则，让下一章自动带入。",
-                evidence=[
-                    f"高频问题：节奏推进 {pacing_count} 项。",
-                    f"高频问题：章末钩子 {hook_count} 项。",
-                ],
-                tone="neutral",
-            )
-
-        rewrite_stats = recovery_counts.get("rewrite", {})
-        replan_stats = recovery_counts.get("replan", {})
-        continue_stats = recovery_counts.get("continue", {})
-        if rewrite_stats.get("failed", 0) > 0 and replan_stats.get("completed", 0) >= rewrite_stats.get("completed", 0):
-            add_suggestion(
-                title="遇到方向问题时，优先回章卡，不要硬改正文",
-                priority="medium",
-                why_now="最近“重写正文”并不总能把问题收住，而“重做章卡”对方向性问题更稳。",
-                action="如果审校主要在质疑目标、视角、冲突落点，优先选“重做章卡”；只有方向没问题时，再用“重写正文”。",
-                evidence=[
-                    f"重写正文：恢复成功 {rewrite_stats.get('completed', 0)} 次，恢复后失败 {rewrite_stats.get('failed', 0)} 次。",
-                    f"重做章卡：恢复成功 {replan_stats.get('completed', 0)} 次，恢复后失败 {replan_stats.get('failed', 0)} 次。",
-                ],
-                tone="neutral",
-            )
-        elif continue_stats.get("completed", 0) > 0 and continue_stats.get("failed", 0) == 0:
-            add_suggestion(
-                title="已经站稳的章节，优先沿当前路径继续",
-                priority="low",
-                why_now="最近“继续当前流程”这条路径的恢复结果相对稳定，说明部分章节其实不需要大动干戈。",
-                action="当审校结论已经判断“这章现在能继续”时，不必过度重做，优先保留当前章并继续推进下一步。",
-                evidence=[
-                    f"继续当前流程：恢复成功 {continue_stats.get('completed', 0)} 次，恢复后失败 {continue_stats.get('failed', 0)} 次。",
-                ],
-                tone="good",
-            )
-
-        if approval_pending_count > 0:
-            add_suggestion(
-                title="先清掉待拍板项，再继续堆新运行",
-                priority="medium",
-                why_now=f"当前还有 {approval_pending_count} 条待处理审批。待拍板项累积太多，会把真实问题淹没掉。",
-                action="先处理当前推荐决策卡，再决定是否继续开新章节；不要在旧审批没处理完时连续叠加新运行。",
-                evidence=[
-                    f"当前待处理审批 {approval_pending_count} 条。",
-                ],
-                tone="warn" if approval_pending_count > 1 else "neutral",
-            )
-
-        if not suggestions:
-            suggestions.append(
-                StrategySuggestionItemResponse(
-                    title="继续积累样本，再判断下一步怎么优化",
-                    priority="low",
-                    why_now="当前还没有形成足够稳定的卡点或恢复分布，过早下结论容易把系统带偏。",
-                    action="先继续完成几次正式开书、章节运行和人工恢复，让系统积累更多可复盘样本。",
-                    evidence=["当前还没有形成明显的集中问题分布。"],
-                    tone="good",
+                    suggestion_key=item["suggestion_key"],
+                    title=item["title"],
+                    priority=item["priority"],
+                    category=item["category"],
+                    status=status,
+                    why_now=item["why_now"],
+                    action=item["action"],
+                    evidence=item["evidence"],
+                    tone=item["tone"],
+                    can_adopt=bool(project_id and item.get("can_adopt")),
+                    can_dismiss=bool(project_id),
+                    adoption_label=item.get("adoption_label"),
+                    adopted_decision_id=record.adopted_decision_id if record is not None else None,
                 )
             )
 
@@ -2484,6 +2571,115 @@ def create_app(
     @app.get("/api/strategy-suggestions", response_model=StrategySuggestionsResponse)
     async def strategy_suggestions(project_id: str | None = None) -> StrategySuggestionsResponse:
         return build_strategy_suggestions(project_id=project_id)
+
+    @app.post("/api/projects/{project_id}/strategy-suggestions/{suggestion_key}/actions", response_model=StrategySuggestionActionResponse)
+    async def act_on_strategy_suggestion(
+        project_id: str,
+        suggestion_key: str,
+        payload: StrategySuggestionActionRequest,
+        request: Request,
+        response: Response,
+    ) -> StrategySuggestionActionResponse:
+        project = app.state.store.get_project(project_id)
+        if project is None:
+            raise HTTPException(status_code=404, detail="project_not_found")
+        diagnostics = collect_business_diagnostics([project])
+        candidate = next((item for item in build_strategy_candidates(diagnostics=diagnostics) if item["suggestion_key"] == suggestion_key), None)
+        existing = app.state.store.get_strategy_suggestion(project_id=project_id, suggestion_key=suggestion_key)
+        if candidate is None and not existing:
+            raise HTTPException(status_code=404, detail="strategy_suggestion_not_found")
+        candidate_payload = dict(existing.payload if existing is not None else candidate or {})
+
+        if payload.action == "reopen":
+            updated = app.state.store.upsert_strategy_suggestion(
+                project_id=project_id,
+                suggestion_key=suggestion_key,
+                status="pending",
+                payload=candidate_payload,
+                adopted_decision_id=None,
+            )
+            audit(
+                request=request,
+                response=response,
+                status_code=200,
+                action="strategy_suggestion.reopen",
+                resource_type="strategy_suggestion",
+                resource_id=updated.candidate_id,
+                project_id=project_id,
+                run_id=None,
+                approval_id=None,
+                payload={"suggestion_key": suggestion_key},
+            )
+            return StrategySuggestionActionResponse(
+                project_id=project_id,
+                suggestion_key=suggestion_key,
+                status="pending",
+                adopted_decision_id=None,
+            )
+
+        adopted_decision_id = existing.adopted_decision_id if existing is not None else None
+        if payload.action == "adopt" and candidate_payload.get("can_adopt"):
+            thread = ensure_strategy_thread(project=project)
+            content = str(candidate_payload.get("adoption_content") or "").strip()
+            decision_type = candidate_payload.get("adoption_decision_type")
+            if content and decision_type:
+                source_message = app.state.store.add_conversation_message(
+                    thread_id=thread.thread_id,
+                    role="system",
+                    message_type="system_action_result",
+                    content=f"已从当前进化建议采纳为{decision_type}：{content}",
+                    structured_payload={
+                        "source": "strategy_suggestion",
+                        "source_label": f"当前进化建议 · {candidate_payload.get('title')}",
+                        "decision_type": decision_type,
+                        "content": content,
+                    },
+                )
+                if source_message is not None:
+                    decision = app.state.store.create_conversation_decision(
+                        project_id=project.project_id,
+                        thread_id=thread.thread_id,
+                        message_id=source_message.message_id,
+                        decision_type=decision_type,
+                        payload=build_conversation_decision_payload_from_content(
+                            thread=thread,
+                            message_id=source_message.message_id,
+                            decision_type=decision_type,
+                            content=content,
+                            source="strategy_suggestion",
+                            source_label=f"当前进化建议 · {candidate_payload.get('title')}",
+                        ),
+                        applied_to_run_id=thread.linked_run_id,
+                        applied_to_chapter_no=thread.linked_chapter_no,
+                    )
+                    adopted_decision_id = decision.decision_id
+
+        new_status = "adopted" if payload.action == "adopt" else "dismissed"
+        updated = app.state.store.upsert_strategy_suggestion(
+            project_id=project_id,
+            suggestion_key=suggestion_key,
+            status=new_status,
+            payload=candidate_payload,
+            adopted_decision_id=adopted_decision_id,
+        )
+        audit(
+            request=request,
+            response=response,
+            status_code=200,
+            action=f"strategy_suggestion.{payload.action}",
+            resource_type="strategy_suggestion",
+            resource_id=updated.candidate_id,
+            project_id=project_id,
+            run_id=None,
+            approval_id=None,
+            payload={"suggestion_key": suggestion_key, "status": new_status, "adopted_decision_id": adopted_decision_id},
+        )
+        return StrategySuggestionActionResponse(
+            project_id=project_id,
+            suggestion_key=suggestion_key,
+            status=new_status,
+            adopted_decision_id=adopted_decision_id,
+        )
 
     @app.get("/", include_in_schema=False)
     async def root() -> Response:

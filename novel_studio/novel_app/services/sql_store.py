@@ -21,6 +21,7 @@ from novel_app.db_models import (
     ConversationThreadModel,
     ProjectModel,
     RunModel,
+    StrategySuggestionModel,
 )
 from novel_app.services.store import (
     ApprovalRequestRecord,
@@ -32,6 +33,7 @@ from novel_app.services.store import (
     ConversationThreadRecord,
     ProjectRecord,
     RunRecord,
+    StrategySuggestionRecord,
     utc_now_iso,
 )
 
@@ -174,6 +176,19 @@ class SqlAlchemyStore:
             applied_to_run_id=row.applied_to_run_id,
             applied_to_chapter_no=row.applied_to_chapter_no,
             created_at=row.created_at,
+        )
+
+    @staticmethod
+    def _strategy_suggestion_record(row: StrategySuggestionModel) -> StrategySuggestionRecord:
+        return StrategySuggestionRecord(
+            candidate_id=row.candidate_id,
+            project_id=row.project_id,
+            suggestion_key=row.suggestion_key,
+            status=row.status,
+            payload=row.payload,
+            adopted_decision_id=row.adopted_decision_id,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
         )
 
     def create_project(
@@ -646,6 +661,63 @@ class SqlAlchemyStore:
                 return False
             session.delete(row)
             return True
+
+    def list_strategy_suggestions(self, *, project_id: str) -> list[StrategySuggestionRecord]:
+        with session_scope(self.session_factory) as session:
+            stmt = (
+                select(StrategySuggestionModel)
+                .where(StrategySuggestionModel.project_id == project_id)
+                .order_by(StrategySuggestionModel.updated_at.desc())
+            )
+            rows = session.execute(stmt).scalars().all()
+            return [self._strategy_suggestion_record(row) for row in rows]
+
+    def get_strategy_suggestion(self, *, project_id: str, suggestion_key: str) -> StrategySuggestionRecord | None:
+        with session_scope(self.session_factory) as session:
+            stmt = select(StrategySuggestionModel).where(
+                StrategySuggestionModel.project_id == project_id,
+                StrategySuggestionModel.suggestion_key == suggestion_key,
+            )
+            row = session.execute(stmt).scalar_one_or_none()
+            if row is None:
+                return None
+            return self._strategy_suggestion_record(row)
+
+    def upsert_strategy_suggestion(
+        self,
+        *,
+        project_id: str,
+        suggestion_key: str,
+        status: str,
+        payload: dict,
+        adopted_decision_id: str | None = None,
+    ) -> StrategySuggestionRecord:
+        with session_scope(self.session_factory) as session:
+            stmt = select(StrategySuggestionModel).where(
+                StrategySuggestionModel.project_id == project_id,
+                StrategySuggestionModel.suggestion_key == suggestion_key,
+            )
+            row = session.execute(stmt).scalar_one_or_none()
+            now = utc_now_iso()
+            if row is None:
+                row = StrategySuggestionModel(
+                    candidate_id=f"stg_{uuid4().hex[:12]}",
+                    project_id=project_id,
+                    suggestion_key=suggestion_key,
+                    status=status,
+                    payload=payload,
+                    adopted_decision_id=adopted_decision_id,
+                    created_at=now,
+                    updated_at=now,
+                )
+            else:
+                row.status = status
+                row.payload = payload
+                row.adopted_decision_id = adopted_decision_id
+                row.updated_at = now
+            session.add(row)
+            session.flush()
+            return self._strategy_suggestion_record(row)
 
     def health_status(self) -> dict[str, str | None]:
         ready, detail = ping_database(self.engine)

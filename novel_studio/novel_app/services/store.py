@@ -130,6 +130,18 @@ class ConversationDecisionRecord:
     created_at: str
 
 
+@dataclass(frozen=True)
+class StrategySuggestionRecord:
+    candidate_id: str
+    project_id: str
+    suggestion_key: str
+    status: str
+    payload: dict[str, Any]
+    adopted_decision_id: str | None
+    created_at: str
+    updated_at: str
+
+
 class InMemoryStore:
     def __init__(self) -> None:
         self._lock = RLock()
@@ -142,6 +154,7 @@ class InMemoryStore:
         self._conversation_threads: dict[str, ConversationThreadRecord] = {}
         self._conversation_messages: dict[str, ConversationMessageRecord] = {}
         self._conversation_decisions: dict[str, ConversationDecisionRecord] = {}
+        self._strategy_suggestions: dict[str, StrategySuggestionRecord] = {}
 
     def create_project(
         self,
@@ -643,6 +656,57 @@ class InMemoryStore:
                 return False
             del self._conversation_decisions[decision_id]
             return True
+
+    def list_strategy_suggestions(self, *, project_id: str) -> list[StrategySuggestionRecord]:
+        with self._lock:
+            return sorted(
+                [item for item in self._strategy_suggestions.values() if item.project_id == project_id],
+                key=lambda item: item.updated_at,
+                reverse=True,
+            )
+
+    def get_strategy_suggestion(self, *, project_id: str, suggestion_key: str) -> StrategySuggestionRecord | None:
+        with self._lock:
+            return next(
+                (
+                    item
+                    for item in self._strategy_suggestions.values()
+                    if item.project_id == project_id and item.suggestion_key == suggestion_key
+                ),
+                None,
+            )
+
+    def upsert_strategy_suggestion(
+        self,
+        *,
+        project_id: str,
+        suggestion_key: str,
+        status: str,
+        payload: dict[str, Any],
+        adopted_decision_id: str | None = None,
+    ) -> StrategySuggestionRecord:
+        with self._lock:
+            current = next(
+                (
+                    item
+                    for item in self._strategy_suggestions.values()
+                    if item.project_id == project_id and item.suggestion_key == suggestion_key
+                ),
+                None,
+            )
+            now = utc_now_iso()
+            record = StrategySuggestionRecord(
+                candidate_id=current.candidate_id if current else f"stg_{uuid4().hex[:12]}",
+                project_id=project_id,
+                suggestion_key=suggestion_key,
+                status=status,
+                payload=payload,
+                adopted_decision_id=adopted_decision_id,
+                created_at=current.created_at if current else now,
+                updated_at=now,
+            )
+            self._strategy_suggestions[record.candidate_id] = record
+            return record
 
     def health_status(self) -> dict[str, str | None]:
         return {"status": "ready", "backend": "inmemory", "detail": None}

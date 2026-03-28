@@ -48,12 +48,19 @@ class BusinessMetricsResponse(BaseModel):
 
 
 class StrategySuggestionItemResponse(BaseModel):
+    suggestion_key: str
     title: str
     priority: Literal["high", "medium", "low"] = "medium"
+    category: Literal["workflow", "writer_rule", "recovery"]
+    status: Literal["pending", "adopted", "dismissed"] = "pending"
     why_now: str
     action: str
     evidence: list[str] = Field(default_factory=list)
     tone: Literal["neutral", "good", "warn"] = "neutral"
+    can_adopt: bool = False
+    can_dismiss: bool = True
+    adoption_label: str | None = None
+    adopted_decision_id: str | None = None
 
 
 class StrategySuggestionsResponse(BaseModel):
@@ -63,6 +70,17 @@ class StrategySuggestionsResponse(BaseModel):
     headline: str
     summary: str
     items: list[StrategySuggestionItemResponse] = Field(default_factory=list)
+
+
+class StrategySuggestionActionRequest(BaseModel):
+    action: Literal["adopt", "dismiss", "reopen"]
+
+
+class StrategySuggestionActionResponse(BaseModel):
+    project_id: str
+    suggestion_key: str
+    status: Literal["pending", "adopted", "dismissed"]
+    adopted_decision_id: str | None = None
 
 
 class ProjectCreateRequest(BaseModel):

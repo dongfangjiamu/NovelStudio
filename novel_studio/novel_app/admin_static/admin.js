@@ -3344,11 +3344,44 @@ function renderStrategySuggestions(payload) {
                     .map((entry) => `<li>${escapeHtml(entry)}</li>`)
                     .join("")}</ul>`
                 : ""}
+              ${(item.can_adopt || item.can_dismiss)
+                ? `<div class="actions">
+                    ${item.can_adopt ? `<button class="button ghost" data-action="adopt-strategy" data-id="${escapeHtml(item.suggestion_key || "")}">${escapeHtml(item.adoption_label || "采纳")}</button>` : ""}
+                    ${item.can_dismiss ? `<button class="button ghost" data-action="dismiss-strategy" data-id="${escapeHtml(item.suggestion_key || "")}">忽略这条</button>` : ""}
+                  </div>`
+                : ""}
             </article>
           `
         )
         .join("")
     : `<div class="empty">暂无进化建议</div>`;
+  el.strategySuggestions.querySelectorAll("[data-action='adopt-strategy']").forEach((node) => {
+    node.addEventListener("click", () => {
+      handleStrategySuggestionAction(node.dataset.id, "adopt").catch((error) => setStatus(String(error.message || error), "error"));
+    });
+  });
+  el.strategySuggestions.querySelectorAll("[data-action='dismiss-strategy']").forEach((node) => {
+    node.addEventListener("click", () => {
+      handleStrategySuggestionAction(node.dataset.id, "dismiss").catch((error) => setStatus(String(error.message || error), "error"));
+    });
+  });
+}
+
+async function handleStrategySuggestionAction(suggestionKey, action) {
+  if (!state.selectedProjectId) {
+    setStatus("请先选择一个项目，再处理这条进化建议。", "error");
+    return;
+  }
+  await api(`/api/projects/${state.selectedProjectId}/strategy-suggestions/${suggestionKey}/actions`, {
+    method: "POST",
+    body: JSON.stringify({ action }),
+  });
+  await selectProject(state.selectedProjectId);
+  if (action === "adopt") {
+    setStatus("已采纳这条进化建议。相关长期规则会进入后续运行。", "ready");
+  } else {
+    setStatus("已忽略这条进化建议。", "warn");
+  }
 }
 
 function renderReviewProgressCard(reviewProgress) {
