@@ -304,11 +304,7 @@ function updateAuthUi() {
 }
 
 function headers() {
-  const value = { "content-type": "application/json" };
-  if (state.currentUser?.pen_name) {
-    value["x-operator-id"] = state.currentUser.pen_name;
-  }
-  return value;
+  return { "content-type": "application/json" };
 }
 
 async function api(path, options = {}) {
