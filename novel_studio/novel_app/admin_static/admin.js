@@ -10,6 +10,10 @@ const state = {
   decisionDrafts: [],
   conversationRecoveryModes: {},
   conversationMessages: [],
+  launchPlan: {
+    chapterFocus: "先把悬念抛出来",
+    launchNote: "",
+  },
   projectSnapshot: {
     chapters: [],
     runs: [],
@@ -1440,6 +1444,12 @@ function launchScopedItems(project, key) {
     .slice(0, 6);
 }
 
+function nextPlannedChapter(project) {
+  const latest = latestChapterNo(state.projectSnapshot.chapters || []);
+  if (latest > 0) return latest + 1;
+  return Number(project?.default_target_chapters || 1) > 0 ? 1 : 1;
+}
+
 function renderProjectLaunchReadiness(project) {
   if (!el.projectLaunchReadiness) return;
   const readiness = openingReadiness(project);
@@ -1458,6 +1468,13 @@ function renderProjectLaunchReadiness(project) {
   const confirmedItems = launchScopedItems(project, "confirmed_items");
   const provisionalItems = launchScopedItems(project, "provisional_items");
   const openQuestions = launchOpenQuestions(project);
+  const plannedChapter = nextPlannedChapter(project);
+  const focusOptions = [
+    "先把悬念抛出来",
+    "先把主角立住",
+    "先把世界规则和冲突立住",
+    "先验证文风和人物关系",
+  ];
   const items = readiness.items
     .map(
       (item) => `
@@ -1561,6 +1578,22 @@ function renderProjectLaunchReadiness(project) {
         <div class="summary-value">这是系统判断“现在适不适合正式开书”以及正式模式默认做法的说明。</div>
         ${readinessWhyHtml}
       </div>
+      <div class="summary-card accent">
+        <div class="summary-label">首章启动单</div>
+        <div class="summary-value">本次将启动第 ${plannedChapter} 章。正式模式会先生成章卡，再写正文，再进入审校与必要修订。</div>
+        <div class="launch-note">你可以在真正开始前，补一句“这一章最想优先兑现什么”。这会作为本次首章的额外启动要求带进系统。</div>
+        <div class="launch-focus-options">
+          ${focusOptions
+            .map(
+              (item) =>
+                `<button class="launch-focus-chip ${state.launchPlan.chapterFocus === item ? "active" : ""}" type="button" data-launch-focus="${escapeHtml(item)}">${escapeHtml(item)}</button>`
+            )
+            .join("")}
+        </div>
+        <textarea class="launch-textarea" data-launch-note placeholder="可选：补一句这次首章最想先做到什么，例如“先把主角被动困局写扎实，但不要急着把底牌交代完”。">${escapeHtml(
+          state.launchPlan.launchNote || ""
+        )}</textarea>
+      </div>
     </div>
   `;
   el.projectLaunchReadiness.querySelectorAll("[data-launch-open-scope]").forEach((node) => {
@@ -1576,7 +1609,11 @@ function renderProjectLaunchReadiness(project) {
     node.addEventListener("click", async () => {
       try {
         setWorkspaceTab("dashboard");
-        await createRun({ quickMode: false });
+        await createRun({
+          quickMode: false,
+          chapterFocus: state.launchPlan.chapterFocus,
+          launchNote: state.launchPlan.launchNote,
+        });
       } catch (error) {
         setStatus(String(error.message || error), "error");
       }
@@ -1590,6 +1627,17 @@ function renderProjectLaunchReadiness(project) {
       } catch (error) {
         setStatus(String(error.message || error), "error");
       }
+    });
+  });
+  el.projectLaunchReadiness.querySelectorAll("[data-launch-focus]").forEach((node) => {
+    node.addEventListener("click", () => {
+      state.launchPlan.chapterFocus = node.dataset.launchFocus || state.launchPlan.chapterFocus;
+      renderProjectLaunchReadiness(project);
+    });
+  });
+  el.projectLaunchReadiness.querySelectorAll("[data-launch-note]").forEach((node) => {
+    node.addEventListener("input", () => {
+      state.launchPlan.launchNote = node.value;
     });
   });
 }
@@ -4278,13 +4326,20 @@ async function createProject(event) {
   }
 }
 
-async function createRun({ quickMode = false } = {}) {
+async function createRun({ quickMode = false, chapterFocus = null, launchNote = null } = {}) {
   if (!state.selectedProjectId) return;
   try {
     setWorkspaceTab("dashboard");
+    const body = { operator_id: state.operatorId, quick_mode: quickMode };
+    if (!quickMode && chapterFocus) {
+      body.chapter_focus = chapterFocus;
+    }
+    if (!quickMode && launchNote && String(launchNote).trim()) {
+      body.launch_note = String(launchNote).trim();
+    }
     const payload = await api(`/api/projects/${state.selectedProjectId}/runs`, {
       method: "POST",
-      body: JSON.stringify({ operator_id: state.operatorId, quick_mode: quickMode }),
+      body: JSON.stringify(body),
     });
     state.selectedRunId = payload.run_id;
     await selectProject(state.selectedProjectId);
@@ -4292,9 +4347,9 @@ async function createRun({ quickMode = false } = {}) {
     await selectProject(state.selectedProjectId);
     await loadAudit();
     if (completedRun) {
-      setStatus(quickMode ? "快速试写已完成" : "Run 已完成");
+      setStatus(quickMode ? "快速试写已完成" : "正式首章已启动并完成当前运行");
     } else {
-      setStatus(`${quickMode ? "快速试写" : "Run"} 仍在后台执行，可稍后刷新查看: ${payload.run_id}`, "warn");
+      setStatus(`${quickMode ? "快速试写" : "正式模式首章"} 仍在后台执行，可稍后刷新查看: ${payload.run_id}`, "warn");
     }
   } catch (error) {
     setStatus(String(error.message || error), "error");

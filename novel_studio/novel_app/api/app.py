@@ -1,4 +1,5 @@
 from __future__ import annotations
+import inspect
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from uuid import uuid4
@@ -387,6 +388,11 @@ def create_app(
             else None,
             "reviewers": reviewers,
         }
+
+    def call_prepare_project_request(workflow, **kwargs):
+        supported = inspect.signature(workflow.prepare_project_request).parameters
+        filtered = {key: value for key, value in kwargs.items() if key in supported}
+        return workflow.prepare_project_request(**filtered)
 
     def build_progress_snapshot(
         *,
@@ -1860,12 +1866,15 @@ def create_app(
             raise HTTPException(status_code=404, detail="project_not_found")
 
         is_continuation = False
-        request_payload = app.state.workflow.prepare_project_request(
+        request_payload = call_prepare_project_request(
+            app.state.workflow,
             project=project,
             user_brief=payload.user_brief,
             target_chapters=payload.target_chapters,
             operator_id=payload.operator_id,
             quick_mode=payload.quick_mode,
+            chapter_focus=payload.chapter_focus,
+            launch_note=payload.launch_note,
         )
         if payload.user_brief is None and payload.target_chapters is None and not payload.quick_mode:
             source_run = next(
@@ -1926,6 +1935,8 @@ def create_app(
                 "operator_id": run.request["operator_id"],
                 "status": run.status,
                 "quick_mode": run.request.get("quick_mode", False),
+                "chapter_focus": payload.chapter_focus,
+                "launch_note": payload.launch_note,
                 "continuation": is_continuation,
             },
         )

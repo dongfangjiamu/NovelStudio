@@ -1136,6 +1136,36 @@ def test_quick_mode_run_request_is_persisted() -> None:
     assert payload["request"]["human_instruction"]["requested_action"] == "quick_trial"
 
 
+def test_formal_launch_note_is_persisted() -> None:
+    client = make_client()
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "正式开书项目",
+            "default_user_brief": {
+                "title": "长夜炉火",
+                "genre": "东方玄幻",
+            },
+            "default_target_chapters": 1,
+        },
+    ).json()
+
+    run_response = client.post(
+        f"/api/projects/{project['project_id']}/runs",
+        json={
+            "operator_id": "editor-1",
+            "chapter_focus": "先把主角立住",
+            "launch_note": "先把主角受困和第一次反击写扎实。",
+        },
+    )
+
+    assert run_response.status_code == 201
+    payload = run_response.json()
+    assert payload["request"]["human_instruction"]["requested_action"] == "formal_launch"
+    assert payload["request"]["human_instruction"]["payload"]["chapter_focus"] == "先把主角立住"
+    assert payload["request"]["human_instruction"]["payload"]["launch_note"] == "先把主角受困和第一次反击写扎实。"
+
+
 def test_approval_request_flow() -> None:
     client = make_client()
     project = client.post(

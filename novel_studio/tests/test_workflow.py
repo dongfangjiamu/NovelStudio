@@ -63,6 +63,37 @@ def test_prepare_project_request_uses_defaults() -> None:
     }
 
 
+def test_prepare_project_request_includes_formal_launch_instruction() -> None:
+    service = WorkflowService(
+        SimpleNamespace(
+            operator_id="system",
+            model_name="gpt-5.4",
+            openai_base_url="https://relay.example.com/openai",
+        )
+    )
+    project = ProjectRecord(
+        project_id="proj_1",
+        name="demo",
+        description=None,
+        default_user_brief={"title": "默认标题"},
+        default_target_chapters=1,
+        created_at="2026-03-26T00:00:00+00:00",
+    )
+
+    request_payload = service.prepare_project_request(
+        project=project,
+        user_brief=None,
+        target_chapters=None,
+        operator_id="editor-1",
+        chapter_focus="先把主角立住",
+        launch_note="先把主角的困局和反应写扎实，不要急着交底。",
+    )
+
+    assert request_payload["human_instruction"]["requested_action"] == "formal_launch"
+    assert request_payload["human_instruction"]["payload"]["chapter_focus"] == "先把主角立住"
+    assert request_payload["human_instruction"]["payload"]["launch_note"] == "先把主角的困局和反应写扎实，不要急着交底。"
+
+
 def test_prepare_followup_request_reuses_writer_learning_artifacts() -> None:
     service = WorkflowService(
         SimpleNamespace(

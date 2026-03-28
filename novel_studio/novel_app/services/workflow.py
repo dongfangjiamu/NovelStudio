@@ -20,6 +20,8 @@ class WorkflowService:
         target_chapters: int | None,
         operator_id: str | None,
         quick_mode: bool = False,
+        chapter_focus: str | None = None,
+        launch_note: str | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         effective_brief = user_brief or project.default_user_brief
         if not effective_brief:
@@ -40,6 +42,23 @@ class WorkflowService:
                 "operator_id": effective_operator_id,
                 "comment": "请优先给出更快可读的首章试写版本，控制篇幅和复杂度，先验证方向。",
                 "payload": {"mode": "quick_trial"},
+            }
+        elif chapter_focus or launch_note:
+            comment_parts = []
+            if chapter_focus:
+                comment_parts.append(f"本章优先兑现：{chapter_focus}")
+            if launch_note:
+                comment_parts.append(f"启动备注：{launch_note}")
+            request_payload["human_instruction"] = {
+                "requested_action": "formal_launch",
+                "reason": "用户在开书确认页补充了首章启动要求",
+                "operator_id": effective_operator_id,
+                "comment": "；".join(comment_parts),
+                "payload": {
+                    "mode": "formal_launch",
+                    "chapter_focus": chapter_focus,
+                    "launch_note": launch_note,
+                },
             }
         return request_payload
 

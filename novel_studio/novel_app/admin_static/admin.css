@@ -187,6 +187,35 @@ body {
   line-height: 1.55;
 }
 
+.launch-focus-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.launch-focus-chip {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 8px 12px;
+  background: rgba(255, 252, 247, 0.95);
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+}
+
+.launch-focus-chip.active {
+  border-color: rgba(138, 59, 18, 0.32);
+  background: linear-gradient(135deg, rgba(255, 244, 235, 0.98), rgba(251, 236, 224, 0.92));
+}
+
+.launch-textarea {
+  margin-top: 10px;
+  width: 100%;
+  min-height: 88px;
+  resize: vertical;
+}
+
 .overview-strip {
   margin-top: 16px;
   display: grid;

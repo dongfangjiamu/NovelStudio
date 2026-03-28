@@ -38,6 +38,8 @@ class RunCreateRequest(BaseModel):
     target_chapters: int | None = Field(default=None, ge=1, le=100)
     operator_id: str | None = Field(default=None, min_length=1, max_length=120)
     quick_mode: bool = False
+    chapter_focus: str | None = Field(default=None, max_length=200)
+    launch_note: str | None = Field(default=None, max_length=1000)
 
 
 class RunRequestPayload(BaseModel):
