@@ -356,6 +356,21 @@ body {
   background: rgba(245, 251, 246, 0.92);
 }
 
+.interview-stage-card {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(138, 59, 18, 0.16);
+  background: rgba(255, 250, 244, 0.94);
+}
+
+.interview-next-step {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: rgba(255, 252, 247, 0.92);
+}
+
 .interview-list {
   margin: 8px 0 0;
   padding-left: 18px;

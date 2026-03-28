@@ -261,12 +261,19 @@ def test_interview_state_builds_current_draft_after_two_answers() -> None:
 
     refreshed = client.get(f"/api/conversation-threads/{thread['thread_id']}").json()
     draft = refreshed["interview_state"]["current_draft"]
+    stage = refreshed["interview_state"]["stage_confirmation"]
 
     assert draft["title"] == "当前理解草案"
     assert len(draft["sections"]) == 2
     assert draft["sections"][0]["label"] == "最想保住的吸引力"
     assert draft["sections"][1]["label"] == "主角行动方式"
     assert "《长夜炉火》" in draft["lead"]
+    assert stage["confirmed_items"][0]["label"] == "最想保住的吸引力"
+    assert stage["provisional_items"][1]["label"] == "主角行动方式"
+    assert stage["open_questions"][0] == "故事推进方式"
+    assert stage["next_steps"][0]["scope"] == "character_room"
+    assert stage["next_steps"][1]["scope"] == "outline_room"
+    assert stage["project_summary"]["title"] == "第一版项目设定摘要"
 
 
 def test_draft_confirm_helper_does_not_advance_progress() -> None:

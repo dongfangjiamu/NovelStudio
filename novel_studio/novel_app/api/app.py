@@ -877,6 +877,67 @@ def create_app(
             "recommendation": "如果这版大致对，可以继续补缺口；如果明显不对，就用“换个问法”或直接指出系统理解偏了哪里。",
         }
 
+    def build_stage_confirmation(
+        *,
+        scope: str,
+        project,
+        answered_records: list[dict],
+        topics: list[dict],
+        unresolved_topics: list[str],
+        current_draft: dict | None,
+        adopted: list[object],
+    ) -> dict | None:
+        if current_draft is None:
+            return None
+        confirmed_items: list[dict[str, str]] = []
+        for index, record in enumerate(answered_records[: min(len(answered_records), len(topics), 4)]):
+            if record["effect"] != "answered":
+                continue
+            content = str(record["message"].content or "").strip()
+            if not content:
+                continue
+            confirmed_items.append({"label": topics[index]["title"], "summary": content[:120]})
+        provisional_items = list(current_draft.get("sections") or [])
+        adopted_types = {item.decision_type for item in adopted}
+        next_steps: list[dict[str, str | bool]] = []
+        if scope == "project_bootstrap":
+            next_steps.append(
+                {
+                    "scope": "character_room",
+                    "label": "进入人物讨论",
+                    "reason": "把主角气质、关系张力和人物边界继续收紧成人物设定。",
+                    "recommended": "character_note" not in adopted_types,
+                }
+            )
+            next_steps.append(
+                {
+                    "scope": "outline_room",
+                    "label": "进入大纲讨论",
+                    "reason": "把第一卷靠什么推进、哪里反转、卷末兑现什么进一步说清。",
+                    "recommended": "outline_constraint" not in adopted_types,
+                }
+            )
+        project_summary = None
+        if scope == "project_bootstrap":
+            brief = project.default_user_brief or {}
+            summary_items: list[dict[str, str]] = []
+            if brief.get("idea_seed"):
+                summary_items.append({"label": "原始灵感", "summary": str(brief["idea_seed"])[:140]})
+            summary_items.extend(provisional_items[:4])
+            readiness = "还需要继续补充 1 到 2 个关键点，再进入正式创作。" if unresolved_topics else "这版已经足够作为第一版项目设定摘要，适合继续进入人物或大纲细化。"
+            project_summary = {
+                "title": "第一版项目设定摘要",
+                "items": summary_items[:5],
+                "readiness": readiness,
+            }
+        return {
+            "confirmed_items": confirmed_items[:4],
+            "provisional_items": provisional_items[:4],
+            "open_questions": unresolved_topics[:4],
+            "next_steps": next_steps,
+            "project_summary": project_summary,
+        }
+
     def interview_prompt_variants(*, topic: dict, helper_action: str | None) -> tuple[str, list[str]]:
         if helper_action == "rephrase":
             prompt = topic.get("rephrase_prompt") or topic["prompt"]
@@ -949,6 +1010,15 @@ def create_app(
         if skipped_topics:
             reflection_summary = f"{reflection_summary} 已跳过：{'、'.join(skipped_topics)}。"
         current_draft = build_interview_draft(project=project, answered_records=handled_records, topics=topics)
+        stage_confirmation = build_stage_confirmation(
+            scope=thread.scope,
+            project=project,
+            answered_records=handled_records,
+            topics=topics,
+            unresolved_topics=unresolved_topics,
+            current_draft=current_draft,
+            adopted=adopted,
+        )
         return {
             "goal": blueprint["goal"],
             "completion_count": completed_count,
@@ -966,6 +1036,7 @@ def create_app(
             "adopted_highlights": [item.summary for item in adopted[:3]],
             "reflection_summary": reflection_summary,
             "current_draft": current_draft,
+            "stage_confirmation": stage_confirmation,
             "last_helper_action": last_helper["helper_action"] if last_helper else None,
         }
 

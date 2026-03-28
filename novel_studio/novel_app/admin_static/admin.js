@@ -942,6 +942,18 @@ function interviewDraftActions(thread, section) {
   return [{ label: "采纳为写作规则", decisionType: "writer_playbook_rule" }];
 }
 
+async function openOrCreateConversationScope(scope) {
+  if (!state.selectedProjectId) return;
+  const existing = (state.projectSnapshot.conversationThreads || []).find((item) => item.scope === scope && item.status === "open");
+  if (existing) {
+    state.selectedThreadId = existing.thread_id;
+    await loadConversationMessages(existing.thread_id, { activateTab: true });
+    setStatus(`已进入${conversationScopeLabel(scope)}线程`, "ready");
+    return;
+  }
+  await createConversationThread(scope);
+}
+
 function renderInterviewSummary(thread) {
   const interview = interviewState(thread);
   if (!thread || !interview) {
@@ -1014,6 +1026,86 @@ function renderInterviewSummary(thread) {
       </section>
     `
     : "";
+  const stageConfirmation = interview.stage_confirmation
+    ? `
+      <section class="interview-stage-card">
+        <div class="card-head">
+          <h4>阶段确认页</h4>
+          <span class="status-chip status-approved">先确认，再分流</span>
+        </div>
+        <div class="interview-grid">
+          <div class="interview-block">
+            <strong>已确认</strong>
+            ${
+              interview.stage_confirmation.confirmed_items?.length
+                ? `<ul class="interview-list">${interview.stage_confirmation.confirmed_items
+                    .map((item) => `<li><strong>${escapeHtml(item.label || "")}</strong>：${escapeHtml(item.summary || "")}</li>`)
+                    .join("")}</ul>`
+                : `<div class="meta">当前还没有足够明确的已确认内容。</div>`
+            }
+          </div>
+          <div class="interview-block">
+            <strong>暂定表达</strong>
+            ${
+              interview.stage_confirmation.provisional_items?.length
+                ? `<ul class="interview-list">${interview.stage_confirmation.provisional_items
+                    .map((item) => `<li><strong>${escapeHtml(item.label || "")}</strong>：${escapeHtml(item.summary || "")}</li>`)
+                    .join("")}</ul>`
+                : `<div class="meta">系统还没有整理出暂定表达。</div>`
+            }
+          </div>
+        </div>
+        <div class="interview-grid">
+          <div class="interview-block">
+            <strong>未决问题</strong>
+            ${
+              interview.stage_confirmation.open_questions?.length
+                ? `<ul class="interview-list">${interview.stage_confirmation.open_questions.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+                : `<div class="meta">当前关键问题已基本问清。</div>`
+            }
+          </div>
+          <div class="interview-block">
+            <strong>建议下一步</strong>
+            ${
+              interview.stage_confirmation.next_steps?.length
+                ? `<div class="stack compact">${interview.stage_confirmation.next_steps
+                    .map(
+                      (step) => `
+                        <div class="interview-next-step">
+                          <div class="meta"><strong>${escapeHtml(step.label || "")}</strong>${step.recommended ? " · 推荐" : ""}</div>
+                          <div class="meta">${escapeHtml(step.reason || "")}</div>
+                          <div class="actions">
+                            <button class="button ghost" type="button" data-stage-open-scope="${step.scope}">${escapeHtml(step.label || "进入下一步")}</button>
+                          </div>
+                        </div>
+                      `
+                    )
+                    .join("")}</div>`
+                : `<div class="meta">当前阶段还没有额外分流建议。</div>`
+            }
+          </div>
+        </div>
+        ${
+          interview.stage_confirmation.project_summary
+            ? `
+              <section class="interview-draft summary">
+                <div class="card-head">
+                  <h4>${escapeHtml(interview.stage_confirmation.project_summary.title || "第一版项目设定摘要")}</h4>
+                  <span class="status-chip status-approved">首版摘要</span>
+                </div>
+                <ul class="interview-list">
+                  ${(interview.stage_confirmation.project_summary.items || [])
+                    .map((item) => `<li><strong>${escapeHtml(item.label || "")}</strong>：${escapeHtml(item.summary || "")}</li>`)
+                    .join("")}
+                </ul>
+                <div class="meta">${escapeHtml(interview.stage_confirmation.project_summary.readiness || "")}</div>
+              </section>
+            `
+            : ""
+        }
+      </section>
+    `
+    : "";
   el.conversationInterviewSummary.innerHTML = `
     <section class="interview-card">
       <div class="card-head">
@@ -1046,6 +1138,7 @@ function renderInterviewSummary(thread) {
           ${adopted}
         </div>
       </div>
+      ${stageConfirmation}
       ${currentDraft}
     </section>
   `;
@@ -1097,6 +1190,15 @@ function renderInterviewSummary(thread) {
           content: section.summary,
           sourceLabel: `${interview.current_draft.title || "当前理解草案"} · ${section.label}`,
         });
+      } catch (error) {
+        setStatus(String(error.message || error), "error");
+      }
+    });
+  });
+  el.conversationInterviewSummary.querySelectorAll("[data-stage-open-scope]").forEach((node) => {
+    node.addEventListener("click", async () => {
+      try {
+        await openOrCreateConversationScope(node.dataset.stageOpenScope);
       } catch (error) {
         setStatus(String(error.message || error), "error");
       }
