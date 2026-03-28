@@ -1192,6 +1192,23 @@ def create_app(
             "next_goal": "把第一卷怎么往前推聊清楚，形成真正能约束章卡和正文的大纲方向。",
         }
 
+    def guided_room_focus_reason(scope: str, topic_title: str | None) -> str | None:
+        if scope == "character_room":
+            mapping = {
+                "主角第一印象": "先把主角一出场给人的感觉定住，后面的关系张力和人物边界才不会飘。",
+                "主角真正想摆脱什么": "先说清主角最受不了什么，后面人物动作和情绪落点才会更稳。",
+                "关键关系张力": "先定住最有火花的一组关系，后面人物戏和冲突会更好写。",
+                "角色边界": "先划清不能写崩的边界，后面人物越写越长时才不容易走形。",
+            }
+            return mapping.get(str(topic_title or "").strip())
+        mapping = {
+            "第一卷主推动力": "先抓住第一卷主要靠什么把读者往下带，后面反转和卷末兑现才有主轴。",
+            "升级路径": "先说清主角怎么一步步逼近目标，后面章卡节奏才容易稳定。",
+            "阶段反转": "先定住中段最值得追的变化，后面第一卷不会只剩平推。",
+            "卷末高潮": "先想好卷末要兑现什么，前面铺垫才知道该往哪里蓄力。",
+        }
+        return mapping.get(str(topic_title or "").strip())
+
     def interview_prompt_variants(*, topic: dict, helper_action: str | None) -> tuple[str, list[str]]:
         if helper_action == "rephrase":
             prompt = topic.get("rephrase_prompt") or topic["prompt"]
@@ -1309,7 +1326,19 @@ def create_app(
             project = app.state.store.get_project(thread.project_id)
             if not project:
                 return None
-            return build_guided_room_context(scope=thread.scope, project=project)
+            context = build_guided_room_context(scope=thread.scope, project=project) or {}
+            interview_state = build_interview_state(thread=thread, project=project) or {}
+            priority_item = interview_state.get("next_topic_title")
+            focus_reason = guided_room_focus_reason(thread.scope, priority_item)
+            priority_options = list(interview_state.get("next_options") or [])[:3]
+            return {
+                **context,
+                "progress_label": interview_state.get("completion_label"),
+                "priority_item": priority_item,
+                "priority_reason": focus_reason,
+                "priority_prompt": interview_state.get("next_prompt"),
+                "priority_options": priority_options,
+            }
         if thread.scope not in {"chapter_planning", "rewrite_intervention"} or not thread.linked_run_id:
             return None
         run = app.state.store.get_run(thread.linked_run_id)

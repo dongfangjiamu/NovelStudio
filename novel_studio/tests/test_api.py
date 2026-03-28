@@ -482,10 +482,16 @@ def test_character_and_outline_rooms_expose_carry_over_context() -> None:
     assert character_context["title"] == "人物讨论承接说明"
     assert any("克制但危险" in item["summary"] for item in character_context["inherited_items"])
     assert "关键关系张力" in character_context["missing_items"]
+    assert character_context["priority_item"] == "主角第一印象"
+    assert "先把主角一出场给人的感觉定住" in character_context["priority_reason"]
+    assert character_context["priority_options"][0] == "克制"
 
     assert outline_context["title"] == "大纲讨论承接说明"
     assert any("阴谋和压迫感推进" in item["summary"] for item in outline_context["inherited_items"])
     assert "卷末高潮" in outline_context["missing_items"]
+    assert outline_context["priority_item"] == "第一卷主推动力"
+    assert "先抓住第一卷主要靠什么把读者往下带" in outline_context["priority_reason"]
+    assert outline_context["priority_options"][0] == "一层层升级"
 
 
 def test_character_and_outline_stage_summaries_can_be_applied_to_project_brief() -> None:

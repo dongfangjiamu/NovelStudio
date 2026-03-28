@@ -708,6 +708,14 @@ function renderThreadContext(thread) {
     const missing = context.missing_items?.length
       ? `<ul class="interview-list">${context.missing_items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
       : `<div class="meta">这一步没有额外缺口，可以开始整理稳定结论。</div>`;
+    const priorityOptions = context.priority_options?.length
+      ? `<div class="actions compact">${context.priority_options
+          .map(
+            (item, index) =>
+              `<button class="button ghost" type="button" data-thread-priority-option="${index}">${escapeHtml(item)}</button>`
+          )
+          .join("")}</div>`
+      : "";
     el.conversationThreadContext.innerHTML = `
       <section class="interview-card">
         <div class="card-head">
@@ -715,6 +723,25 @@ function renderThreadContext(thread) {
           <span class="status-chip status-approved">${thread.scope === "character_room" ? "人物线" : "大纲线"}</span>
         </div>
         <div class="meta">${escapeHtml(context.reason || "")}</div>
+        <div class="interview-block accent-block">
+          <strong>建议先补这一点</strong>
+          <div class="meta">${
+            context.priority_item
+              ? `${escapeHtml(context.priority_item)}${context.progress_label ? ` · 当前进度 ${escapeHtml(context.progress_label)}` : ""}`
+              : "当前已经没有明显的优先缺口，可以直接整理这一步的稳定结论。"
+          }</div>
+          ${
+            context.priority_prompt
+              ? `<div class="meta">${escapeHtml(context.priority_prompt)}</div>`
+              : ""
+          }
+          ${
+            context.priority_reason
+              ? `<div class="meta">${escapeHtml(context.priority_reason)}</div>`
+              : ""
+          }
+          ${priorityOptions}
+        </div>
         <div class="interview-grid">
           <div class="interview-block">
             <strong>这一步会继承什么</strong>
@@ -731,6 +758,15 @@ function renderThreadContext(thread) {
         </div>
       </section>
     `;
+    el.conversationThreadContext.querySelectorAll("[data-thread-priority-option]").forEach((node) => {
+      node.addEventListener("click", () => {
+        const choice = context.priority_options?.[Number(node.dataset.threadPriorityOption)] || "";
+        if (!choice) return;
+        el.conversationInput.value = choice;
+        el.conversationInput.focus();
+        setStatus("已把建议起手方向带入输入框，你可以直接发送或再补一句。", "ready");
+      });
+    });
     return;
   }
   if (!["chapter_planning", "rewrite_intervention"].includes(thread.scope)) {

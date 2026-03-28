@@ -416,6 +416,12 @@ body {
   background: rgba(255, 252, 247, 0.9);
 }
 
+.interview-block.accent-block {
+  margin: 12px 0;
+  border-color: rgba(31, 107, 68, 0.22);
+  background: rgba(245, 251, 246, 0.96);
+}
+
 .interview-block strong {
   display: block;
   margin-bottom: 6px;
