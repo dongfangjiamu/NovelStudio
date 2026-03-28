@@ -11,7 +11,10 @@ from fastapi import Body, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from novel_app.auth import hash_password, new_session_token, verify_password
 from novel_app.api.schemas import (
+    AuthLoginRequest,
+    AuthRegisterRequest,
     ApiErrorResponse,
     ApprovalExecuteRequest,
     ApprovalExecuteResponse,
@@ -33,6 +36,7 @@ from novel_app.api.schemas import (
     ConversationDecisionResponse,
     ConversationThreadCreateRequest,
     ConversationThreadResponse,
+    CurrentUserResponse,
     HealthResponse,
     ProjectCreateRequest,
     ProjectResponse,
@@ -81,6 +85,7 @@ REVIEWER_NODE_TO_REPORTER = {
     "reader_simulator": "reader_sim",
 }
 REVIEWER_REPORTER_TO_NODE = {value: key for key, value in REVIEWER_NODE_TO_REPORTER.items()}
+SESSION_COOKIE_NAME = "novelstudio_session"
 
 
 def run_requires_human_approval(result: dict[str, object]) -> bool:
@@ -165,6 +170,93 @@ def create_app(
         app.state.store.create_tables()
     app.state.workflow = WorkflowService(app.state.config)
     app.mount("/admin-static", StaticFiles(directory=static_dir), name="admin-static")
+
+    def normalize_pen_name(value: str) -> str:
+        return " ".join(str(value or "").strip().split())
+
+    def build_current_user_response(user) -> CurrentUserResponse:
+        registered_count = app.state.store.count_writer_users()
+        return CurrentUserResponse(
+            user_id=user.user_id,
+            pen_name=user.pen_name,
+            registration_limit=app.state.config.writer_registration_limit,
+            registered_count=registered_count,
+            can_register=registered_count < app.state.config.writer_registration_limit,
+        )
+
+    def current_user_from_request(request: Request):
+        return getattr(request.state, "writer_user", None)
+
+    def session_cookie_settings() -> dict[str, object]:
+        return {
+            "httponly": True,
+            "samesite": "lax",
+            "secure": False,
+            "path": "/",
+        }
+
+    def set_session_cookie(response: Response, session_token: str) -> None:
+        response.set_cookie(SESSION_COOKIE_NAME, session_token, **session_cookie_settings())
+
+    def clear_session_cookie(response: Response) -> None:
+        response.delete_cookie(SESSION_COOKIE_NAME, path="/")
+
+    def visible_projects_for_request(request: Request) -> list[object]:
+        projects = app.state.store.list_projects()
+        if getattr(request.state, "is_admin", False):
+            return projects
+        user = require_current_user(request)
+        return [item for item in projects if item.owner_user_id == user.user_id]
+
+    def project_visible_to_request(project, request: Request) -> bool:
+        if getattr(request.state, "is_admin", False):
+            return True
+        user = current_user_from_request(request)
+        if user is None:
+            return False
+        return bool(project.owner_user_id and project.owner_user_id == user.user_id)
+
+    def require_current_user(request: Request):
+        user = current_user_from_request(request)
+        if user is None:
+            raise HTTPException(status_code=401, detail="login_required")
+        return user
+
+    def require_project_access(project_id: str, request: Request):
+        project = app.state.store.get_project(project_id)
+        if project is None:
+            raise HTTPException(status_code=404, detail="project_not_found")
+        if not project_visible_to_request(project, request):
+            raise HTTPException(status_code=404, detail="project_not_found")
+        return project
+
+    def require_run_access(run_id: str, request: Request):
+        run = app.state.store.get_run(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="run_not_found")
+        project = require_project_access(run.project_id, request)
+        return run, project
+
+    def require_approval_access(approval_id: str, request: Request):
+        approval = app.state.store.get_approval_request(approval_id)
+        if approval is None:
+            raise HTTPException(status_code=404, detail="approval_not_found")
+        project = require_project_access(approval.project_id, request)
+        return approval, project
+
+    def require_thread_access(thread_id: str, request: Request):
+        thread = app.state.store.get_conversation_thread(thread_id)
+        if thread is None:
+            raise HTTPException(status_code=404, detail="thread_not_found")
+        project = require_project_access(thread.project_id, request)
+        return thread, project
+
+    def require_decision_access(decision_id: str, request: Request):
+        decision = app.state.store.get_conversation_decision(decision_id)
+        if decision is None:
+            raise HTTPException(status_code=404, detail="decision_not_found")
+        project = require_project_access(decision.project_id, request)
+        return decision, project
 
     def infer_stage_goal(*, current_node: str | None, phase_decision: str | None, chapter_no: int | None) -> str:
         if phase_decision == "replan":
@@ -402,10 +494,14 @@ def create_app(
             "top_issue_categories": top_entries(issue_category_counts),
         }
 
-    def build_business_metrics(project_id: str | None = None) -> BusinessMetricsResponse:
-        all_projects = app.state.store.list_projects()
+    def build_business_metrics(
+        project_id: str | None = None,
+        *,
+        projects_override: list[object] | None = None,
+    ) -> BusinessMetricsResponse:
+        all_projects = projects_override if projects_override is not None else app.state.store.list_projects()
         if project_id is not None:
-            project = app.state.store.get_project(project_id)
+            project = next((item for item in all_projects if item.project_id == project_id), None)
             if project is None:
                 raise HTTPException(status_code=404, detail="project_not_found")
             projects = [project]
@@ -1028,10 +1124,14 @@ def create_app(
         )
         return app.state.store.get_conversation_thread(thread.thread_id) or thread
 
-    def build_strategy_suggestions(project_id: str | None = None) -> StrategySuggestionsResponse:
-        all_projects = app.state.store.list_projects()
+    def build_strategy_suggestions(
+        project_id: str | None = None,
+        *,
+        projects_override: list[object] | None = None,
+    ) -> StrategySuggestionsResponse:
+        all_projects = projects_override if projects_override is not None else app.state.store.list_projects()
         if project_id is not None:
-            project = app.state.store.get_project(project_id)
+            project = next((item for item in all_projects if item.project_id == project_id), None)
             if project is None:
                 raise HTTPException(status_code=404, detail="project_not_found")
             projects = [project]
@@ -1506,14 +1606,43 @@ def create_app(
     async def attach_request_id(request: Request, call_next):
         request_id = request.headers.get("x-request-id", f"req_{uuid4().hex[:12]}")
         request.state.request_id = request_id
-        request.state.actor = request.headers.get("x-operator-id", app.state.config.operator_id)
-        if request.url.path.startswith("/api") and app.state.config.admin_token:
-            provided = request.headers.get("x-api-key")
-            auth_header = request.headers.get("authorization", "")
-            if auth_header.lower().startswith("bearer "):
-                provided = auth_header[7:].strip()
-            if provided != app.state.config.admin_token:
-                return JSONResponse(status_code=401, content={"detail": "unauthorized"})
+        request.state.actor = app.state.config.operator_id
+        request.state.writer_user = None
+        request.state.is_admin = False
+        request.state.writer_session = None
+
+        provided = request.headers.get("x-api-key")
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.lower().startswith("bearer "):
+            provided = auth_header[7:].strip()
+        if app.state.config.admin_token and provided == app.state.config.admin_token:
+            request.state.is_admin = True
+            request.state.actor = request.headers.get("x-operator-id", app.state.config.operator_id)
+        else:
+            session_token = request.cookies.get(SESSION_COOKIE_NAME)
+            if session_token:
+                writer_session = app.state.store.get_writer_session_by_token(session_token)
+                if writer_session is not None:
+                    writer_user = app.state.store.get_writer_user(writer_session.user_id)
+                    if writer_user is not None:
+                        refreshed_session = app.state.store.touch_writer_session(writer_session.session_id) or writer_session
+                        request.state.writer_session = refreshed_session
+                        request.state.writer_user = writer_user
+                        request.state.actor = request.headers.get("x-operator-id", writer_user.pen_name)
+
+        if request.url.path.startswith("/api"):
+            public_paths = {
+                "/api/auth/register",
+                "/api/auth/login",
+                "/api/auth/logout",
+                "/api/me",
+            }
+            if (
+                request.url.path not in public_paths
+                and not request.state.is_admin
+                and request.state.writer_user is None
+            ):
+                return JSONResponse(status_code=401, content={"detail": "login_required"})
         response = await call_next(request)
         response.headers["x-request-id"] = request_id
         return response
@@ -2875,13 +3004,79 @@ def create_app(
             database=database,
         )
 
+    @app.post("/api/auth/register", response_model=CurrentUserResponse, status_code=201)
+    async def register_writer(
+        payload: AuthRegisterRequest,
+        response: Response,
+    ) -> CurrentUserResponse:
+        pen_name = normalize_pen_name(payload.pen_name)
+        if len(pen_name) < 2:
+            raise HTTPException(status_code=400, detail="pen_name_too_short")
+        if app.state.store.count_writer_users() >= app.state.config.writer_registration_limit:
+            raise HTTPException(status_code=403, detail="registration_limit_reached")
+        existing = app.state.store.get_writer_user_by_pen_name(pen_name)
+        if existing is not None:
+            raise HTTPException(status_code=409, detail="pen_name_taken")
+        user = app.state.store.create_writer_user(
+            pen_name=pen_name,
+            password_hash=hash_password(payload.password),
+        )
+        session_record = app.state.store.create_writer_session(
+            user_id=user.user_id,
+            pen_name=user.pen_name,
+            session_token=new_session_token(),
+        )
+        set_session_cookie(response, session_record.session_token)
+        return build_current_user_response(user)
+
+    @app.post("/api/auth/login", response_model=CurrentUserResponse)
+    async def login_writer(
+        payload: AuthLoginRequest,
+        response: Response,
+    ) -> CurrentUserResponse:
+        pen_name = normalize_pen_name(payload.pen_name)
+        user = app.state.store.get_writer_user_by_pen_name(pen_name)
+        if user is None or not verify_password(payload.password, user.password_hash):
+            raise HTTPException(status_code=401, detail="invalid_credentials")
+        session_record = app.state.store.create_writer_session(
+            user_id=user.user_id,
+            pen_name=user.pen_name,
+            session_token=new_session_token(),
+        )
+        set_session_cookie(response, session_record.session_token)
+        return build_current_user_response(user)
+
+    @app.post("/api/auth/logout", status_code=204)
+    async def logout_writer(request: Request) -> Response:
+        writer_session = getattr(request.state, "writer_session", None)
+        if writer_session is not None:
+            app.state.store.delete_writer_session(writer_session.session_id)
+        response = Response(status_code=204)
+        clear_session_cookie(response)
+        return response
+
+    @app.get("/api/me", response_model=CurrentUserResponse)
+    async def get_current_user(request: Request) -> CurrentUserResponse:
+        user = current_user_from_request(request)
+        if user is None:
+            raise HTTPException(status_code=401, detail="login_required")
+        return build_current_user_response(user)
+
     @app.get("/api/business-metrics", response_model=BusinessMetricsResponse)
-    async def business_metrics(project_id: str | None = None) -> BusinessMetricsResponse:
-        return build_business_metrics(project_id=project_id)
+    async def business_metrics(request: Request, project_id: str | None = None) -> BusinessMetricsResponse:
+        visible_projects = visible_projects_for_request(request)
+        if project_id is not None:
+            project = require_project_access(project_id, request)
+            return build_business_metrics(project_id=project.project_id, projects_override=[project])
+        return build_business_metrics(project_id=None, projects_override=visible_projects)
 
     @app.get("/api/strategy-suggestions", response_model=StrategySuggestionsResponse)
-    async def strategy_suggestions(project_id: str | None = None) -> StrategySuggestionsResponse:
-        return build_strategy_suggestions(project_id=project_id)
+    async def strategy_suggestions(request: Request, project_id: str | None = None) -> StrategySuggestionsResponse:
+        visible_projects = visible_projects_for_request(request)
+        if project_id is not None:
+            project = require_project_access(project_id, request)
+            return build_strategy_suggestions(project_id=project.project_id, projects_override=[project])
+        return build_strategy_suggestions(project_id=None, projects_override=visible_projects)
 
     @app.post("/api/projects/{project_id}/strategy-suggestions/{suggestion_key}/actions", response_model=StrategySuggestionActionResponse)
     async def act_on_strategy_suggestion(
@@ -2891,9 +3086,7 @@ def create_app(
         request: Request,
         response: Response,
     ) -> StrategySuggestionActionResponse:
-        project = app.state.store.get_project(project_id)
-        if project is None:
-            raise HTTPException(status_code=404, detail="project_not_found")
+        project = require_project_access(project_id, request)
         diagnostics = collect_business_diagnostics([project])
         candidate = next((item for item in build_strategy_candidates(diagnostics=diagnostics) if item["suggestion_key"] == suggestion_key), None)
         existing = app.state.store.get_strategy_suggestion(project_id=project_id, suggestion_key=suggestion_key)
@@ -2972,11 +3165,16 @@ def create_app(
 
     @app.post("/api/projects", response_model=ProjectResponse, status_code=201)
     async def create_project(payload: ProjectCreateRequest, request: Request, response: Response) -> ProjectResponse:
+        writer_user = current_user_from_request(request)
+        if writer_user is None and not getattr(request.state, "is_admin", False):
+            raise HTTPException(status_code=401, detail="login_required")
         project = app.state.store.create_project(
             name=payload.name,
             description=payload.description,
             default_user_brief=payload.default_user_brief,
             default_target_chapters=payload.default_target_chapters,
+            owner_user_id=writer_user.user_id if writer_user else None,
+            owner_pen_name=writer_user.pen_name if writer_user else None,
         )
         audit(
             request=request,
@@ -2993,21 +3191,17 @@ def create_app(
         return ProjectResponse.model_validate(project.__dict__)
 
     @app.get("/api/projects", response_model=list[ProjectResponse])
-    async def list_projects() -> list[ProjectResponse]:
-        return [ProjectResponse.model_validate(project.__dict__) for project in app.state.store.list_projects()]
+    async def list_projects(request: Request) -> list[ProjectResponse]:
+        return [ProjectResponse.model_validate(project.__dict__) for project in visible_projects_for_request(request)]
 
     @app.get("/api/projects/{project_id}", response_model=ProjectResponse)
-    async def get_project(project_id: str) -> ProjectResponse:
-        project = app.state.store.get_project(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="project_not_found")
+    async def get_project(project_id: str, request: Request) -> ProjectResponse:
+        project = require_project_access(project_id, request)
         return ProjectResponse.model_validate(project.__dict__)
 
     @app.post("/api/projects/{project_id}/runs", response_model=RunResponse, status_code=201)
     async def create_run(project_id: str, payload: RunCreateRequest, request: Request, response: Response) -> RunResponse:
-        project = app.state.store.get_project(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="project_not_found")
+        project = require_project_access(project_id, request)
 
         is_continuation = False
         request_payload = call_prepare_project_request(
@@ -3088,9 +3282,7 @@ def create_app(
 
     @app.post("/api/runs/{run_id}/mark-failed", response_model=RunResponse)
     async def mark_run_failed(run_id: str, request: Request, response: Response) -> RunResponse:
-        run = app.state.store.get_run(run_id)
-        if not run:
-            raise HTTPException(status_code=404, detail="run_not_found")
+        run, _project = require_run_access(run_id, request)
         if run.status != "running":
             raise HTTPException(status_code=409, detail="run_not_running")
 
@@ -3120,15 +3312,11 @@ def create_app(
 
     @app.post("/api/runs/{run_id}/retry", response_model=RunResponse, status_code=201)
     async def retry_run(run_id: str, request: Request, response: Response) -> RunResponse:
-        previous_run = app.state.store.get_run(run_id)
-        if not previous_run:
-            raise HTTPException(status_code=404, detail="run_not_found")
+        previous_run, _project = require_run_access(run_id, request)
         if previous_run.status == "running":
             raise HTTPException(status_code=409, detail="run_still_running")
 
-        project = app.state.store.get_project(previous_run.project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="project_not_found")
+        project = require_project_access(previous_run.project_id, request)
 
         request_payload = dict(previous_run.request)
         request_payload["operator_id"] = request.state.actor
@@ -3167,35 +3355,27 @@ def create_app(
         return RunResponse.model_validate(run.__dict__)
 
     @app.get("/api/runs/{run_id}", response_model=RunResponse)
-    async def get_run(run_id: str) -> RunResponse:
-        run = app.state.store.get_run(run_id)
-        if not run:
-            raise HTTPException(status_code=404, detail="run_not_found")
+    async def get_run(run_id: str, request: Request) -> RunResponse:
+        run, _project = require_run_access(run_id, request)
         run = maybe_finalize_stale_run(run)
         return RunResponse.model_validate(enrich_run_payload(run))
 
     @app.get("/api/projects/{project_id}/runs", response_model=list[RunResponse])
-    async def list_runs(project_id: str) -> list[RunResponse]:
-        project = app.state.store.get_project(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="project_not_found")
+    async def list_runs(project_id: str, request: Request) -> list[RunResponse]:
+        require_project_access(project_id, request)
         return [
             RunResponse.model_validate(enrich_run_payload(maybe_finalize_stale_run(item)))
             for item in app.state.store.list_runs(project_id)
         ]
 
     @app.get("/api/projects/{project_id}/chapters", response_model=list[ChapterResponse])
-    async def list_chapters(project_id: str) -> list[ChapterResponse]:
-        project = app.state.store.get_project(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="project_not_found")
+    async def list_chapters(project_id: str, request: Request) -> list[ChapterResponse]:
+        require_project_access(project_id, request)
         return [ChapterResponse.model_validate(item.__dict__) for item in app.state.store.list_chapters(project_id)]
 
     @app.get("/api/runs/{run_id}/artifacts", response_model=list[ArtifactResponse])
-    async def list_run_artifacts(run_id: str) -> list[ArtifactResponse]:
-        run = app.state.store.get_run(run_id)
-        if not run:
-            raise HTTPException(status_code=404, detail="run_not_found")
+    async def list_run_artifacts(run_id: str, request: Request) -> list[ArtifactResponse]:
+        run, _project = require_run_access(run_id, request)
         run = maybe_finalize_stale_run(run)
         stored = [ArtifactResponse.model_validate(item.__dict__) for item in app.state.store.list_artifacts(run_id)]
         if run.status != "running":
@@ -3232,9 +3412,7 @@ def create_app(
         request: Request,
         response: Response,
     ) -> ApprovalRequestResponse:
-        run = app.state.store.get_run(run_id)
-        if not run:
-            raise HTTPException(status_code=404, detail="run_not_found")
+        run, _project = require_run_access(run_id, request)
         approval = app.state.store.create_approval_request(
             project_id=run.project_id,
             run_id=run_id,
@@ -3261,17 +3439,13 @@ def create_app(
         return ApprovalRequestResponse.model_validate(approval.__dict__)
 
     @app.get("/api/approval-requests/{approval_id}", response_model=ApprovalRequestResponse)
-    async def get_approval_request(approval_id: str) -> ApprovalRequestResponse:
-        approval = app.state.store.get_approval_request(approval_id)
-        if not approval:
-            raise HTTPException(status_code=404, detail="approval_request_not_found")
+    async def get_approval_request(approval_id: str, request: Request) -> ApprovalRequestResponse:
+        approval, _project = require_approval_access(approval_id, request)
         return ApprovalRequestResponse.model_validate(approval.__dict__)
 
     @app.get("/api/projects/{project_id}/approval-requests", response_model=list[ApprovalRequestResponse])
-    async def list_project_approval_requests(project_id: str) -> list[ApprovalRequestResponse]:
-        project = app.state.store.get_project(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="project_not_found")
+    async def list_project_approval_requests(project_id: str, request: Request) -> list[ApprovalRequestResponse]:
+        require_project_access(project_id, request)
         return [
             ApprovalRequestResponse.model_validate(item.__dict__)
             for item in app.state.store.list_approval_requests(project_id=project_id)
@@ -3284,6 +3458,7 @@ def create_app(
         request: Request,
         response: Response,
     ) -> ApprovalRequestResponse:
+        require_approval_access(approval_id, request)
         approval = app.state.store.resolve_approval_request(
             approval_id=approval_id,
             decision=payload.decision,
@@ -3316,9 +3491,7 @@ def create_app(
         response: Response,
         payload: ApprovalExecuteRequest | None = Body(default=None),
     ) -> ApprovalExecuteResponse:
-        approval = app.state.store.get_approval_request(approval_id)
-        if not approval:
-            raise HTTPException(status_code=404, detail="approval_request_not_found")
+        approval, _project = require_approval_access(approval_id, request)
         if approval.status != "approved":
             raise HTTPException(status_code=400, detail="approval_request_must_be_approved")
         if approval.executed_run_id:
@@ -3333,9 +3506,7 @@ def create_app(
         original_run = app.state.store.get_run(approval.run_id)
         if not original_run:
             raise HTTPException(status_code=404, detail="source_run_not_found")
-        project = app.state.store.get_project(approval.project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="project_not_found")
+        project = require_project_access(approval.project_id, request)
         effective_requested_action = payload.requested_action_override if payload and payload.requested_action_override else approval.requested_action
         artifacts = [item.__dict__ for item in app.state.store.list_artifacts(approval.run_id)]
         request_payload = app.state.workflow.prepare_followup_request(
@@ -3391,10 +3562,8 @@ def create_app(
         )
 
     @app.get("/api/projects/{project_id}/conversation-threads", response_model=list[ConversationThreadResponse])
-    async def list_conversation_threads(project_id: str) -> list[ConversationThreadResponse]:
-        project = app.state.store.get_project(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="project_not_found")
+    async def list_conversation_threads(project_id: str, request: Request) -> list[ConversationThreadResponse]:
+        require_project_access(project_id, request)
         return [
             ConversationThreadResponse.model_validate(enrich_thread_payload(item))
             for item in app.state.store.list_conversation_threads(project_id)
@@ -3407,9 +3576,7 @@ def create_app(
         request: Request,
         response: Response,
     ) -> ConversationThreadResponse:
-        project = app.state.store.get_project(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="project_not_found")
+        project = require_project_access(project_id, request)
         linked_run = None
         chapter_no = payload.linked_chapter_no
         if payload.linked_run_id:
@@ -3453,10 +3620,8 @@ def create_app(
         return ConversationThreadResponse.model_validate(enrich_thread_payload(thread))
 
     @app.get("/api/conversation-threads/{thread_id}", response_model=ConversationThreadResponse)
-    async def get_conversation_thread(thread_id: str) -> ConversationThreadResponse:
-        thread = app.state.store.get_conversation_thread(thread_id)
-        if not thread:
-            raise HTTPException(status_code=404, detail="conversation_thread_not_found")
+    async def get_conversation_thread(thread_id: str, request: Request) -> ConversationThreadResponse:
+        thread, _project = require_thread_access(thread_id, request)
         return ConversationThreadResponse.model_validate(enrich_thread_payload(thread))
 
     @app.post("/api/conversation-threads/{thread_id}/apply-project-summary", response_model=ProjectResponse)
@@ -3465,12 +3630,7 @@ def create_app(
         request: Request,
         response: Response,
     ) -> ProjectResponse:
-        thread = app.state.store.get_conversation_thread(thread_id)
-        if not thread:
-            raise HTTPException(status_code=404, detail="conversation_thread_not_found")
-        project = app.state.store.get_project(thread.project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="project_not_found")
+        thread, project = require_thread_access(thread_id, request)
         interview_state = build_interview_state(thread=thread, project=project)
         if interview_state is None or not (interview_state.get("stage_confirmation") or {}).get("project_summary"):
             raise HTTPException(status_code=409, detail="project_summary_not_ready")
@@ -3514,12 +3674,7 @@ def create_app(
         request: Request,
         response: Response,
     ) -> ProjectResponse:
-        thread = app.state.store.get_conversation_thread(thread_id)
-        if not thread:
-            raise HTTPException(status_code=404, detail="conversation_thread_not_found")
-        project = app.state.store.get_project(thread.project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="project_not_found")
+        thread, project = require_thread_access(thread_id, request)
         interview_state = build_interview_state(thread=thread, project=project)
         if interview_state is None or not (interview_state.get("stage_confirmation") or {}).get("stage_summary"):
             raise HTTPException(status_code=409, detail="stage_summary_not_ready")
@@ -3572,12 +3727,7 @@ def create_app(
         request: Request,
         response: Response,
     ) -> list[ConversationDecisionResponse]:
-        thread = app.state.store.get_conversation_thread(thread_id)
-        if not thread:
-            raise HTTPException(status_code=404, detail="conversation_thread_not_found")
-        project = app.state.store.get_project(thread.project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="project_not_found")
+        thread, project = require_thread_access(thread_id, request)
         interview_state = build_interview_state(thread=thread, project=project)
         if interview_state is None:
             raise HTTPException(status_code=409, detail="stage_confirmation_not_ready")
@@ -3646,10 +3796,8 @@ def create_app(
         return [conversation_decision_response(item) for item in created_or_reused]
 
     @app.get("/api/conversation-threads/{thread_id}/messages", response_model=list[ConversationMessageResponse])
-    async def list_conversation_messages(thread_id: str) -> list[ConversationMessageResponse]:
-        thread = app.state.store.get_conversation_thread(thread_id)
-        if not thread:
-            raise HTTPException(status_code=404, detail="conversation_thread_not_found")
+    async def list_conversation_messages(thread_id: str, request: Request) -> list[ConversationMessageResponse]:
+        thread, _project = require_thread_access(thread_id, request)
         return [
             ConversationMessageResponse.model_validate(item.__dict__)
             for item in app.state.store.list_conversation_messages(thread_id)
@@ -3662,9 +3810,7 @@ def create_app(
         request: Request,
         response: Response,
     ) -> list[ConversationMessageResponse]:
-        thread = app.state.store.get_conversation_thread(thread_id)
-        if not thread:
-            raise HTTPException(status_code=404, detail="conversation_thread_not_found")
+        thread, _project = require_thread_access(thread_id, request)
         user_message = app.state.store.add_conversation_message(
             thread_id=thread_id,
             role="user",
@@ -3711,10 +3857,8 @@ def create_app(
         return [ConversationMessageResponse.model_validate(item.__dict__) for item in messages]
 
     @app.get("/api/projects/{project_id}/conversation-decisions", response_model=list[ConversationDecisionResponse])
-    async def list_conversation_decisions(project_id: str) -> list[ConversationDecisionResponse]:
-        project = app.state.store.get_project(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="project_not_found")
+    async def list_conversation_decisions(project_id: str, request: Request) -> list[ConversationDecisionResponse]:
+        require_project_access(project_id, request)
         return [
             conversation_decision_response(item)
             for item in app.state.store.list_conversation_decisions(project_id=project_id)
@@ -3727,9 +3871,7 @@ def create_app(
         request: Request,
         response: Response,
     ) -> ConversationDecisionResponse:
-        decision = app.state.store.get_conversation_decision(decision_id)
-        if not decision:
-            raise HTTPException(status_code=404, detail="conversation_decision_not_found")
+        decision, _project = require_decision_access(decision_id, request)
         updated = app.state.store.update_conversation_decision(
             decision_id=decision_id,
             payload=rewrite_conversation_decision_payload(
@@ -3760,9 +3902,7 @@ def create_app(
         request: Request,
         response: Response,
     ) -> Response:
-        decision = app.state.store.get_conversation_decision(decision_id)
-        if not decision:
-            raise HTTPException(status_code=404, detail="conversation_decision_not_found")
+        decision, _project = require_decision_access(decision_id, request)
         deleted = app.state.store.delete_conversation_decision(decision_id)
         if not deleted:
             raise HTTPException(status_code=404, detail="conversation_decision_not_found")
@@ -3787,9 +3927,7 @@ def create_app(
         request: Request,
         response: Response,
     ) -> ConversationDecisionResponse:
-        thread = app.state.store.get_conversation_thread(thread_id)
-        if not thread:
-            raise HTTPException(status_code=404, detail="conversation_thread_not_found")
+        thread, _project = require_thread_access(thread_id, request)
         source_label = payload.source_label or "当前理解草案"
         source_message = app.state.store.add_conversation_message(
             thread_id=thread.thread_id,
@@ -3845,9 +3983,7 @@ def create_app(
         message = app.state.store.get_conversation_message(message_id)
         if not message:
             raise HTTPException(status_code=404, detail="conversation_message_not_found")
-        thread = app.state.store.get_conversation_thread(message.thread_id)
-        if not thread:
-            raise HTTPException(status_code=404, detail="conversation_thread_not_found")
+        thread, _project = require_thread_access(message.thread_id, request)
         decision = app.state.store.create_conversation_decision(
             project_id=thread.project_id,
             thread_id=thread.thread_id,
@@ -3876,9 +4012,13 @@ def create_app(
         return conversation_decision_response(decision)
 
     @app.get("/api/audit-logs", response_model=list[AuditLogResponse])
-    async def list_audit_logs(limit: int = 100) -> list[AuditLogResponse]:
+    async def list_audit_logs(request: Request, limit: int = 100) -> list[AuditLogResponse]:
         safe_limit = max(1, min(limit, 500))
-        return [AuditLogResponse.model_validate(item.__dict__) for item in app.state.store.list_audit_logs(limit=safe_limit)]
+        items = app.state.store.list_audit_logs(limit=safe_limit)
+        if not getattr(request.state, "is_admin", False):
+            visible_project_ids = {item.project_id for item in visible_projects_for_request(request)}
+            items = [item for item in items if item.project_id in visible_project_ids]
+        return [AuditLogResponse.model_validate(item.__dict__) for item in items]
 
     return app
 

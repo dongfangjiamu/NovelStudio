@@ -12,6 +12,7 @@ const state = {
   conversationMessages: [],
   businessMetrics: null,
   strategySuggestions: null,
+  currentUser: null,
   launchPlan: {
     chapterFocus: "先把悬念抛出来",
     launchNote: "",
@@ -23,14 +24,19 @@ const state = {
     conversationThreads: [],
     conversationDecisions: [],
   },
-  apiToken: localStorage.getItem("novelstudio_api_token") || "",
-  operatorId: localStorage.getItem("novelstudio_operator_id") || "editor-1",
 };
 
 const el = {
-  apiToken: document.getElementById("api-token"),
-  operatorId: document.getElementById("operator-id"),
-  saveAuth: document.getElementById("save-auth"),
+  authCaption: document.getElementById("auth-caption"),
+  authCurrentUser: document.getElementById("auth-current-user"),
+  currentUserPenName: document.getElementById("current-user-pen-name"),
+  authForm: document.getElementById("auth-form"),
+  authPenName: document.getElementById("auth-pen-name"),
+  authPassword: document.getElementById("auth-password"),
+  loginButton: document.getElementById("login-button"),
+  registerButton: document.getElementById("register-button"),
+  logoutButton: document.getElementById("logout-button"),
+  authGuard: document.getElementById("auth-guard"),
   refreshProjects: document.getElementById("refresh-projects"),
   refreshAudit: document.getElementById("refresh-audit"),
   projectsList: document.getElementById("projects-list"),
@@ -251,10 +257,56 @@ function setWorkspaceTab(tab) {
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
+function isAuthenticated() {
+  return Boolean(state.currentUser);
+}
+
+function resetWorkspaceState() {
+  state.projects = [];
+  state.selectedProjectId = null;
+  state.selectedRunId = null;
+  state.selectedThreadId = null;
+  state.artifactRunId = null;
+  state.artifactFingerprint = "";
+  state.artifactItems = [];
+  state.decisionDrafts = [];
+  state.conversationMessages = [];
+  state.businessMetrics = null;
+  state.strategySuggestions = null;
+  state.projectSnapshot = {
+    chapters: [],
+    runs: [],
+    approvals: [],
+    conversationThreads: [],
+    conversationDecisions: [],
+  };
+}
+
+function updateAuthUi() {
+  const loggedIn = isAuthenticated();
+  document.body.classList.toggle("logged-out", !loggedIn);
+  if (el.authCurrentUser) el.authCurrentUser.hidden = !loggedIn;
+  if (el.authForm) el.authForm.hidden = loggedIn;
+  if (el.authGuard) el.authGuard.hidden = loggedIn;
+  if (el.currentUserPenName) {
+    el.currentUserPenName.textContent = loggedIn ? state.currentUser.pen_name : "未登录";
+  }
+  if (el.authCaption) {
+    el.authCaption.textContent = loggedIn
+      ? `当前以“${state.currentUser.pen_name}”身份登录。你只能看到自己的作品。`
+      : "先用笔名注册或登录。默认最多允许 5 位作家注册。";
+  }
+  if (!loggedIn) {
+    renderProjects();
+    renderProjectState();
+    renderAudit([]);
+  }
+}
+
 function headers() {
-  const value = { "content-type": "application/json", "x-operator-id": state.operatorId };
-  if (state.apiToken) {
-    value["x-api-key"] = state.apiToken;
+  const value = { "content-type": "application/json" };
+  if (state.currentUser?.pen_name) {
+    value["x-operator-id"] = state.currentUser.pen_name;
   }
   return value;
 }
@@ -262,6 +314,7 @@ function headers() {
 async function api(path, options = {}) {
   const response = await fetch(path, {
     ...options,
+    credentials: "same-origin",
     headers: {
       ...headers(),
       ...(options.headers || {}),
@@ -3661,6 +3714,10 @@ function renderProjectState() {
 }
 
 function renderProjects() {
+  if (!isAuthenticated()) {
+    el.projectsList.innerHTML = `<div class="empty">登录后才会显示你的项目。</div>`;
+    return;
+  }
   if (!state.projects.length) {
     el.projectsList.innerHTML = `<div class="empty">还没有项目</div>`;
     return;
@@ -4826,6 +4883,11 @@ function renderAudit(items) {
 }
 
 async function loadProjects() {
+  if (!isAuthenticated()) {
+    resetWorkspaceState();
+    updateAuthUi();
+    return;
+  }
   setStatus("正在加载项目…");
   state.projects = (await api("/api/projects")).sort((left, right) => right.created_at.localeCompare(left.created_at));
   renderProjects();
@@ -4844,6 +4906,11 @@ async function loadProjects() {
 }
 
 async function selectProject(projectId) {
+  if (!isAuthenticated()) {
+    resetWorkspaceState();
+    updateAuthUi();
+    return;
+  }
   state.selectedProjectId = projectId;
   state.decisionDrafts = [];
   renderProjects();
@@ -4994,6 +5061,10 @@ async function handleRunAction(action, runId) {
 }
 
 async function loadAudit() {
+  if (!isAuthenticated()) {
+    renderAudit([]);
+    return;
+  }
   const logs = await api("/api/audit-logs?limit=20");
   renderAudit(logs);
 }
@@ -5026,7 +5097,7 @@ async function handleApprovalAction(action, approvalId, options = {}) {
         method: "POST",
         body: JSON.stringify({
           decision: action === "approve" ? "approved" : "rejected",
-          operator_id: state.operatorId,
+          operator_id: state.currentUser?.pen_name || "writer",
           comment: action === "approve" ? "通过" : "驳回",
         }),
       });
@@ -5101,7 +5172,7 @@ async function createRun({ quickMode = false, chapterFocus = null, launchNote = 
   if (!state.selectedProjectId) return;
   try {
     setWorkspaceTab("dashboard");
-    const body = { operator_id: state.operatorId, quick_mode: quickMode };
+    const body = { operator_id: state.currentUser?.pen_name || "writer", quick_mode: quickMode };
     if (!quickMode && chapterFocus) {
       body.chapter_focus = chapterFocus;
     }
@@ -5145,12 +5216,58 @@ async function executeConversationAction() {
   }
 }
 
-function saveAuth() {
-  state.apiToken = el.apiToken.value.trim();
-  state.operatorId = el.operatorId.value.trim() || "editor-1";
-  localStorage.setItem("novelstudio_api_token", state.apiToken);
-  localStorage.setItem("novelstudio_operator_id", state.operatorId);
-  setStatus("连接配置已保存");
+async function loadCurrentUser() {
+  try {
+    state.currentUser = await api("/api/me");
+  } catch (error) {
+    if (String(error.message || error) === "login_required") {
+      state.currentUser = null;
+      return null;
+    }
+    throw error;
+  }
+  return state.currentUser;
+}
+
+async function refreshAfterAuth() {
+  await loadProjects();
+  await loadAudit();
+  updateAuthUi();
+}
+
+async function submitAuth(mode) {
+  const penName = el.authPenName.value.trim();
+  const password = el.authPassword.value;
+  if (!penName || !password) {
+    setStatus("请先填写笔名和密码。", "error");
+    return;
+  }
+  const path = mode === "register" ? "/api/auth/register" : "/api/auth/login";
+  const label = mode === "register" ? "注册" : "登录";
+  try {
+    state.currentUser = await api(path, {
+      method: "POST",
+      body: JSON.stringify({ pen_name: penName, password }),
+    });
+    el.authPassword.value = "";
+    updateAuthUi();
+    await refreshAfterAuth();
+    setStatus(`${label}成功，已进入你的创作空间。`, "ready");
+  } catch (error) {
+    setStatus(String(error.message || error), "error");
+  }
+}
+
+async function logout() {
+  try {
+    await api("/api/auth/logout", { method: "POST" });
+  } catch (_error) {
+    // ignore logout transport errors and still clear local UI
+  }
+  state.currentUser = null;
+  resetWorkspaceState();
+  updateAuthUi();
+  setStatus("已退出登录。", "ready");
 }
 
 async function boot() {
@@ -5158,12 +5275,16 @@ async function boot() {
     state.activeWorkspaceTab = "dashboard";
   }
   renderWorkspaceTab();
-  el.apiToken.value = state.apiToken;
-  el.operatorId.value = state.operatorId;
+  updateAuthUi();
   el.workspaceTabs.forEach((node) => {
     node.addEventListener("click", () => setWorkspaceTab(node.dataset.workspaceTab));
   });
-  el.saveAuth.addEventListener("click", saveAuth);
+  el.authForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    submitAuth("login").catch((error) => setStatus(String(error.message || error), "error"));
+  });
+  el.registerButton.addEventListener("click", () => submitAuth("register").catch((error) => setStatus(String(error.message || error), "error")));
+  el.logoutButton.addEventListener("click", () => logout().catch((error) => setStatus(String(error.message || error), "error")));
   el.refreshProjects.addEventListener("click", () => loadProjects().catch((error) => setStatus(error.message, "error")));
   el.refreshAudit.addEventListener("click", () => loadAudit().catch((error) => setStatus(error.message, "error")));
   el.ideaCaptureForm.addEventListener("submit", createIdeaProject);
@@ -5180,8 +5301,18 @@ async function boot() {
   el.conversationForm.addEventListener("submit", sendConversationMessage);
 
   try {
-    await loadProjects();
-    await loadAudit();
+    await loadCurrentUser();
+    updateAuthUi();
+    if (isAuthenticated()) {
+      await loadProjects();
+      await loadAudit();
+    } else {
+      resetWorkspaceState();
+      renderProjects();
+      renderAudit([]);
+      renderProjectState();
+      setStatus("请先注册或登录笔名。", "warn");
+    }
   } catch (error) {
     setStatus(String(error.message || error), "error");
     renderProjects();

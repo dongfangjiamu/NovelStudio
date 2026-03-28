@@ -25,6 +25,7 @@ class AppConfig:
     project_id: str
     operator_id: str
     openai_base_url: str | None = None
+    writer_registration_limit: int = 5
 
     def to_runtime_context(self) -> RuntimeContext:
         return RuntimeContext(
@@ -45,6 +46,7 @@ def load_config() -> AppConfig:
         model_name=os.getenv("NOVEL_STUDIO_MODEL", "gpt-5-nano"),
         project_id=os.getenv("NOVEL_STUDIO_PROJECT_ID", "demo-book"),
         operator_id=os.getenv("NOVEL_STUDIO_OPERATOR_ID", "local-dev"),
+        writer_registration_limit=max(1, int(os.getenv("NOVEL_STUDIO_WRITER_REGISTRATION_LIMIT", "5"))),
     )
     validate_config(config)
     return config

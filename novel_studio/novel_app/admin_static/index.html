@@ -15,16 +15,31 @@
         </div>
 
         <section class="panel auth-panel">
-          <h2>连接设置</h2>
-          <label>
-            <span>API Token</span>
-            <input id="api-token" type="password" placeholder="可选" />
-          </label>
-          <label>
-            <span>操作者标识</span>
-            <input id="operator-id" type="text" placeholder="editor-1" />
-          </label>
-          <button id="save-auth" class="button secondary">保存配置</button>
+          <div class="panel-head">
+            <div>
+              <h2>作家登录</h2>
+              <div id="auth-caption" class="muted">先用笔名注册或登录。默认最多允许 5 位作家注册。</div>
+            </div>
+          </div>
+          <div id="auth-current-user" class="stack" hidden>
+            <div class="meta">当前登录作家</div>
+            <div id="current-user-pen-name" class="auth-user-name">未登录</div>
+            <button id="logout-button" class="button secondary">退出登录</button>
+          </div>
+          <form id="auth-form" class="stack">
+            <label>
+              <span>笔名</span>
+              <input id="auth-pen-name" type="text" maxlength="32" placeholder="例如：陈灵" required />
+            </label>
+            <label>
+              <span>密码</span>
+              <input id="auth-password" type="password" minlength="8" maxlength="128" placeholder="至少 8 位" required />
+            </label>
+            <div class="actions">
+              <button id="login-button" class="button primary" type="submit">登录</button>
+              <button id="register-button" class="button ghost" type="button">注册笔名</button>
+            </div>
+          </form>
         </section>
 
         <section class="panel">
@@ -45,6 +60,11 @@
             <p id="hero-note" class="hero-note">系统会尽量直接告诉你：现在在做什么、为什么停住了、下一步该点哪里。</p>
           </div>
           <div id="status-pill" class="pill">Ready</div>
+        </section>
+
+        <section id="auth-guard" class="panel auth-guard" hidden>
+          <h2>请先登录</h2>
+          <p class="muted">登录后，你只会看到自己创建的作品和相关过程数据，不会看到其他作家的项目。</p>
         </section>
 
         <nav class="workspace-tabs" aria-label="工作区导航">

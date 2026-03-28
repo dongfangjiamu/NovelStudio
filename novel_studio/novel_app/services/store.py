@@ -19,6 +19,26 @@ class ProjectRecord:
     default_user_brief: dict[str, Any]
     default_target_chapters: int
     created_at: str
+    owner_user_id: str | None = None
+    owner_pen_name: str | None = None
+
+
+@dataclass(frozen=True)
+class WriterUserRecord:
+    user_id: str
+    pen_name: str
+    password_hash: str
+    created_at: str
+
+
+@dataclass(frozen=True)
+class WriterSessionRecord:
+    session_id: str
+    user_id: str
+    pen_name: str
+    session_token: str
+    created_at: str
+    last_seen_at: str
 
 
 @dataclass(frozen=True)
@@ -146,6 +166,8 @@ class InMemoryStore:
     def __init__(self) -> None:
         self._lock = RLock()
         self._projects: dict[str, ProjectRecord] = {}
+        self._writer_users: dict[str, WriterUserRecord] = {}
+        self._writer_sessions: dict[str, WriterSessionRecord] = {}
         self._runs: dict[str, RunRecord] = {}
         self._chapters: dict[str, ChapterRecord] = {}
         self._artifacts: dict[str, ArtifactRecord] = {}
@@ -163,6 +185,8 @@ class InMemoryStore:
         description: str | None,
         default_user_brief: dict[str, Any],
         default_target_chapters: int,
+        owner_user_id: str | None = None,
+        owner_pen_name: str | None = None,
     ) -> ProjectRecord:
         with self._lock:
             project = ProjectRecord(
@@ -172,6 +196,8 @@ class InMemoryStore:
                 default_user_brief=default_user_brief,
                 default_target_chapters=default_target_chapters,
                 created_at=utc_now_iso(),
+                owner_user_id=owner_user_id,
+                owner_pen_name=owner_pen_name,
             )
             self._projects[project.project_id] = project
             return project
@@ -201,9 +227,76 @@ class InMemoryStore:
                 default_user_brief=default_user_brief,
                 default_target_chapters=current.default_target_chapters,
                 created_at=current.created_at,
+                owner_user_id=current.owner_user_id,
+                owner_pen_name=current.owner_pen_name,
             )
             self._projects[project_id] = updated
             return updated
+
+    def count_writer_users(self) -> int:
+        with self._lock:
+            return len(self._writer_users)
+
+    def create_writer_user(self, *, pen_name: str, password_hash: str) -> WriterUserRecord:
+        with self._lock:
+            user = WriterUserRecord(
+                user_id=f"usr_{uuid4().hex[:12]}",
+                pen_name=pen_name,
+                password_hash=password_hash,
+                created_at=utc_now_iso(),
+            )
+            self._writer_users[user.user_id] = user
+            return user
+
+    def get_writer_user(self, user_id: str) -> WriterUserRecord | None:
+        with self._lock:
+            return self._writer_users.get(user_id)
+
+    def get_writer_user_by_pen_name(self, pen_name: str) -> WriterUserRecord | None:
+        normalized = pen_name.strip().lower()
+        with self._lock:
+            return next((item for item in self._writer_users.values() if item.pen_name.lower() == normalized), None)
+
+    def create_writer_session(self, *, user_id: str, pen_name: str, session_token: str) -> WriterSessionRecord:
+        with self._lock:
+            now = utc_now_iso()
+            session = WriterSessionRecord(
+                session_id=f"ses_{uuid4().hex[:12]}",
+                user_id=user_id,
+                pen_name=pen_name,
+                session_token=session_token,
+                created_at=now,
+                last_seen_at=now,
+            )
+            self._writer_sessions[session.session_id] = session
+            return session
+
+    def get_writer_session_by_token(self, session_token: str) -> WriterSessionRecord | None:
+        with self._lock:
+            return next((item for item in self._writer_sessions.values() if item.session_token == session_token), None)
+
+    def touch_writer_session(self, session_id: str) -> WriterSessionRecord | None:
+        with self._lock:
+            current = self._writer_sessions.get(session_id)
+            if current is None:
+                return None
+            updated = WriterSessionRecord(
+                session_id=current.session_id,
+                user_id=current.user_id,
+                pen_name=current.pen_name,
+                session_token=current.session_token,
+                created_at=current.created_at,
+                last_seen_at=utc_now_iso(),
+            )
+            self._writer_sessions[session_id] = updated
+            return updated
+
+    def delete_writer_session(self, session_id: str) -> bool:
+        with self._lock:
+            if session_id not in self._writer_sessions:
+                return False
+            del self._writer_sessions[session_id]
+            return True
 
     def save_run(
         self,

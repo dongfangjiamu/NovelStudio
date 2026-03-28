@@ -23,7 +23,21 @@ def make_client() -> TestClient:
         ),
         store=InMemoryStore(),
     )
-    return TestClient(app)
+    return authenticated_client(app)
+
+
+def authenticate_client(client: TestClient, *, pen_name: str = "writer-a", password: str = "password123") -> TestClient:
+    response = client.post("/api/auth/register", json={"pen_name": pen_name, "password": password})
+    if response.status_code == 409:
+        response = client.post("/api/auth/login", json={"pen_name": pen_name, "password": password})
+    assert response.status_code in {200, 201}, response.text
+    return client
+
+
+def authenticated_client(app, *, pen_name: str = "writer-a", password: str = "password123") -> TestClient:
+    client = TestClient(app)
+    authenticate_client(client, pen_name=pen_name, password=password)
+    return client
 
 
 def wait_for_run(client: TestClient, run_id: str, *, timeout: float = 2.0) -> dict:
@@ -939,7 +953,7 @@ def test_draft_recap_section_can_be_adopted_directly() -> None:
             }
 
     app.state.workflow = FakeWorkflow()
-    client = TestClient(app)
+    client = authenticated_client(app)
     project = client.post(
         "/api/projects",
         json={
@@ -1006,7 +1020,7 @@ def test_conversation_decision_is_persisted_and_applied_to_run_request() -> None
             }
 
     app.state.workflow = FakeWorkflow()
-    client = TestClient(app)
+    client = authenticated_client(app)
     project = client.post(
         "/api/projects",
         json={"name": "对话采纳项目", "default_user_brief": {"title": "长夜炉火"}, "default_target_chapters": 1},
@@ -1070,7 +1084,7 @@ def test_structured_conversation_decisions_are_merged_into_user_brief() -> None:
             }
 
     app.state.workflow = FakeWorkflow()
-    client = TestClient(app)
+    client = authenticated_client(app)
     project = client.post(
         "/api/projects",
         json={"name": "结构化对话项目", "default_user_brief": {"title": "长夜炉火"}, "default_target_chapters": 1},
@@ -1151,7 +1165,7 @@ def test_conversation_decision_can_be_updated_and_deleted() -> None:
             }
 
     app.state.workflow = FakeWorkflow()
-    client = TestClient(app)
+    client = authenticated_client(app)
     project = client.post(
         "/api/projects",
         json={"name": "更新采纳项目", "default_user_brief": {"title": "长夜炉火"}, "default_target_chapters": 1},
@@ -1250,7 +1264,7 @@ def test_chapter_planning_thread_exposes_write_before_context() -> None:
             }
 
     app.state.workflow = FakeWorkflow()
-    client = TestClient(app)
+    client = authenticated_client(app)
     project = client.post(
         "/api/projects",
         json={"name": "章卡协商项目", "default_user_brief": {"title": "长夜炉火"}, "default_target_chapters": 1},
@@ -1342,7 +1356,7 @@ def test_human_check_creates_checkpoint_thread_and_approval() -> None:
             }
 
     app.state.workflow = FakeWorkflow()
-    client = TestClient(app)
+    client = authenticated_client(app)
     project = client.post(
         "/api/projects",
         json={"name": "人工检查点项目", "default_user_brief": {"title": "长夜炉火"}, "default_target_chapters": 1},
@@ -1475,7 +1489,7 @@ def test_create_run_continues_latest_completed_chapter() -> None:
             }
 
     app.state.workflow = FakeWorkflow()
-    client = TestClient(app)
+    client = authenticated_client(app)
 
     project = client.post(
         "/api/projects",
@@ -1720,7 +1734,7 @@ def test_execute_approved_followup_run_respects_recovery_override() -> None:
             }
 
     app.state.workflow = FakeWorkflow()
-    client = TestClient(app)
+    client = authenticated_client(app)
 
     project = client.post(
         "/api/projects",
@@ -1832,7 +1846,7 @@ def test_execute_approved_followup_from_human_check_continues_next_chapter() -> 
             }
 
     app.state.workflow = FakeWorkflow()
-    client = TestClient(app)
+    client = authenticated_client(app)
 
     project = client.post(
         "/api/projects",
@@ -1946,7 +1960,7 @@ def test_running_run_exposes_live_artifacts() -> None:
             }
 
     app.state.workflow = FakeWorkflow()
-    client = TestClient(app)
+    client = authenticated_client(app)
 
     project = client.post(
         "/api/projects",
@@ -2064,7 +2078,7 @@ def test_running_run_exposes_parallel_reviewer_progress() -> None:
             }
 
     app.state.workflow = FakeWorkflow()
-    client = TestClient(app)
+    client = authenticated_client(app)
 
     project = client.post(
         "/api/projects",
@@ -2137,7 +2151,7 @@ def test_mark_failed_prevents_late_background_overwrite() -> None:
             }
 
     app.state.workflow = FakeWorkflow()
-    client = TestClient(app)
+    client = authenticated_client(app)
 
     project = client.post(
         "/api/projects",
@@ -2205,7 +2219,7 @@ def test_retry_failed_run_creates_new_background_run() -> None:
             }
 
     app.state.workflow = FakeWorkflow()
-    client = TestClient(app)
+    client = authenticated_client(app)
 
     project = client.post(
         "/api/projects",
@@ -2246,7 +2260,7 @@ def test_stale_running_run_auto_transitions_to_failed() -> None:
         ),
         store=InMemoryStore(),
     )
-    client = TestClient(app)
+    client = authenticated_client(app)
 
     project = client.post(
         "/api/projects",

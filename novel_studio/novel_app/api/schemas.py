@@ -17,6 +17,24 @@ class ApiErrorResponse(BaseModel):
     detail: str
 
 
+class AuthRegisterRequest(BaseModel):
+    pen_name: str = Field(min_length=2, max_length=32)
+    password: str = Field(min_length=8, max_length=128)
+
+
+class AuthLoginRequest(BaseModel):
+    pen_name: str = Field(min_length=2, max_length=32)
+    password: str = Field(min_length=8, max_length=128)
+
+
+class CurrentUserResponse(BaseModel):
+    user_id: str
+    pen_name: str
+    registration_limit: int
+    registered_count: int
+    can_register: bool
+
+
 class BusinessMetricCardResponse(BaseModel):
     label: str
     value: str

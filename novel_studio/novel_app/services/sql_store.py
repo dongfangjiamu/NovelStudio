@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 
 from novel_app.db import (
     Base,
@@ -22,6 +22,8 @@ from novel_app.db_models import (
     ProjectModel,
     RunModel,
     StrategySuggestionModel,
+    WriterSessionModel,
+    WriterUserModel,
 )
 from novel_app.services.store import (
     ApprovalRequestRecord,
@@ -34,6 +36,8 @@ from novel_app.services.store import (
     ProjectRecord,
     RunRecord,
     StrategySuggestionRecord,
+    WriterSessionRecord,
+    WriterUserRecord,
     utc_now_iso,
 )
 
@@ -49,6 +53,8 @@ class SqlAlchemyStore:
             with self.engine.begin() as connection:
                 connection.execute(text("ALTER TABLE runs ALTER COLUMN finished_at DROP NOT NULL"))
                 connection.execute(text("UPDATE runs SET finished_at = NULL WHERE status = 'running'"))
+                connection.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS owner_user_id VARCHAR(32)"))
+                connection.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS owner_pen_name VARCHAR(120)"))
 
     @staticmethod
     def _project_record(row: ProjectModel) -> ProjectRecord:
@@ -59,6 +65,28 @@ class SqlAlchemyStore:
             default_user_brief=row.default_user_brief,
             default_target_chapters=row.default_target_chapters,
             created_at=row.created_at,
+            owner_user_id=row.owner_user_id,
+            owner_pen_name=row.owner_pen_name,
+        )
+
+    @staticmethod
+    def _writer_user_record(row: WriterUserModel) -> WriterUserRecord:
+        return WriterUserRecord(
+            user_id=row.user_id,
+            pen_name=row.pen_name,
+            password_hash=row.password_hash,
+            created_at=row.created_at,
+        )
+
+    @staticmethod
+    def _writer_session_record(row: WriterSessionModel) -> WriterSessionRecord:
+        return WriterSessionRecord(
+            session_id=row.session_id,
+            user_id=row.user_id,
+            pen_name=row.pen_name,
+            session_token=row.session_token,
+            created_at=row.created_at,
+            last_seen_at=row.last_seen_at,
         )
 
     @staticmethod
@@ -198,6 +226,8 @@ class SqlAlchemyStore:
         description: str | None,
         default_user_brief: dict,
         default_target_chapters: int,
+        owner_user_id: str | None = None,
+        owner_pen_name: str | None = None,
     ) -> ProjectRecord:
         project = ProjectRecord(
             project_id=f"proj_{uuid4().hex[:12]}",
@@ -206,6 +236,8 @@ class SqlAlchemyStore:
             default_user_brief=default_user_brief,
             default_target_chapters=default_target_chapters,
             created_at=utc_now_iso(),
+            owner_user_id=owner_user_id,
+            owner_pen_name=owner_pen_name,
         )
         with session_scope(self.session_factory) as session:
             session.add(ProjectModel(**project.__dict__))
@@ -232,6 +264,76 @@ class SqlAlchemyStore:
             session.add(row)
             session.flush()
             return self._project_record(row)
+
+    def count_writer_users(self) -> int:
+        with session_scope(self.session_factory) as session:
+            return len(session.execute(select(WriterUserModel.user_id)).all())
+
+    def create_writer_user(self, *, pen_name: str, password_hash: str) -> WriterUserRecord:
+        user = WriterUserRecord(
+            user_id=f"usr_{uuid4().hex[:12]}",
+            pen_name=pen_name,
+            password_hash=password_hash,
+            created_at=utc_now_iso(),
+        )
+        with session_scope(self.session_factory) as session:
+            session.add(WriterUserModel(**user.__dict__))
+        return user
+
+    def get_writer_user(self, user_id: str) -> WriterUserRecord | None:
+        with session_scope(self.session_factory) as session:
+            row = session.get(WriterUserModel, user_id)
+            if row is None:
+                return None
+            return self._writer_user_record(row)
+
+    def get_writer_user_by_pen_name(self, pen_name: str) -> WriterUserRecord | None:
+        normalized = pen_name.strip().lower()
+        with session_scope(self.session_factory) as session:
+            stmt = select(WriterUserModel).where(func.lower(WriterUserModel.pen_name) == normalized)
+            row = session.execute(stmt).scalar_one_or_none()
+            if row is None:
+                return None
+            return self._writer_user_record(row)
+
+    def create_writer_session(self, *, user_id: str, pen_name: str, session_token: str) -> WriterSessionRecord:
+        session_record = WriterSessionRecord(
+            session_id=f"ses_{uuid4().hex[:12]}",
+            user_id=user_id,
+            pen_name=pen_name,
+            session_token=session_token,
+            created_at=utc_now_iso(),
+            last_seen_at=utc_now_iso(),
+        )
+        with session_scope(self.session_factory) as session:
+            session.add(WriterSessionModel(**session_record.__dict__))
+        return session_record
+
+    def get_writer_session_by_token(self, session_token: str) -> WriterSessionRecord | None:
+        with session_scope(self.session_factory) as session:
+            stmt = select(WriterSessionModel).where(WriterSessionModel.session_token == session_token)
+            row = session.execute(stmt).scalar_one_or_none()
+            if row is None:
+                return None
+            return self._writer_session_record(row)
+
+    def touch_writer_session(self, session_id: str) -> WriterSessionRecord | None:
+        with session_scope(self.session_factory) as session:
+            row = session.get(WriterSessionModel, session_id)
+            if row is None:
+                return None
+            row.last_seen_at = utc_now_iso()
+            session.add(row)
+            session.flush()
+            return self._writer_session_record(row)
+
+    def delete_writer_session(self, session_id: str) -> bool:
+        with session_scope(self.session_factory) as session:
+            row = session.get(WriterSessionModel, session_id)
+            if row is None:
+                return False
+            session.delete(row)
+            return True
 
     def save_run(
         self,

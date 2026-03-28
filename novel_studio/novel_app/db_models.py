@@ -15,6 +15,28 @@ class ProjectModel(Base):
     default_user_brief: Mapped[dict] = mapped_column(JSON, nullable=False)
     default_target_chapters: Mapped[int] = mapped_column(nullable=False)
     created_at: Mapped[str] = mapped_column(String(64), nullable=False)
+    owner_user_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    owner_pen_name: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+
+
+class WriterUserModel(Base):
+    __tablename__ = "writer_users"
+
+    user_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    pen_name: Mapped[str] = mapped_column(String(120), nullable=False, unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+
+
+class WriterSessionModel(Base):
+    __tablename__ = "writer_sessions"
+
+    session_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    pen_name: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    session_token: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    created_at: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    last_seen_at: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
 
 
 class RunModel(Base):

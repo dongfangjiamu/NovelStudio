@@ -1544,6 +1544,28 @@ pre {
   background: rgba(155, 28, 28, 0.14);
 }
 
+.auth-user-name {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.auth-guard {
+  margin-bottom: 18px;
+}
+
+body.logged-out .workspace-tabs,
+body.logged-out .workspace-page {
+  display: none;
+}
+
+body.logged-out #auth-guard {
+  display: block;
+}
+
+body:not(.logged-out) #auth-guard {
+  display: none;
+}
+
 @media (max-width: 1080px) {
   .shell,
   .grid,
