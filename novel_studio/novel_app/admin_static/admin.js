@@ -3200,6 +3200,7 @@ function renderRuns(runs, focusRunId) {
     const progress = item.result?.progress || {};
     const updatedAt = progress.updated_at || item.created_at;
     const stage = runStageSummary(item);
+    const recommendation = recommendedCard ? runRecommendationSummary(item) : null;
     const marker = stage.stageDetail || (item.status === "running"
       ? progress.latest_event || nodeLabel(progress.current_node) || "等待反馈"
       : item.error || progress.latest_event || "无附加信息");
@@ -3235,6 +3236,17 @@ function renderRuns(runs, focusRunId) {
         <div class="meta">创建于 ${formatTimestamp(item.created_at)}</div>
         <div class="meta">${stage.stageLead}</div>
         <div class="meta">${summarizeRunCard(item)}</div>
+        ${
+          recommendation
+            ? `
+              <div class="focus-metric">
+                <strong>为什么建议先处理这条</strong>
+                <div class="meta">${escapeHtml(recommendation.lead)}</div>
+                ${recommendation.items.map((entry) => `<div class="meta">${escapeHtml(entry)}</div>`).join("")}
+              </div>
+            `
+            : ""
+        }
         <div class="card-caption">${caption}</div>
         <details class="run-diagnostics">
           <summary>查看完整诊断</summary>
@@ -3538,6 +3550,30 @@ function approvalReviewSummary(item, recoveryMode) {
       recommendation,
       ...review.items,
     ].filter(Boolean).slice(0, 3),
+  };
+}
+
+function runRecommendationSummary(item) {
+  const displayStatus = runDisplayStatus(item);
+  const review = buildReviewOutcomeSummary(null, item);
+  const checkpoint = humanCheckpoint(item);
+  const mode = checkpoint?.recommended_recovery_mode || "continue";
+  let recommendation = null;
+
+  if (displayStatus === "awaiting_approval") {
+    recommendation = `当前更像是：先等你拍板，再决定是否按“${recoveryModeLabel(mode)}”继续。`;
+  } else if (displayStatus === "awaiting_execution" || displayStatus === "approved") {
+    recommendation = `当前更像是：当前章先保留，按“${recoveryModeLabel(mode)}”启动下一步。`;
+  } else if (item.status === "failed") {
+    recommendation = checkpoint
+      ? `当前更像是：先按“${recoveryModeLabel(mode)}”收口，再决定是否重做。`
+      : "当前更像是：先看过程材料确认卡在哪，再决定是否重试。";
+  }
+
+  if (!review.visible && !recommendation) return null;
+  return {
+    lead: review.visible ? review.lead : "这条运行已经收口，下一步重点是决定怎么处理。",
+    items: [recommendation, ...(review.items || [])].filter(Boolean).slice(0, 3),
   };
 }
 
