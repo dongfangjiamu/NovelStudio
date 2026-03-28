@@ -411,6 +411,20 @@ body {
   border-color: rgba(138, 59, 18, 0.28);
 }
 
+.summary-card.good {
+  border-color: rgba(31, 107, 68, 0.24);
+  background: rgba(245, 252, 246, 0.94);
+}
+
+.summary-card.warn {
+  border-color: rgba(138, 59, 18, 0.24);
+  background: rgba(255, 248, 240, 0.92);
+}
+
+.compact-panel {
+  margin-top: 16px;
+}
+
 .summary-label {
   font-size: 11px;
   letter-spacing: 0.08em;

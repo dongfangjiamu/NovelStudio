@@ -10,6 +10,7 @@ const state = {
   decisionDrafts: [],
   conversationRecoveryModes: {},
   conversationMessages: [],
+  businessMetrics: null,
   launchPlan: {
     chapterFocus: "先把悬念抛出来",
     launchNote: "",
@@ -53,6 +54,8 @@ const el = {
   focusRun: document.getElementById("focus-run"),
   learningCaption: document.getElementById("learning-caption"),
   learningPanel: document.getElementById("learning-panel"),
+  metricsCaption: document.getElementById("metrics-caption"),
+  businessMetrics: document.getElementById("business-metrics"),
   conversationCaption: document.getElementById("conversation-caption"),
   conversationCreateBootstrap: document.getElementById("conversation-create-bootstrap"),
   conversationCreateCharacters: document.getElementById("conversation-create-characters"),
@@ -3256,6 +3259,29 @@ function renderOverview(project, snapshot, summary) {
   el.overviewAction.textContent = summary.next;
 }
 
+function renderBusinessMetrics(metrics) {
+  if (!el.businessMetrics || !el.metricsCaption) return;
+  if (!metrics) {
+    el.metricsCaption.textContent = "系统会把最值得盯的业务指标翻译成人话。";
+    el.businessMetrics.innerHTML = `<div class="empty">暂无业务指标</div>`;
+    return;
+  }
+  el.metricsCaption.textContent = metrics.summary || "系统会把最值得盯的业务指标翻译成人话。";
+  el.businessMetrics.innerHTML = (metrics.cards || []).length
+    ? metrics.cards
+        .map(
+          (item) => `
+            <article class="summary-card ${item.tone || "neutral"}">
+              <div class="summary-label">${escapeHtml(item.label || "")}</div>
+              <div class="summary-value">${escapeHtml(item.value || "")}</div>
+              <div class="meta">${escapeHtml(item.note || "")}</div>
+            </article>
+          `
+        )
+        .join("")
+    : `<div class="empty">暂无业务指标</div>`;
+}
+
 function renderReviewProgressCard(reviewProgress) {
   if (!reviewProgress || reviewProgress.stage_status === "not_started") {
     return "";
@@ -3492,6 +3518,7 @@ function renderProjectState() {
   renderSummary(summary);
   renderFocusRun(summary);
   renderLearningPanel(summary.focusRun || null);
+  renderBusinessMetrics(state.businessMetrics);
   renderConversationPanel();
 }
 
@@ -4669,6 +4696,8 @@ async function loadProjects() {
     return;
   }
   if (!state.selectedProjectId) {
+    state.businessMetrics = await api("/api/business-metrics");
+    renderBusinessMetrics(state.businessMetrics);
     renderSummary(deriveSummary(null, state.projectSnapshot));
     renderFocusRun(deriveSummary(null, state.projectSnapshot));
   }
@@ -4686,14 +4715,16 @@ async function selectProject(projectId) {
     return;
   }
 
-  const [chapters, runs, approvals, conversationThreads, conversationDecisions] = await Promise.all([
+  const [chapters, runs, approvals, conversationThreads, conversationDecisions, businessMetrics] = await Promise.all([
     api(`/api/projects/${projectId}/chapters`),
     api(`/api/projects/${projectId}/runs`),
     api(`/api/projects/${projectId}/approval-requests`),
     api(`/api/projects/${projectId}/conversation-threads`),
     api(`/api/projects/${projectId}/conversation-decisions`),
+    api(`/api/business-metrics?project_id=${projectId}`),
   ]);
   state.projectSnapshot = { chapters, runs, approvals, conversationThreads, conversationDecisions };
+  state.businessMetrics = businessMetrics;
   const knownRun = runs.find((item) => item.run_id === state.selectedRunId);
   if (!knownRun) {
     state.selectedRunId = pickFocusRun(runs)?.run_id || null;

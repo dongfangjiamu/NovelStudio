@@ -20,6 +20,8 @@ from novel_app.api.schemas import (
     ApprovalResolveRequest,
     ArtifactResponse,
     AuditLogResponse,
+    BusinessMetricCardResponse,
+    BusinessMetricsResponse,
     ChapterResponse,
     ConversationMessageCreateRequest,
     ConversationMessageResponse,
@@ -229,6 +231,149 @@ def create_app(
             return datetime.fromisoformat(value)
         except ValueError:
             return None
+
+    def build_business_metrics(project_id: str | None = None) -> BusinessMetricsResponse:
+        all_projects = app.state.store.list_projects()
+        if project_id is not None:
+            project = app.state.store.get_project(project_id)
+            if project is None:
+                raise HTTPException(status_code=404, detail="project_not_found")
+            projects = [project]
+            scope = "project"
+        else:
+            project = None
+            projects = all_projects
+            scope = "system"
+
+        launched_projects = 0
+        chapter_count = 0
+        completed_run_count = 0
+        failed_run_count = 0
+        awaiting_approval_count = 0
+        approval_request_count = 0
+        approval_pending_count = 0
+        durations_minutes: list[float] = []
+        rewrite_counts: list[int] = []
+
+        for current_project in projects:
+            runs = app.state.store.list_runs(current_project.project_id)
+            chapters = app.state.store.list_chapters(current_project.project_id)
+            approvals = app.state.store.list_approval_requests(current_project.project_id)
+            if chapters:
+                launched_projects += 1
+            chapter_count += len(chapters)
+            approval_request_count += len(approvals)
+            approval_pending_count += len([item for item in approvals if item.status == "pending"])
+            for run in runs:
+                if run.status == "completed":
+                    completed_run_count += 1
+                elif run.status == "failed":
+                    failed_run_count += 1
+                elif run.status == "awaiting_approval":
+                    awaiting_approval_count += 1
+                if run.status == "completed":
+                    started_at = parse_timestamp(run.created_at)
+                    finished_at = parse_timestamp(run.finished_at)
+                    if started_at and finished_at:
+                        durations_minutes.append(max(0.0, (finished_at - started_at).total_seconds() / 60))
+                progress = (run.result or {}).get("progress") or {}
+                chapter_lesson = (run.result or {}).get("chapter_lesson") or {}
+                rewrite_count = progress.get("rewrite_count", chapter_lesson.get("rewrite_count"))
+                try:
+                    if rewrite_count is not None and run.status in {"completed", "failed", "awaiting_approval"}:
+                        rewrite_counts.append(int(rewrite_count))
+                except (TypeError, ValueError):
+                    pass
+
+        avg_duration = round(sum(durations_minutes) / len(durations_minutes), 1) if durations_minutes else None
+        avg_rewrite = round(sum(rewrite_counts) / len(rewrite_counts), 1) if rewrite_counts else None
+
+        if scope == "project":
+            latest_chapter_no = max((item.chapter_no for item in app.state.store.list_chapters(project.project_id)), default=0)
+            cards = [
+                BusinessMetricCardResponse(
+                    label="开书状态",
+                    value="已开书" if chapter_count else "未开书",
+                    note=f"当前项目已生成 {chapter_count} 章。"
+                    if chapter_count
+                    else "这个项目还没跑出第一章，当前最关键是先把首章开出来。",
+                    tone="good" if chapter_count else "warn",
+                ),
+                BusinessMetricCardResponse(
+                    label="章节成果",
+                    value=f"{chapter_count} 章",
+                    note=f"最新已到第 {latest_chapter_no} 章。"
+                    if latest_chapter_no
+                    else "还没有形成章节成果。",
+                    tone="good" if chapter_count else "neutral",
+                ),
+                BusinessMetricCardResponse(
+                    label="平均完成时长",
+                    value=f"{avg_duration} 分钟" if avg_duration is not None else "暂无",
+                    note="按已完成运行计算。这个数越低，创作者等待感越小。"
+                    if avg_duration is not None
+                    else "先积累几次完整运行后，这里才会更有参考价值。",
+                    tone="neutral" if avg_duration is not None else "warn",
+                ),
+                BusinessMetricCardResponse(
+                    label="人工介入",
+                    value=f"{approval_pending_count} 待处理 / {approval_request_count} 次",
+                    note="待处理越多，说明自动链路还不够顺；已完成的介入越多，越适合复盘恢复路径。",
+                    tone="warn" if approval_pending_count else "neutral",
+                ),
+            ]
+            summary = (
+                "这本书已经进入章节生产阶段，后续要重点看时长、重写次数和人工介入是否持续下降。"
+                if chapter_count
+                else "这本书还处在从立项走向首章的阶段，当前最关键的是把第一章稳定开出来。"
+            )
+            headline = f"{project.name} 的业务飞轮"
+        else:
+            project_count = len(projects)
+            launch_rate = round((launched_projects / project_count) * 100, 1) if project_count else 0.0
+            cards = [
+                BusinessMetricCardResponse(
+                    label="项目开书率",
+                    value=f"{launched_projects}/{project_count}",
+                    note=f"约 {launch_rate}% 的项目已经跑出至少一章。",
+                    tone="good" if launched_projects else "warn",
+                ),
+                BusinessMetricCardResponse(
+                    label="已完成章节",
+                    value=f"{chapter_count} 章",
+                    note=f"系统目前累计完成 {completed_run_count} 次章节运行，失败 {failed_run_count} 次。",
+                    tone="good" if chapter_count else "neutral",
+                ),
+                BusinessMetricCardResponse(
+                    label="平均完成时长",
+                    value=f"{avg_duration} 分钟" if avg_duration is not None else "暂无",
+                    note="按已完成运行计算，用来判断整体等待成本是否在下降。"
+                    if avg_duration is not None
+                    else "系统还缺足够多的已完成样本来形成稳定均值。",
+                    tone="neutral" if avg_duration is not None else "warn",
+                ),
+                BusinessMetricCardResponse(
+                    label="人工介入",
+                    value=f"{approval_pending_count} 待处理 / {approval_request_count} 次",
+                    note=f"当前待审批 {awaiting_approval_count} 条运行。人工介入越集中，越值得回看恢复路径和审校策略。",
+                    tone="warn" if approval_pending_count or awaiting_approval_count else "neutral",
+                ),
+            ]
+            summary = (
+                f"当前系统最值得盯的是开书率、平均完成时长和人工介入量。平均重写次数约为 {avg_rewrite}。"
+                if avg_rewrite is not None
+                else "当前系统最值得盯的是开书率、平均完成时长和人工介入量。"
+            )
+            headline = "系统业务飞轮"
+
+        return BusinessMetricsResponse(
+            scope=scope,
+            project_id=project_id,
+            generated_at=utc_now_iso(),
+            headline=headline,
+            summary=summary,
+            cards=cards,
+        )
 
     def build_stale_failure_result(run, *, stale_seconds: int) -> dict[str, object]:
         result = dict(run.result or {})
@@ -1978,6 +2123,10 @@ def create_app(
             auth_mode="token" if config_value.admin_token else "open",
             database=database,
         )
+
+    @app.get("/api/business-metrics", response_model=BusinessMetricsResponse)
+    async def business_metrics(project_id: str | None = None) -> BusinessMetricsResponse:
+        return build_business_metrics(project_id=project_id)
 
     @app.get("/", include_in_schema=False)
     async def root() -> Response:

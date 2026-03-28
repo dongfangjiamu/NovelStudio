@@ -52,6 +52,42 @@ def test_healthz() -> None:
     assert response.json()["database"]["backend"] == "inmemory"
 
 
+def test_business_metrics_exposes_system_and_project_views() -> None:
+    client = make_client()
+
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "指标项目",
+            "default_user_brief": {"title": "长夜炉火", "genre": "东方玄幻"},
+            "default_target_chapters": 1,
+        },
+    ).json()
+
+    run = client.post(
+        f"/api/projects/{project['project_id']}/runs",
+        json={"operator_id": "tester"},
+    ).json()
+    wait_for_run(client, run["run_id"])
+
+    client.post(
+        f"/api/runs/{run['run_id']}/approval-requests",
+        json={"requested_action": "continue", "reason": "需要人工确认"},
+    )
+
+    system_metrics = client.get("/api/business-metrics")
+    project_metrics = client.get(f"/api/business-metrics?project_id={project['project_id']}")
+
+    assert system_metrics.status_code == 200
+    assert project_metrics.status_code == 200
+    assert system_metrics.json()["scope"] == "system"
+    assert project_metrics.json()["scope"] == "project"
+    assert project_metrics.json()["project_id"] == project["project_id"]
+    assert len(system_metrics.json()["cards"]) == 4
+    assert len(project_metrics.json()["cards"]) == 4
+    assert any(card["label"] == "开书状态" for card in project_metrics.json()["cards"])
+
+
 def test_project_create_and_list() -> None:
     client = make_client()
 

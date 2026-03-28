@@ -17,6 +17,22 @@ class ApiErrorResponse(BaseModel):
     detail: str
 
 
+class BusinessMetricCardResponse(BaseModel):
+    label: str
+    value: str
+    note: str
+    tone: Literal["neutral", "good", "warn"] = "neutral"
+
+
+class BusinessMetricsResponse(BaseModel):
+    scope: Literal["system", "project"]
+    project_id: str | None = None
+    generated_at: str
+    headline: str
+    summary: str
+    cards: list[BusinessMetricCardResponse]
+
+
 class ProjectCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     description: str | None = None
