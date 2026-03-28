@@ -85,7 +85,11 @@ def test_business_metrics_exposes_system_and_project_views() -> None:
     assert project_metrics.json()["project_id"] == project["project_id"]
     assert len(system_metrics.json()["cards"]) == 4
     assert len(project_metrics.json()["cards"]) == 4
+    assert len(system_metrics.json()["sections"]) == 3
+    assert len(project_metrics.json()["sections"]) == 3
     assert any(card["label"] == "开书状态" for card in project_metrics.json()["cards"])
+    assert system_metrics.json()["sections"][0]["title"] == "常见卡点"
+    assert project_metrics.json()["sections"][1]["title"] == "恢复路径结果"
 
 
 def test_project_create_and_list() -> None:

@@ -425,6 +425,65 @@ body {
   margin-top: 16px;
 }
 
+.business-metric-sections {
+  margin-top: 12px;
+  gap: 10px;
+}
+
+.metric-section {
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: rgba(255, 250, 244, 0.92);
+}
+
+.metric-section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.metric-section-head h4 {
+  margin: 0;
+}
+
+.metric-section-items {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.metric-item {
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(111, 88, 61, 0.14);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.metric-item.good {
+  border-color: rgba(31, 107, 68, 0.2);
+  background: rgba(245, 252, 246, 0.9);
+}
+
+.metric-item.warn {
+  border-color: rgba(138, 59, 18, 0.22);
+  background: rgba(255, 248, 240, 0.9);
+}
+
+.metric-item-label {
+  font-size: 12px;
+  color: var(--ink-soft);
+  margin-bottom: 6px;
+}
+
+.metric-item-value {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
 .summary-label {
   font-size: 11px;
   letter-spacing: 0.08em;
@@ -1388,6 +1447,7 @@ pre {
   .project-setup-steps,
   .project-setup-diagnosis,
   .summary-grid,
+  .metric-section-items,
   .focus-run-grid,
   .interview-grid {
     grid-template-columns: 1fr;

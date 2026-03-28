@@ -24,6 +24,19 @@ class BusinessMetricCardResponse(BaseModel):
     tone: Literal["neutral", "good", "warn"] = "neutral"
 
 
+class BusinessMetricSectionItemResponse(BaseModel):
+    label: str
+    value: str
+    note: str = ""
+    tone: Literal["neutral", "good", "warn"] = "neutral"
+
+
+class BusinessMetricSectionResponse(BaseModel):
+    title: str
+    summary: str
+    items: list[BusinessMetricSectionItemResponse]
+
+
 class BusinessMetricsResponse(BaseModel):
     scope: Literal["system", "project"]
     project_id: str | None = None
@@ -31,6 +44,7 @@ class BusinessMetricsResponse(BaseModel):
     headline: str
     summary: str
     cards: list[BusinessMetricCardResponse]
+    sections: list[BusinessMetricSectionResponse] = Field(default_factory=list)
 
 
 class ProjectCreateRequest(BaseModel):

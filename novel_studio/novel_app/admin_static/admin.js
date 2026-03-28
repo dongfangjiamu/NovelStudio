@@ -56,6 +56,7 @@ const el = {
   learningPanel: document.getElementById("learning-panel"),
   metricsCaption: document.getElementById("metrics-caption"),
   businessMetrics: document.getElementById("business-metrics"),
+  businessMetricSections: document.getElementById("business-metric-sections"),
   conversationCaption: document.getElementById("conversation-caption"),
   conversationCreateBootstrap: document.getElementById("conversation-create-bootstrap"),
   conversationCreateCharacters: document.getElementById("conversation-create-characters"),
@@ -3260,10 +3261,11 @@ function renderOverview(project, snapshot, summary) {
 }
 
 function renderBusinessMetrics(metrics) {
-  if (!el.businessMetrics || !el.metricsCaption) return;
+  if (!el.businessMetrics || !el.metricsCaption || !el.businessMetricSections) return;
   if (!metrics) {
     el.metricsCaption.textContent = "系统会把最值得盯的业务指标翻译成人话。";
     el.businessMetrics.innerHTML = `<div class="empty">暂无业务指标</div>`;
+    el.businessMetricSections.innerHTML = "";
     return;
   }
   el.metricsCaption.textContent = metrics.summary || "系统会把最值得盯的业务指标翻译成人话。";
@@ -3280,6 +3282,33 @@ function renderBusinessMetrics(metrics) {
         )
         .join("")
     : `<div class="empty">暂无业务指标</div>`;
+  el.businessMetricSections.innerHTML = (metrics.sections || []).length
+    ? metrics.sections
+        .map(
+          (section) => `
+            <section class="metric-section">
+              <div class="metric-section-head">
+                <h4>${escapeHtml(section.title || "")}</h4>
+                <div class="meta">${escapeHtml(section.summary || "")}</div>
+              </div>
+              <div class="metric-section-items">
+                ${(section.items || [])
+                  .map(
+                    (item) => `
+                      <article class="metric-item ${item.tone || "neutral"}">
+                        <div class="metric-item-label">${escapeHtml(item.label || "")}</div>
+                        <div class="metric-item-value">${escapeHtml(item.value || "")}</div>
+                        <div class="meta">${escapeHtml(item.note || "")}</div>
+                      </article>
+                    `
+                  )
+                  .join("")}
+              </div>
+            </section>
+          `
+        )
+        .join("")
+    : "";
 }
 
 function renderReviewProgressCard(reviewProgress) {

@@ -22,6 +22,8 @@ from novel_app.api.schemas import (
     AuditLogResponse,
     BusinessMetricCardResponse,
     BusinessMetricsResponse,
+    BusinessMetricSectionItemResponse,
+    BusinessMetricSectionResponse,
     ChapterResponse,
     ConversationMessageCreateRequest,
     ConversationMessageResponse,
@@ -233,6 +235,61 @@ def create_app(
             return None
 
     def build_business_metrics(project_id: str | None = None) -> BusinessMetricsResponse:
+        def issue_category_label(value: str | None) -> str:
+            mapping = {
+                "pacing": "节奏推进",
+                "hook": "章末钩子",
+                "canon": "连续性设定",
+                "continuity": "连续性设定",
+                "style": "文风表达",
+                "reader_sim": "读者追读感",
+                "reader": "读者追读感",
+            }
+            return mapping.get(str(value or "").strip().lower(), str(value or "未分类问题"))
+
+        def blocker_bucket(*, run, approval_map: dict[str, object]) -> str | None:
+            result = run.result or {}
+            progress = result.get("progress") or {}
+            current_node = str(progress.get("current_node") or "")
+            latest_event = str(progress.get("latest_event") or "")
+            possible_cause = str(progress.get("possible_cause") or "")
+            error = str(run.error or "")
+            manual_intervention = result.get("manual_intervention") or {}
+            checkpoint = result.get("human_checkpoint") or {}
+            reason_blob = " ".join(
+                part
+                for part in [error, possible_cause, latest_event, str(manual_intervention.get("action") or "")]
+                if part
+            ).lower()
+
+            if run.status == "awaiting_approval":
+                recovery_mode = checkpoint.get("recommended_recovery_mode")
+                approval = approval_map.get(run.run_id)
+                if not recovery_mode and approval is not None:
+                    recovery_mode = getattr(approval, "requested_action", None)
+                if recovery_mode == "replan":
+                    return "方向不稳，需要回到章卡"
+                if recovery_mode == "rewrite":
+                    return "正文表达需要重写"
+                return "需要人工拍板"
+
+            if run.status != "failed":
+                return None
+            if "structured response parsing failed" in reason_blob or "json_invalid" in reason_blob or "invalid json" in reason_blob:
+                return "结构化输出不稳"
+            if "timeout" in reason_blob or "超时" in reason_blob or latest_event == "auto_timeout":
+                return "生成或审校超时"
+            if manual_intervention.get("action") == "mark_failed":
+                return "人工终止失效运行"
+            if current_node in REVIEWER_NODE_TO_REPORTER:
+                return "审校阶段失败"
+            if current_node in {"chapter_planner", "draft_writer", "patch_writer"}:
+                return "写作阶段失败"
+            return "其他失败"
+
+        def top_entries(counter: dict[str, int], *, limit: int = 3) -> list[tuple[str, int]]:
+            return sorted(counter.items(), key=lambda item: (-item[1], item[0]))[:limit]
+
         all_projects = app.state.store.list_projects()
         if project_id is not None:
             project = app.state.store.get_project(project_id)
@@ -254,39 +311,150 @@ def create_app(
         approval_pending_count = 0
         durations_minutes: list[float] = []
         rewrite_counts: list[int] = []
+        blocker_counts: dict[str, int] = {}
+        recovery_counts: dict[str, dict[str, int]] = {}
+        issue_category_counts: dict[str, int] = {}
 
         for current_project in projects:
             runs = app.state.store.list_runs(current_project.project_id)
             chapters = app.state.store.list_chapters(current_project.project_id)
             approvals = app.state.store.list_approval_requests(current_project.project_id)
+            approvals_by_run = {item.run_id: item for item in approvals}
+            runs_by_id = {item.run_id: item for item in runs}
             if chapters:
                 launched_projects += 1
             chapter_count += len(chapters)
             approval_request_count += len(approvals)
             approval_pending_count += len([item for item in approvals if item.status == "pending"])
+            for approval in approvals:
+                bucket = recovery_counts.setdefault(
+                    approval.requested_action or "continue",
+                    {"total": 0, "completed": 0, "failed": 0, "in_progress": 0},
+                )
+                bucket["total"] += 1
+                if approval.executed_run_id:
+                    executed = runs_by_id.get(approval.executed_run_id)
+                    if executed is None or executed.status == "running":
+                        bucket["in_progress"] += 1
+                    elif executed.status == "completed":
+                        bucket["completed"] += 1
+                    else:
+                        bucket["failed"] += 1
             for run in runs:
+                result = run.result or {}
                 if run.status == "completed":
                     completed_run_count += 1
                 elif run.status == "failed":
                     failed_run_count += 1
                 elif run.status == "awaiting_approval":
                     awaiting_approval_count += 1
+                blocker = blocker_bucket(run=run, approval_map=approvals_by_run)
+                if blocker:
+                    blocker_counts[blocker] = blocker_counts.get(blocker, 0) + 1
                 if run.status == "completed":
                     started_at = parse_timestamp(run.created_at)
                     finished_at = parse_timestamp(run.finished_at)
                     if started_at and finished_at:
                         durations_minutes.append(max(0.0, (finished_at - started_at).total_seconds() / 60))
-                progress = (run.result or {}).get("progress") or {}
-                chapter_lesson = (run.result or {}).get("chapter_lesson") or {}
+                progress = result.get("progress") or {}
+                chapter_lesson = result.get("chapter_lesson") or {}
                 rewrite_count = progress.get("rewrite_count", chapter_lesson.get("rewrite_count"))
                 try:
                     if rewrite_count is not None and run.status in {"completed", "failed", "awaiting_approval"}:
                         rewrite_counts.append(int(rewrite_count))
                 except (TypeError, ValueError):
                     pass
+                issue_ledger = result.get("issue_ledger") or {}
+                for issue in issue_ledger.get("issues") or []:
+                    if (issue.get("status") or "open") not in {"open", "recurring"}:
+                        continue
+                    label = issue_category_label(issue.get("category") or issue.get("type"))
+                    issue_category_counts[label] = issue_category_counts.get(label, 0) + 1
 
         avg_duration = round(sum(durations_minutes) / len(durations_minutes), 1) if durations_minutes else None
         avg_rewrite = round(sum(rewrite_counts) / len(rewrite_counts), 1) if rewrite_counts else None
+        top_blockers = top_entries(blocker_counts)
+        top_issue_categories = top_entries(issue_category_counts)
+
+        recovery_items: list[BusinessMetricSectionItemResponse] = []
+        recovery_mode_labels = {
+            "continue": "继续当前流程",
+            "replan": "重做章卡",
+            "rewrite": "重写正文",
+        }
+        for mode, counts in sorted(
+            recovery_counts.items(),
+            key=lambda item: (-item[1]["total"], recovery_mode_labels.get(item[0], item[0])),
+        ):
+            total = counts["total"]
+            completed = counts["completed"]
+            failed = counts["failed"]
+            in_progress = counts["in_progress"]
+            tone = "good" if completed and failed == 0 else "warn" if failed else "neutral"
+            recovery_items.append(
+                BusinessMetricSectionItemResponse(
+                    label=recovery_mode_labels.get(mode, mode),
+                    value=f"{total} 次",
+                    note=f"已顺利恢复 {completed} 次，仍在推进 {in_progress} 次，恢复后再次失败 {failed} 次。",
+                    tone=tone,
+                )
+            )
+        sections: list[BusinessMetricSectionResponse] = [
+            BusinessMetricSectionResponse(
+                title="常见卡点",
+                summary="最近系统最常卡在哪一类问题，决定你该优先优化哪一段流程。",
+                items=[
+                    BusinessMetricSectionItemResponse(
+                        label=label,
+                        value=f"{count} 次",
+                        note="这类卡点最近更常出现，值得优先回看对应的过程材料和恢复路径。",
+                        tone="warn" if count > 1 else "neutral",
+                    )
+                    for label, count in top_blockers
+                ]
+                or [
+                    BusinessMetricSectionItemResponse(
+                        label="暂无明显卡点",
+                        value="0 次",
+                        note="最近没有形成稳定的失败或待人工拍板分布。",
+                        tone="good",
+                    )
+                ],
+            ),
+            BusinessMetricSectionResponse(
+                title="恢复路径结果",
+                summary="系统最近更常通过哪种恢复路径继续往前走，以及这些路径是否真的收得住。",
+                items=recovery_items
+                or [
+                    BusinessMetricSectionItemResponse(
+                        label="暂无恢复样本",
+                        value="0 次",
+                        note="等系统积累更多人工介入和恢复执行后，这里会更有参考价值。",
+                    )
+                ],
+            ),
+            BusinessMetricSectionResponse(
+                title="高频审校问题",
+                summary="这些是最近最容易反复出现的问题类型，适合优先写进长期规则或开书约束。",
+                items=[
+                    BusinessMetricSectionItemResponse(
+                        label=label,
+                        value=f"{count} 项",
+                        note="这类问题最近更常以 open / recurring 的状态出现。",
+                        tone="warn" if count > 1 else "neutral",
+                    )
+                    for label, count in top_issue_categories
+                ]
+                or [
+                    BusinessMetricSectionItemResponse(
+                        label="暂无高频问题",
+                        value="0 项",
+                        note="最近没有积累出明显反复出现的未关闭问题。",
+                        tone="good",
+                    )
+                ],
+            ),
+        ]
 
         if scope == "project":
             latest_chapter_no = max((item.chapter_no for item in app.state.store.list_chapters(project.project_id)), default=0)
@@ -373,6 +541,7 @@ def create_app(
             headline=headline,
             summary=summary,
             cards=cards,
+            sections=sections,
         )
 
     def build_stale_failure_result(run, *, stale_seconds: int) -> dict[str, object]:
