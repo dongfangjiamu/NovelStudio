@@ -2442,6 +2442,53 @@ function buildLearningSummary(items) {
   };
 }
 
+function buildReviewOutcomeSummary(items) {
+  const run = artifactRunRecord();
+  const formalLaunch = formalLaunchInstruction(run);
+  const phaseDecision = artifactPayload(items, "phase_decision") || {};
+  const reviewTrace = artifactPayload(items, "review_resolution_trace") || {};
+  const reviewReports = artifactPayload(items, "latest_review_reports") || [];
+  const finalDecision = phaseDecision.final_decision || null;
+  const unresolvedCount = reviewTrace.recurring_count ?? reviewTrace.open_count ?? 0;
+  const resolvedCount = reviewTrace.resolved_count ?? 0;
+
+  let lead = "这章已经进入审校，但当前还没有形成明确结论。";
+  if (formalLaunch?.chapterFocus) {
+    if (finalDecision === "pass" || finalDecision === "continue") {
+      lead = `这次启动重点“${formalLaunch.chapterFocus}”已基本兑现，可以继续推进。`;
+    } else if (finalDecision === "rewrite" || finalDecision === "replan") {
+      lead = `这次启动重点“${formalLaunch.chapterFocus}”还没站稳，当前更适合继续修。`;
+    } else if (finalDecision === "human_check") {
+      lead = `这次启动重点“${formalLaunch.chapterFocus}”是否算兑现，当前需要你人工裁决。`;
+    } else if (reviewReports.length) {
+      lead = `这次启动重点“${formalLaunch.chapterFocus}”已经进入审校判断，结果还在继续收口。`;
+    }
+  } else if (finalDecision === "pass" || finalDecision === "continue") {
+    lead = "这章当前已通过审校，可以继续往后推进。";
+  } else if (finalDecision === "rewrite" || finalDecision === "replan") {
+    lead = "这章当前还没通过审校，建议先继续修再往后写。";
+  } else if (finalDecision === "human_check") {
+    lead = "这章当前需要人工裁决，自动流程先暂停。";
+  }
+
+  const itemsList = [
+    formalLaunch?.chapterFocus ? `本次启动重点：${formalLaunch.chapterFocus}` : null,
+    formalLaunch?.launchNote
+      ? (finalDecision === "pass" || finalDecision === "continue"
+          ? "启动备注当前没有被判定为主要阻塞项。"
+          : `启动备注仍需继续盯：${formalLaunch.launchNote}`)
+      : null,
+    unresolvedCount > 0 ? `仍有 ${unresolvedCount} 个问题未收口。` : "当前没有明显未收口问题。",
+    resolvedCount > 0 ? `已有 ${resolvedCount} 个旧问题被确认关闭。` : null,
+    phaseDecision.reason ? `当前判断：${phaseDecision.reason}` : null,
+  ].filter(Boolean);
+
+  return {
+    lead,
+    items: itemsList.slice(0, 4),
+  };
+}
+
 function renderLearningPanel(run) {
   if (!run) {
     el.learningCaption.textContent = "需要先选中一个项目";
@@ -3418,6 +3465,25 @@ function renderArtifactCard(item, options = {}) {
   `;
 }
 
+function renderReviewSummaryCard(items) {
+  const summary = buildReviewOutcomeSummary(items);
+  return `
+    <div class="card artifact-card artifact-spotlight">
+      <div class="section-caption">优先看这一项</div>
+      <h4>审校结论摘要卡</h4>
+      <div class="card-caption">先用一句话看清：这章现在能不能继续、为什么、还要盯什么。</div>
+      <div class="artifact-summary">
+        <div class="artifact-lead">${escapeHtml(summary.lead)}</div>
+        ${
+          summary.items.length
+            ? `<ul class="artifact-bullets">${summary.items.map((entry) => `<li>${escapeHtml(entry)}</li>`).join("")}</ul>`
+            : `<div class="meta">当前还没有更多摘要。</div>`
+        }
+      </div>
+    </div>
+  `;
+}
+
 function renderArtifacts(items) {
   if (!items.length) {
     state.artifactItems = [];
@@ -3449,7 +3515,8 @@ function renderArtifacts(items) {
             </div>
           </div>
           <div class="stack compact">
-            ${renderArtifactCard(info.spotlight, { spotlight: true })}
+            ${section.key === "review" ? renderReviewSummaryCard(section.items) : ""}
+            ${renderArtifactCard(info.spotlight, { spotlight: section.key !== "review" })}
             ${
               remainder.length
                 ? `
