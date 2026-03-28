@@ -484,6 +484,73 @@ body {
   margin-bottom: 6px;
 }
 
+.strategy-suggestion-list {
+  gap: 10px;
+}
+
+.strategy-card {
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: rgba(255, 251, 246, 0.94);
+}
+
+.strategy-card.warn {
+  border-color: rgba(138, 59, 18, 0.22);
+  background: rgba(255, 248, 240, 0.92);
+}
+
+.strategy-card.good {
+  border-color: rgba(31, 107, 68, 0.2);
+  background: rgba(245, 252, 246, 0.9);
+}
+
+.strategy-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.priority-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 54px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: rgba(111, 88, 61, 0.1);
+  color: var(--ink-soft);
+}
+
+.priority-chip.high {
+  background: rgba(138, 59, 18, 0.12);
+  color: #8a3b12;
+}
+
+.priority-chip.medium {
+  background: rgba(166, 120, 51, 0.12);
+  color: #7b5617;
+}
+
+.priority-chip.low {
+  background: rgba(31, 107, 68, 0.12);
+  color: #1f6b44;
+}
+
+.strategy-card h4 {
+  margin: 0;
+}
+
+.strategy-evidence {
+  margin: 10px 0 0;
+  padding-left: 18px;
+}
+
 .summary-label {
   font-size: 11px;
   letter-spacing: 0.08em;

@@ -47,6 +47,24 @@ class BusinessMetricsResponse(BaseModel):
     sections: list[BusinessMetricSectionResponse] = Field(default_factory=list)
 
 
+class StrategySuggestionItemResponse(BaseModel):
+    title: str
+    priority: Literal["high", "medium", "low"] = "medium"
+    why_now: str
+    action: str
+    evidence: list[str] = Field(default_factory=list)
+    tone: Literal["neutral", "good", "warn"] = "neutral"
+
+
+class StrategySuggestionsResponse(BaseModel):
+    scope: Literal["system", "project"]
+    project_id: str | None = None
+    generated_at: str
+    headline: str
+    summary: str
+    items: list[StrategySuggestionItemResponse] = Field(default_factory=list)
+
+
 class ProjectCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     description: str | None = None

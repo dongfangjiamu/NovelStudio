@@ -92,6 +92,48 @@ def test_business_metrics_exposes_system_and_project_views() -> None:
     assert project_metrics.json()["sections"][1]["title"] == "恢复路径结果"
 
 
+def test_strategy_suggestions_expose_system_and_project_recommendations() -> None:
+    client = make_client()
+
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "建议项目",
+            "default_user_brief": {"title": "长夜炉火", "genre": "东方玄幻"},
+            "default_target_chapters": 1,
+        },
+    ).json()
+
+    run = client.post(
+        f"/api/projects/{project['project_id']}/runs",
+        json={"operator_id": "tester"},
+    ).json()
+    completed = wait_for_run(client, run["run_id"])
+    assert completed["status"] in {"completed", "awaiting_approval"}
+
+    approval = client.post(
+        f"/api/runs/{run['run_id']}/approval-requests",
+        json={"requested_action": "rewrite", "reason": "正文表达还不稳"},
+    ).json()
+    client.post(
+        f"/api/approval-requests/{approval['approval_id']}/resolve",
+        json={"decision": "approved", "operator_id": "tester", "comment": "先按建议恢复"},
+    )
+
+    system_suggestions = client.get("/api/strategy-suggestions")
+    project_suggestions = client.get(f"/api/strategy-suggestions?project_id={project['project_id']}")
+
+    assert system_suggestions.status_code == 200
+    assert project_suggestions.status_code == 200
+    assert system_suggestions.json()["scope"] == "system"
+    assert project_suggestions.json()["scope"] == "project"
+    assert project_suggestions.json()["project_id"] == project["project_id"]
+    assert len(system_suggestions.json()["items"]) >= 1
+    assert len(project_suggestions.json()["items"]) >= 1
+    assert "当前进化建议" in system_suggestions.json()["headline"]
+    assert "当前进化建议" in project_suggestions.json()["headline"]
+
+
 def test_project_create_and_list() -> None:
     client = make_client()
 

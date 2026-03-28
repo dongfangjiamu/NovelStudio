@@ -11,6 +11,7 @@ const state = {
   conversationRecoveryModes: {},
   conversationMessages: [],
   businessMetrics: null,
+  strategySuggestions: null,
   launchPlan: {
     chapterFocus: "先把悬念抛出来",
     launchNote: "",
@@ -57,6 +58,8 @@ const el = {
   metricsCaption: document.getElementById("metrics-caption"),
   businessMetrics: document.getElementById("business-metrics"),
   businessMetricSections: document.getElementById("business-metric-sections"),
+  strategyCaption: document.getElementById("strategy-caption"),
+  strategySuggestions: document.getElementById("strategy-suggestions"),
   conversationCaption: document.getElementById("conversation-caption"),
   conversationCreateBootstrap: document.getElementById("conversation-create-bootstrap"),
   conversationCreateCharacters: document.getElementById("conversation-create-characters"),
@@ -3311,6 +3314,43 @@ function renderBusinessMetrics(metrics) {
     : "";
 }
 
+function priorityLabel(value) {
+  if (value === "high") return "优先";
+  if (value === "low") return "观察";
+  return "建议";
+}
+
+function renderStrategySuggestions(payload) {
+  if (!el.strategySuggestions || !el.strategyCaption) return;
+  if (!payload) {
+    el.strategyCaption.textContent = "系统会根据最近的运行结果，先告诉你最值得试的改法。";
+    el.strategySuggestions.innerHTML = `<div class="empty">暂无进化建议</div>`;
+    return;
+  }
+  el.strategyCaption.textContent = payload.summary || "系统会根据最近的运行结果，先告诉你最值得试的改法。";
+  el.strategySuggestions.innerHTML = (payload.items || []).length
+    ? payload.items
+        .map(
+          (item) => `
+            <article class="strategy-card ${item.tone || "neutral"}">
+              <div class="strategy-head">
+                <h4>${escapeHtml(item.title || "")}</h4>
+                <span class="priority-chip ${item.priority || "medium"}">${escapeHtml(priorityLabel(item.priority))}</span>
+              </div>
+              <div class="meta">${escapeHtml(item.why_now || "")}</div>
+              <div class="summary-value">${escapeHtml(item.action || "")}</div>
+              ${(item.evidence || []).length
+                ? `<ul class="strategy-evidence">${item.evidence
+                    .map((entry) => `<li>${escapeHtml(entry)}</li>`)
+                    .join("")}</ul>`
+                : ""}
+            </article>
+          `
+        )
+        .join("")
+    : `<div class="empty">暂无进化建议</div>`;
+}
+
 function renderReviewProgressCard(reviewProgress) {
   if (!reviewProgress || reviewProgress.stage_status === "not_started") {
     return "";
@@ -3548,6 +3588,7 @@ function renderProjectState() {
   renderFocusRun(summary);
   renderLearningPanel(summary.focusRun || null);
   renderBusinessMetrics(state.businessMetrics);
+  renderStrategySuggestions(state.strategySuggestions);
   renderConversationPanel();
 }
 
@@ -4726,7 +4767,9 @@ async function loadProjects() {
   }
   if (!state.selectedProjectId) {
     state.businessMetrics = await api("/api/business-metrics");
+    state.strategySuggestions = await api("/api/strategy-suggestions");
     renderBusinessMetrics(state.businessMetrics);
+    renderStrategySuggestions(state.strategySuggestions);
     renderSummary(deriveSummary(null, state.projectSnapshot));
     renderFocusRun(deriveSummary(null, state.projectSnapshot));
   }
@@ -4744,16 +4787,18 @@ async function selectProject(projectId) {
     return;
   }
 
-  const [chapters, runs, approvals, conversationThreads, conversationDecisions, businessMetrics] = await Promise.all([
+  const [chapters, runs, approvals, conversationThreads, conversationDecisions, businessMetrics, strategySuggestions] = await Promise.all([
     api(`/api/projects/${projectId}/chapters`),
     api(`/api/projects/${projectId}/runs`),
     api(`/api/projects/${projectId}/approval-requests`),
     api(`/api/projects/${projectId}/conversation-threads`),
     api(`/api/projects/${projectId}/conversation-decisions`),
     api(`/api/business-metrics?project_id=${projectId}`),
+    api(`/api/strategy-suggestions?project_id=${projectId}`),
   ]);
   state.projectSnapshot = { chapters, runs, approvals, conversationThreads, conversationDecisions };
   state.businessMetrics = businessMetrics;
+  state.strategySuggestions = strategySuggestions;
   const knownRun = runs.find((item) => item.run_id === state.selectedRunId);
   if (!knownRun) {
     state.selectedRunId = pickFocusRun(runs)?.run_id || null;

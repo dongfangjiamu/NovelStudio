@@ -38,6 +38,8 @@ from novel_app.api.schemas import (
     ProjectResponse,
     RunCreateRequest,
     RunResponse,
+    StrategySuggestionItemResponse,
+    StrategySuggestionsResponse,
 )
 from novel_app.config import AppConfig, load_config
 from novel_app.services.store import InMemoryStore
@@ -234,74 +236,64 @@ def create_app(
         except ValueError:
             return None
 
-    def build_business_metrics(project_id: str | None = None) -> BusinessMetricsResponse:
-        def issue_category_label(value: str | None) -> str:
-            mapping = {
-                "pacing": "节奏推进",
-                "hook": "章末钩子",
-                "canon": "连续性设定",
-                "continuity": "连续性设定",
-                "style": "文风表达",
-                "reader_sim": "读者追读感",
-                "reader": "读者追读感",
-            }
-            return mapping.get(str(value or "").strip().lower(), str(value or "未分类问题"))
+    def issue_category_label(value: str | None) -> str:
+        mapping = {
+            "pacing": "节奏推进",
+            "hook": "章末钩子",
+            "canon": "连续性设定",
+            "continuity": "连续性设定",
+            "style": "文风表达",
+            "reader_sim": "读者追读感",
+            "reader": "读者追读感",
+            "payoff_density": "兑现密度",
+            "romance": "关系推进",
+        }
+        return mapping.get(str(value or "").strip().lower(), str(value or "未分类问题"))
 
-        def blocker_bucket(*, run, approval_map: dict[str, object]) -> str | None:
-            result = run.result or {}
-            progress = result.get("progress") or {}
-            current_node = str(progress.get("current_node") or "")
-            latest_event = str(progress.get("latest_event") or "")
-            possible_cause = str(progress.get("possible_cause") or "")
-            error = str(run.error or "")
-            manual_intervention = result.get("manual_intervention") or {}
-            checkpoint = result.get("human_checkpoint") or {}
-            reason_blob = " ".join(
-                part
-                for part in [error, possible_cause, latest_event, str(manual_intervention.get("action") or "")]
-                if part
-            ).lower()
+    def blocker_bucket(*, run, approval_map: dict[str, object]) -> str | None:
+        result = run.result or {}
+        progress = result.get("progress") or {}
+        current_node = str(progress.get("current_node") or "")
+        latest_event = str(progress.get("latest_event") or "")
+        possible_cause = str(progress.get("possible_cause") or "")
+        error = str(run.error or "")
+        manual_intervention = result.get("manual_intervention") or {}
+        checkpoint = result.get("human_checkpoint") or {}
+        reason_blob = " ".join(
+            part
+            for part in [error, possible_cause, latest_event, str(manual_intervention.get("action") or "")]
+            if part
+        ).lower()
 
-            if run.status == "awaiting_approval":
-                recovery_mode = checkpoint.get("recommended_recovery_mode")
-                approval = approval_map.get(run.run_id)
-                if not recovery_mode and approval is not None:
-                    recovery_mode = getattr(approval, "requested_action", None)
-                if recovery_mode == "replan":
-                    return "方向不稳，需要回到章卡"
-                if recovery_mode == "rewrite":
-                    return "正文表达需要重写"
-                return "需要人工拍板"
+        if run.status == "awaiting_approval":
+            recovery_mode = checkpoint.get("recommended_recovery_mode")
+            approval = approval_map.get(run.run_id)
+            if not recovery_mode and approval is not None:
+                recovery_mode = getattr(approval, "requested_action", None)
+            if recovery_mode == "replan":
+                return "方向不稳，需要回到章卡"
+            if recovery_mode == "rewrite":
+                return "正文表达需要重写"
+            return "需要人工拍板"
 
-            if run.status != "failed":
-                return None
-            if "structured response parsing failed" in reason_blob or "json_invalid" in reason_blob or "invalid json" in reason_blob:
-                return "结构化输出不稳"
-            if "timeout" in reason_blob or "超时" in reason_blob or latest_event == "auto_timeout":
-                return "生成或审校超时"
-            if manual_intervention.get("action") == "mark_failed":
-                return "人工终止失效运行"
-            if current_node in REVIEWER_NODE_TO_REPORTER:
-                return "审校阶段失败"
-            if current_node in {"chapter_planner", "draft_writer", "patch_writer"}:
-                return "写作阶段失败"
-            return "其他失败"
+        if run.status != "failed":
+            return None
+        if "structured response parsing failed" in reason_blob or "json_invalid" in reason_blob or "invalid json" in reason_blob:
+            return "结构化输出不稳"
+        if "timeout" in reason_blob or "超时" in reason_blob or latest_event == "auto_timeout":
+            return "生成或审校超时"
+        if manual_intervention.get("action") == "mark_failed":
+            return "人工终止失效运行"
+        if current_node in REVIEWER_NODE_TO_REPORTER:
+            return "审校阶段失败"
+        if current_node in {"chapter_planner", "draft_writer", "patch_writer"}:
+            return "写作阶段失败"
+        return "其他失败"
 
-        def top_entries(counter: dict[str, int], *, limit: int = 3) -> list[tuple[str, int]]:
-            return sorted(counter.items(), key=lambda item: (-item[1], item[0]))[:limit]
+    def top_entries(counter: dict[str, int], *, limit: int = 3) -> list[tuple[str, int]]:
+        return sorted(counter.items(), key=lambda item: (-item[1], item[0]))[:limit]
 
-        all_projects = app.state.store.list_projects()
-        if project_id is not None:
-            project = app.state.store.get_project(project_id)
-            if project is None:
-                raise HTTPException(status_code=404, detail="project_not_found")
-            projects = [project]
-            scope = "project"
-        else:
-            project = None
-            projects = all_projects
-            scope = "system"
-
+    def collect_business_diagnostics(projects: list[object]) -> dict[str, object]:
         launched_projects = 0
         chapter_count = 0
         completed_run_count = 0
@@ -373,8 +365,48 @@ def create_app(
 
         avg_duration = round(sum(durations_minutes) / len(durations_minutes), 1) if durations_minutes else None
         avg_rewrite = round(sum(rewrite_counts) / len(rewrite_counts), 1) if rewrite_counts else None
-        top_blockers = top_entries(blocker_counts)
-        top_issue_categories = top_entries(issue_category_counts)
+        return {
+            "launched_projects": launched_projects,
+            "chapter_count": chapter_count,
+            "completed_run_count": completed_run_count,
+            "failed_run_count": failed_run_count,
+            "awaiting_approval_count": awaiting_approval_count,
+            "approval_request_count": approval_request_count,
+            "approval_pending_count": approval_pending_count,
+            "avg_duration": avg_duration,
+            "avg_rewrite": avg_rewrite,
+            "blocker_counts": blocker_counts,
+            "top_blockers": top_entries(blocker_counts),
+            "recovery_counts": recovery_counts,
+            "issue_category_counts": issue_category_counts,
+            "top_issue_categories": top_entries(issue_category_counts),
+        }
+
+    def build_business_metrics(project_id: str | None = None) -> BusinessMetricsResponse:
+        all_projects = app.state.store.list_projects()
+        if project_id is not None:
+            project = app.state.store.get_project(project_id)
+            if project is None:
+                raise HTTPException(status_code=404, detail="project_not_found")
+            projects = [project]
+            scope = "project"
+        else:
+            project = None
+            projects = all_projects
+            scope = "system"
+        diagnostics = collect_business_diagnostics(projects)
+        launched_projects = diagnostics["launched_projects"]
+        chapter_count = diagnostics["chapter_count"]
+        completed_run_count = diagnostics["completed_run_count"]
+        failed_run_count = diagnostics["failed_run_count"]
+        awaiting_approval_count = diagnostics["awaiting_approval_count"]
+        approval_request_count = diagnostics["approval_request_count"]
+        approval_pending_count = diagnostics["approval_pending_count"]
+        avg_duration = diagnostics["avg_duration"]
+        avg_rewrite = diagnostics["avg_rewrite"]
+        top_blockers = diagnostics["top_blockers"]
+        recovery_counts = diagnostics["recovery_counts"]
+        top_issue_categories = diagnostics["top_issue_categories"]
 
         recovery_items: list[BusinessMetricSectionItemResponse] = []
         recovery_mode_labels = {
@@ -542,6 +574,158 @@ def create_app(
             summary=summary,
             cards=cards,
             sections=sections,
+        )
+
+    def build_strategy_suggestions(project_id: str | None = None) -> StrategySuggestionsResponse:
+        all_projects = app.state.store.list_projects()
+        if project_id is not None:
+            project = app.state.store.get_project(project_id)
+            if project is None:
+                raise HTTPException(status_code=404, detail="project_not_found")
+            projects = [project]
+            scope = "project"
+        else:
+            project = None
+            projects = all_projects
+            scope = "system"
+
+        diagnostics = collect_business_diagnostics(projects)
+        top_blockers = diagnostics["top_blockers"]
+        top_issue_categories = diagnostics["top_issue_categories"]
+        recovery_counts = diagnostics["recovery_counts"]
+        approval_pending_count = int(diagnostics["approval_pending_count"] or 0)
+        avg_duration = diagnostics["avg_duration"]
+
+        suggestions: list[StrategySuggestionItemResponse] = []
+
+        def add_suggestion(
+            *,
+            title: str,
+            priority: str,
+            why_now: str,
+            action: str,
+            evidence: list[str],
+            tone: str = "neutral",
+        ) -> None:
+            suggestions.append(
+                StrategySuggestionItemResponse(
+                    title=title,
+                    priority=priority,
+                    why_now=why_now,
+                    action=action,
+                    evidence=evidence,
+                    tone=tone,
+                )
+            )
+
+        blocker_map = dict(top_blockers)
+        issue_map = dict(top_issue_categories)
+
+        if blocker_map.get("方向不稳，需要回到章卡", 0) > 0:
+            count = blocker_map["方向不稳，需要回到章卡"]
+            add_suggestion(
+                title="把章卡确认放到写正文之前",
+                priority="high",
+                why_now=f"最近有 {count} 次运行在进入人工阶段后被判定要回到章卡，说明方向还没站稳就开始写正文了。",
+                action="进入“章卡讨论”时，先把本章目标、视角、必须兑现的点补到可确认，再用“重做章卡”恢复，而不是直接重写正文。",
+                evidence=[
+                    f"最近“方向不稳，需要回到章卡”出现 {count} 次。",
+                    "这类问题通常说明前置协商不足，而不是单纯文笔问题。",
+                ],
+                tone="warn",
+            )
+
+        if blocker_map.get("生成或审校超时", 0) > 0:
+            count = blocker_map["生成或审校超时"]
+            add_suggestion(
+                title="先缩小单次推进范围，减少超时",
+                priority="high",
+                why_now=f"最近有 {count} 次运行卡在生成或审校超时，单章等待成本已经开始影响体验。",
+                action="首章或高风险章节优先用“快速试写”摸方向；正式模式下坚持一次只推进一章，并把本章优先兑现点写短、写清。",
+                evidence=[
+                    f"最近“生成或审校超时”出现 {count} 次。",
+                    f"当前已完成运行的平均时长约 {avg_duration} 分钟。" if avg_duration is not None else "当前还需要继续积累时长样本。",
+                ],
+                tone="warn",
+            )
+
+        if issue_map.get("节奏推进", 0) > 0 or issue_map.get("章末钩子", 0) > 0:
+            pacing_count = issue_map.get("节奏推进", 0)
+            hook_count = issue_map.get("章末钩子", 0)
+            add_suggestion(
+                title="把节奏和钩子问题固化成长期规则",
+                priority="medium",
+                why_now=f"最近高频问题里，节奏推进 {pacing_count} 项，章末钩子 {hook_count} 项，这类问题最适合提前写进长期规则。",
+                action="在“对话协作”里把“主角主动动作前置”“章末必须落到更危险的选择”之类结论采纳为长期规则，让下一章自动带入。",
+                evidence=[
+                    f"高频问题：节奏推进 {pacing_count} 项。",
+                    f"高频问题：章末钩子 {hook_count} 项。",
+                ],
+                tone="neutral",
+            )
+
+        rewrite_stats = recovery_counts.get("rewrite", {})
+        replan_stats = recovery_counts.get("replan", {})
+        continue_stats = recovery_counts.get("continue", {})
+        if rewrite_stats.get("failed", 0) > 0 and replan_stats.get("completed", 0) >= rewrite_stats.get("completed", 0):
+            add_suggestion(
+                title="遇到方向问题时，优先回章卡，不要硬改正文",
+                priority="medium",
+                why_now="最近“重写正文”并不总能把问题收住，而“重做章卡”对方向性问题更稳。",
+                action="如果审校主要在质疑目标、视角、冲突落点，优先选“重做章卡”；只有方向没问题时，再用“重写正文”。",
+                evidence=[
+                    f"重写正文：恢复成功 {rewrite_stats.get('completed', 0)} 次，恢复后失败 {rewrite_stats.get('failed', 0)} 次。",
+                    f"重做章卡：恢复成功 {replan_stats.get('completed', 0)} 次，恢复后失败 {replan_stats.get('failed', 0)} 次。",
+                ],
+                tone="neutral",
+            )
+        elif continue_stats.get("completed", 0) > 0 and continue_stats.get("failed", 0) == 0:
+            add_suggestion(
+                title="已经站稳的章节，优先沿当前路径继续",
+                priority="low",
+                why_now="最近“继续当前流程”这条路径的恢复结果相对稳定，说明部分章节其实不需要大动干戈。",
+                action="当审校结论已经判断“这章现在能继续”时，不必过度重做，优先保留当前章并继续推进下一步。",
+                evidence=[
+                    f"继续当前流程：恢复成功 {continue_stats.get('completed', 0)} 次，恢复后失败 {continue_stats.get('failed', 0)} 次。",
+                ],
+                tone="good",
+            )
+
+        if approval_pending_count > 0:
+            add_suggestion(
+                title="先清掉待拍板项，再继续堆新运行",
+                priority="medium",
+                why_now=f"当前还有 {approval_pending_count} 条待处理审批。待拍板项累积太多，会把真实问题淹没掉。",
+                action="先处理当前推荐决策卡，再决定是否继续开新章节；不要在旧审批没处理完时连续叠加新运行。",
+                evidence=[
+                    f"当前待处理审批 {approval_pending_count} 条。",
+                ],
+                tone="warn" if approval_pending_count > 1 else "neutral",
+            )
+
+        if not suggestions:
+            suggestions.append(
+                StrategySuggestionItemResponse(
+                    title="继续积累样本，再判断下一步怎么优化",
+                    priority="low",
+                    why_now="当前还没有形成足够稳定的卡点或恢复分布，过早下结论容易把系统带偏。",
+                    action="先继续完成几次正式开书、章节运行和人工恢复，让系统积累更多可复盘样本。",
+                    evidence=["当前还没有形成明显的集中问题分布。"],
+                    tone="good",
+                )
+            )
+
+        headline = f"{project.name} 的当前进化建议" if scope == "project" and project is not None else "系统当前进化建议"
+        summary = (
+            "这些建议不是要你一次全改完，而是告诉你：现在最值得先动哪一块，最有可能立刻带来正向变化。"
+        )
+        return StrategySuggestionsResponse(
+            scope=scope,
+            project_id=project_id,
+            generated_at=utc_now_iso(),
+            headline=headline,
+            summary=summary,
+            items=suggestions[:4],
         )
 
     def build_stale_failure_result(run, *, stale_seconds: int) -> dict[str, object]:
@@ -2296,6 +2480,10 @@ def create_app(
     @app.get("/api/business-metrics", response_model=BusinessMetricsResponse)
     async def business_metrics(project_id: str | None = None) -> BusinessMetricsResponse:
         return build_business_metrics(project_id=project_id)
+
+    @app.get("/api/strategy-suggestions", response_model=StrategySuggestionsResponse)
+    async def strategy_suggestions(project_id: str | None = None) -> StrategySuggestionsResponse:
+        return build_strategy_suggestions(project_id=project_id)
 
     @app.get("/", include_in_schema=False)
     async def root() -> Response:
