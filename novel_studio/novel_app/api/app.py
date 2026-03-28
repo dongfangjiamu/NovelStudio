@@ -832,9 +832,30 @@ def create_app(
             "interview_progress_effect": progress_effect,
         }
 
-    def interview_answer_records(messages: list[object]) -> tuple[list[dict], dict | None]:
+    def interview_topic_keywords(scope: str, title: str) -> list[str]:
+        topic_keywords = {
+            ("character_room", "主角真正想摆脱什么"): ["摆脱", "受不了", "最想", "脱离", "逃离", "控制", "束缚", "羞辱", "轻视", "处境", "身份", "命运", "工具", "不甘", "压迫", "弱小", "失败"],
+            ("character_room", "关键关系张力"): ["关系", "张力", "师门", "师徒", "首席", "宿敌", "同伴", "互相", "防备", "需要", "试探", "对抗", "拉扯", "恩怨"],
+        }
+        return topic_keywords.get((scope, title), [])
+
+    def matches_interview_topic(*, scope: str, topic: dict, content: str) -> bool:
+        text = str(content or "").strip()
+        if not text:
+            return False
+        normalized = " ".join(text.lower().split())
+        helper_action = detect_interview_helper_action(normalized)
+        if helper_action is not None:
+            return False
+        keywords = interview_topic_keywords(scope, str(topic.get("title") or ""))
+        if not keywords:
+            return True
+        return any(keyword in normalized for keyword in keywords)
+
+    def interview_answer_records(*, scope: str, topics: list[dict], messages: list[object]) -> tuple[list[dict], dict | None]:
         handled: list[dict] = []
         last_helper: dict | None = None
+        resolved_indices: set[int] = set()
         for item in messages:
             if item.role != "user":
                 continue
@@ -842,11 +863,41 @@ def create_app(
             effect = payload.get("interview_progress_effect")
             helper_action = payload.get("interview_helper_action")
             if effect in {None, "", "answered"}:
-                handled.append({"message": item, "effect": "answered", "helper_action": helper_action})
+                remaining_indices = [index for index in range(len(topics)) if index not in resolved_indices]
+                if not remaining_indices:
+                    continue
+                topic_index = remaining_indices[0]
+                current_topic = topics[topic_index]
+                if current_topic and not matches_interview_topic(scope=scope, topic=current_topic, content=item.content):
+                    topic_index = next(
+                        (
+                            candidate
+                            for candidate in remaining_indices[1:]
+                            if interview_topic_keywords(scope, str(topics[candidate].get("title") or ""))
+                            and matches_interview_topic(scope=scope, topic=topics[candidate], content=item.content)
+                        ),
+                        None,
+                    )
+                if topic_index is None and current_topic and interview_topic_keywords(scope, str(current_topic.get("title") or "")):
+                    last_helper = {
+                        "message": item,
+                        "helper_action": "clarify",
+                        "topic_title": current_topic.get("title"),
+                    }
+                    continue
+                if topic_index is None:
+                    topic_index = remaining_indices[0]
+                handled.append({"message": item, "effect": "answered", "helper_action": helper_action, "topic_index": topic_index})
+                resolved_indices.add(topic_index)
                 last_helper = None
                 continue
             if effect == "skipped":
-                handled.append({"message": item, "effect": "skipped", "helper_action": helper_action})
+                remaining_indices = [index for index in range(len(topics)) if index not in resolved_indices]
+                if not remaining_indices:
+                    continue
+                topic_index = remaining_indices[0]
+                handled.append({"message": item, "effect": "skipped", "helper_action": helper_action, "topic_index": topic_index})
+                resolved_indices.add(topic_index)
                 last_helper = None
                 continue
             if effect == "helper":
@@ -859,15 +910,19 @@ def create_app(
         brief = project.default_user_brief or {}
         title = brief.get("title") or project.name
         sections: list[dict[str, str]] = []
-        for index, record in enumerate(answered_records[: min(len(answered_records), len(topics), 4)]):
+        sorted_records = sorted(answered_records, key=lambda item: item.get("topic_index", 0))
+        for record in sorted_records[: min(len(sorted_records), len(topics), 4)]:
             if record["effect"] == "skipped":
+                continue
+            topic_index = int(record.get("topic_index", 0) or 0)
+            if topic_index >= len(topics):
                 continue
             answer = str(record["message"].content or "").strip()
             if not answer:
                 continue
             sections.append(
                 {
-                    "label": topics[index]["title"],
+                    "label": topics[topic_index]["title"],
                     "summary": answer[:120],
                 }
             )
@@ -896,13 +951,17 @@ def create_app(
         if current_draft is None:
             return None
         confirmed_items: list[dict[str, str]] = []
-        for index, record in enumerate(answered_records[: min(len(answered_records), len(topics), 4)]):
+        sorted_records = sorted(answered_records, key=lambda item: item.get("topic_index", 0))
+        for record in sorted_records[: min(len(sorted_records), len(topics), 4)]:
             if record["effect"] != "answered":
+                continue
+            topic_index = int(record.get("topic_index", 0) or 0)
+            if topic_index >= len(topics):
                 continue
             content = str(record["message"].content or "").strip()
             if not content:
                 continue
-            confirmed_items.append({"label": topics[index]["title"], "summary": content[:120]})
+            confirmed_items.append({"label": topics[topic_index]["title"], "summary": content[:120]})
         provisional_items = list(current_draft.get("sections") or [])
         adopted_types = {item.decision_type for item in adopted}
         next_steps: list[dict[str, str | bool]] = []
@@ -1153,18 +1212,22 @@ def create_app(
             return None
         messages = app.state.store.list_conversation_messages(thread.thread_id)
         topics = blueprint["topics"]
-        handled_records, last_helper = interview_answer_records(messages)
-        completed_count = min(len(handled_records), len(topics))
+        handled_records, last_helper = interview_answer_records(scope=thread.scope, topics=topics, messages=messages)
+        resolved_indices = {int(record.get("topic_index", 0) or 0) for record in handled_records if record.get("topic_index") is not None}
+        completed_count = min(len(resolved_indices), len(topics))
         confirmed_topics: list[str] = []
         skipped_topics: list[str] = []
-        for index, record in enumerate(handled_records[:completed_count]):
-            title = topics[index]["title"]
+        for record in sorted(handled_records, key=lambda item: item.get("topic_index", 0)):
+            topic_index = int(record.get("topic_index", 0) or 0)
+            if topic_index >= len(topics):
+                continue
+            title = topics[topic_index]["title"]
             if record["effect"] == "skipped":
                 skipped_topics.append(title)
             else:
                 confirmed_topics.append(title)
-        unresolved_topics = [item["title"] for item in topics[completed_count:]]
-        next_topic = topics[completed_count] if completed_count < len(topics) else None
+        unresolved_topics = [item["title"] for index, item in enumerate(topics) if index not in resolved_indices]
+        next_topic = next((item for index, item in enumerate(topics) if index not in resolved_indices), None)
         next_prompt = (
             interview_prompt_variants(topic=next_topic, helper_action=last_helper["helper_action"] if last_helper else None)[0]
             if next_topic is not None
@@ -1499,6 +1562,8 @@ def create_app(
                 helper_line = "我给你补了一组更具体的方向，你可以直接挑最接近的一项。\n"
             elif helper_action == "unsure":
                 helper_line = "没关系，不确定是正常的。我们先缩小范围，不要求一次说清。\n"
+            elif helper_action == "clarify":
+                helper_line = "这句我先不急着算作已确认结论，因为它更像在补别的点。我们先把当前这个问题说清，再继续往下走。\n"
             content = (
                 f"已记录你的方向：{excerpt}\n\n"
                 f"{helper_line}"
@@ -1521,6 +1586,8 @@ def create_app(
                 helper_line = "我补了一组更具体的人物方向，你可以直接挑最接近的一项。\n"
             elif helper_action == "unsure":
                 helper_line = "不用急着写小传，我们先抓住最像的感觉就够了。\n"
+            elif helper_action == "clarify":
+                helper_line = "这句我先不急着算作已确认结论，因为它更像在补别的人物问题。我们先把当前这一个点说清。\n"
             content = (
                 f"已记录人物方向：{excerpt}\n\n"
                 f"{helper_line}"
@@ -1543,6 +1610,8 @@ def create_app(
                 helper_line = "我补了一组更具体的大纲推进方向，你可以先选最接近的一项。\n"
             elif helper_action == "unsure":
                 helper_line = "不用一次说清整卷结构，我们先抓住主推动力就行。\n"
+            elif helper_action == "clarify":
+                helper_line = "这句我先不急着算作已确认结论，因为它更像在补别的大纲点。我们先把当前这个问题说清。\n"
             content = (
                 f"已记录大纲方向：{excerpt}\n\n"
                 f"{helper_line}"

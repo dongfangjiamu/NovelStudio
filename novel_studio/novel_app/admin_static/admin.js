@@ -661,6 +661,13 @@ function conversationScopeLabel(value) {
   return CONVERSATION_SCOPE_LABELS[value] || value || "创作对话";
 }
 
+function stageSummaryApplyLabel(scope) {
+  if (scope === "project_bootstrap") return "确认这版项目方向";
+  if (scope === "character_room") return "确认这版人物设定摘要";
+  if (scope === "outline_room") return "确认这版第一卷方向摘要";
+  return "确认这版阶段摘要";
+}
+
 function conversationThreadProgressLabel(thread) {
   const interview = interviewState(thread);
   return interview?.completion_label || null;
@@ -1151,8 +1158,10 @@ function renderInterviewSummary(thread) {
                     )
                     .join("")}
                 </ul>
+                <div class="meta">推荐直接用“确认并拆出第一批结论”。这样系统会同时写回当前阶段摘要，并把后续可复用的第一批结论准备好。</div>
                 <div class="actions">
-                  <button class="button secondary" type="button" data-stage-split-summary="${thread.thread_id}">拆成第一批结论</button>
+                  <button class="button primary" type="button" data-stage-apply-and-split="${thread.thread_id}">确认并拆出第一批结论</button>
+                  <button class="button ghost" type="button" data-stage-split-summary="${thread.thread_id}">只拆出第一批结论</button>
                 </div>
               </div>
             `
@@ -1172,8 +1181,13 @@ function renderInterviewSummary(thread) {
                     .join("")}
                 </ul>
                 <div class="meta">${escapeHtml(interview.stage_confirmation.stage_summary.readiness || "")}</div>
+                <div class="meta">${
+                  interview.stage_confirmation.decision_split_preview
+                    ? "如果你只想先把这版摘要写回项目设定，而不立即拆出后续结论，可以用下面这个动作。"
+                    : "确认后，这版摘要会成为项目设定的一部分，供后续立项、章卡和正文继续继承。"
+                }</div>
                 <div class="actions">
-                  <button class="button secondary" type="button" data-apply-stage-summary="${thread.thread_id}">写回项目设定</button>
+                  <button class="button secondary" type="button" data-apply-stage-summary="${thread.thread_id}">${stageSummaryApplyLabel(thread.scope)}</button>
                 </div>
               </section>
             `
@@ -1284,6 +1298,15 @@ function renderInterviewSummary(thread) {
     node.addEventListener("click", async () => {
       try {
         await splitStageSummary(node.dataset.stageSplitSummary);
+      } catch (error) {
+        setStatus(String(error.message || error), "error");
+      }
+    });
+  });
+  el.conversationInterviewSummary.querySelectorAll("[data-stage-apply-and-split]").forEach((node) => {
+    node.addEventListener("click", async () => {
+      try {
+        await applyAndSplitStageSummary(node.dataset.stageApplyAndSplit);
       } catch (error) {
         setStatus(String(error.message || error), "error");
       }
@@ -1685,7 +1708,7 @@ function renderProjectBriefSummary(project) {
           <div class="actions">
             ${
               source.status === "draft"
-                ? `<button class="button secondary" type="button" data-apply-stage-summary="${escapeHtml(source.threadId || "")}">写回项目设定</button>`
+                ? `<button class="button secondary" type="button" data-apply-stage-summary="${escapeHtml(source.threadId || "")}">${escapeHtml(stageSummaryApplyLabel(openScope))}</button>`
                 : ""
             }
             <button class="button ghost" type="button" data-project-summary-open="${openScope}">进入${conversationScopeLabel(openScope)}</button>
@@ -4208,6 +4231,32 @@ async function applyStageSummary(threadId) {
   }
   setWorkspaceTab("project");
   setStatus("已把这版阶段摘要写回项目设定", "ready");
+}
+
+async function applyAndSplitStageSummary(threadId) {
+  if (!threadId) return;
+  await api(`/api/conversation-threads/${threadId}/apply-stage-summary`, {
+    method: "POST",
+  });
+  const created = await api(`/api/conversation-threads/${threadId}/split-stage-summary`, {
+    method: "POST",
+  });
+  await loadProjects();
+  if (state.selectedProjectId) {
+    await selectProject(state.selectedProjectId);
+  }
+  if (state.selectedThreadId) {
+    await loadConversationMessages(state.selectedThreadId, { activateTab: false });
+  }
+  setWorkspaceTab("project");
+  const counts = created.reduce((acc, item) => {
+    acc[item.decision_type] = (acc[item.decision_type] || 0) + 1;
+    return acc;
+  }, {});
+  setStatus(
+    `已确认这版阶段摘要，并同步拆出 ${created.length} 条第一批结论：人物设定 ${counts.character_note || 0} / 卷纲约束 ${counts.outline_constraint || 0} / 长期规则 ${counts.writer_playbook_rule || 0}`,
+    "ready"
+  );
 }
 
 async function splitStageSummary(threadId) {

@@ -246,6 +246,42 @@ def test_interview_helpers_can_rephrase_expand_and_skip_without_wrong_progress()
     assert thread_after_skip["interview_state"]["unresolved_topics"][0] == "主角行动方式"
 
 
+def test_off_topic_interview_answer_does_not_silently_advance_stage() -> None:
+    client = make_client()
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "采访纠偏项目",
+            "default_user_brief": {"title": "长夜炉火", "idea_seed": "一个被逐出山门的人，靠炉火秘密翻身。"},
+            "default_target_chapters": 1,
+        },
+    ).json()
+
+    thread = client.post(
+        f"/api/projects/{project['project_id']}/conversation-threads",
+        json={"scope": "character_room"},
+    ).json()
+
+    first_answer = client.post(
+        f"/api/conversation-threads/{thread['thread_id']}/messages",
+        json={"content": "他表面克制，内里一直压着不甘和报复心。"},
+    )
+    assert first_answer.status_code == 201
+
+    off_topic = client.post(
+        f"/api/conversation-threads/{thread['thread_id']}/messages",
+        json={"content": "我希望他不是莽，而是越到绝境越冷静。"},
+    )
+    assert off_topic.status_code == 201
+    assert "先不急着算作已确认结论" in off_topic.json()[1]["content"]
+
+    refreshed = client.get(f"/api/conversation-threads/{thread['thread_id']}")
+    assert refreshed.status_code == 200
+    assert refreshed.json()["interview_state"]["completion_label"] == "1/4"
+    assert refreshed.json()["interview_state"]["next_topic_title"] == "主角真正想摆脱什么"
+    assert refreshed.json()["interview_state"]["last_helper_action"] == "clarify"
+
+
 def test_interview_state_builds_current_draft_after_two_answers() -> None:
     client = make_client()
     project = client.post(

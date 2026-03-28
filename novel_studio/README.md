@@ -202,6 +202,7 @@ make restore-db BACKUP=/abs/path/to/backup.sql.gz
 - `docs/06 单机备份与恢复手册.md`
 - `docs/07 单机反代与定时任务说明.md`
 - `docs/08 单机自恢复与巡检说明.md`
+- `docs/14 创作者使用说明.md`
 
 ## 运行模式
 
