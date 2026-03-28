@@ -162,6 +162,12 @@ body {
   gap: 10px;
 }
 
+.project-setup-diagnosis {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
 .project-setup-step {
   display: flex;
   align-items: center;
@@ -1329,6 +1335,7 @@ pre {
   .columns,
   .overview-strip,
   .project-setup-steps,
+  .project-setup-diagnosis,
   .summary-grid,
   .focus-run-grid,
   .interview-grid {

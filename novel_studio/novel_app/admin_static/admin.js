@@ -1577,6 +1577,49 @@ function projectSetupStages(project) {
   }));
 }
 
+function projectSetupDiagnosis(project) {
+  const stages = projectSetupStages(project);
+  const active = stages.find((item) => item.active) || stages[stages.length - 1];
+  const completed = stages.filter((item) => item.done && item.key !== "launch_readiness");
+  const readiness = openingReadiness(project);
+  const source =
+    active.key === "project_bootstrap"
+      ? projectSummarySource(project)
+      : active.key === "character_room" || active.key === "outline_room"
+        ? scopedSummarySource(project, active.key)
+        : null;
+  const openQuestions = source?.summary?.open_questions || [];
+  const provisionalItems = source?.summary?.provisional_items || [];
+  const blocker =
+    openQuestions[0] ||
+    provisionalItems[0]?.summary ||
+    (active.key === "launch_readiness" && !readiness.ready
+      ? `还缺 ${readiness.items
+          .filter((item) => !item.done)
+          .map((item) => item.label)
+          .join("、")}`
+      : active.summary);
+  let nextStep;
+  if (active.key === "launch_readiness") {
+    nextStep = readiness.ready
+      ? "去开书确认页，决定是直接以正式模式开始首章，还是先做一次快速试写。"
+      : `先补齐 ${readiness.items
+          .filter((item) => !item.done)
+          .map((item) => item.label)
+          .join("、")}，再回来做正式开书确认。`;
+  } else if (source?.status === "draft") {
+    nextStep = `这一步已经形成阶段摘要。先确认这版${active.label}，或把最后 1 到 2 个尾部问题补清。`;
+  } else {
+    nextStep = `先进入${active.label}对应的讨论线程，把当前最关键的问题说出一版可确认的答案。`;
+  }
+  return {
+    completedLabels: completed.map((item) => item.label),
+    activeLabel: active.label,
+    blocker,
+    nextStep,
+  };
+}
+
 function renderProjectLaunchReadiness(project) {
   if (!el.projectLaunchReadiness) return;
   const readiness = openingReadiness(project);
@@ -1784,6 +1827,7 @@ function renderProjectBriefSummary(project) {
   }
   const setupStages = projectSetupStages(project);
   const setupSummary = setupStages.find((item) => item.active) || setupStages[setupStages.length - 1];
+  const setupDiagnosis = projectSetupDiagnosis(project);
   const setupTimeline = `
     <section class="project-setup-strip">
       <div class="summary-card accent">
@@ -1805,6 +1849,30 @@ function renderProjectBriefSummary(project) {
             `
           )
           .join("")}
+      </div>
+      <div class="project-setup-diagnosis">
+        <div class="summary-card">
+          <div class="summary-label">已经完成</div>
+          <div class="summary-value">${
+            setupDiagnosis.completedLabels.length
+              ? escapeHtml(setupDiagnosis.completedLabels.join("、"))
+              : "还没有正式写回的阶段摘要。"
+          }</div>
+        </div>
+        <div class="summary-card accent">
+          <div class="summary-label">当前卡点</div>
+          <div class="summary-value">${escapeHtml(setupDiagnosis.activeLabel)}</div>
+          <div class="meta">${escapeHtml(setupDiagnosis.blocker || "")}</div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-label">现在去做什么</div>
+          <div class="summary-value">${escapeHtml(setupDiagnosis.nextStep || "")}</div>
+          <div class="actions">
+            <button class="button ghost" type="button" data-project-stage-open="${escapeHtml(setupSummary.key)}">${
+              setupSummary.key === "launch_readiness" ? "去开书确认页" : `进入${escapeHtml(setupSummary.label)}`
+            }</button>
+          </div>
+        </div>
       </div>
     </section>
   `;
