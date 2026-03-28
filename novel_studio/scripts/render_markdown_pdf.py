@@ -13,7 +13,7 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
-from reportlab.platypus import ListFlowable, ListItem, Paragraph, SimpleDocTemplate, Spacer
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
 
 def build_styles():
@@ -64,8 +64,8 @@ def build_styles():
     list_style = ParagraphStyle(
         "GuideList",
         parent=body,
-        leftIndent=0,
-        firstLineIndent=0,
+        leftIndent=7 * mm,
+        firstLineIndent=-4 * mm,
         spaceAfter=0,
     )
     return {
@@ -88,8 +88,12 @@ def format_inline(text: str) -> str:
 
         token = match.group(0)
         if token.startswith("`") and token.endswith("`"):
-            # Keep backticks literal and stay on the CJK-capable font.
-            parts.append(html.escape(token))
+            code_text = html.escape(token[1:-1])
+            parts.append(
+                '<font backColor="#EEF2F7" color="#3A4758">&#160;'
+                + code_text
+                + "&#160;</font>"
+            )
         elif token.startswith("**") and token.endswith("**"):
             parts.append(f"<b>{html.escape(token[2:-2])}</b>")
         else:
@@ -115,23 +119,13 @@ def flush_paragraph(paragraph_lines: list[str], story: list, styles: dict[str, P
 def flush_list(items: list[str], story: list, styles: dict[str, ParagraphStyle], ordered: bool) -> None:
     if not items:
         return
-    flowable_items = [
-        ListItem(Paragraph(format_inline(item.strip()), styles["list"])) for item in items if item.strip()
-    ]
-    if not flowable_items:
+    clean_items = [item.strip() for item in items if item.strip()]
+    if not clean_items:
         items.clear()
         return
-    bullet_type = "1" if ordered else "bullet"
-    story.append(
-        ListFlowable(
-            flowable_items,
-            bulletType=bullet_type,
-            start="1",
-            leftIndent=10 * mm,
-            bulletFontName=styles["body"].fontName,
-            bulletFontSize=styles["body"].fontSize,
-        )
-    )
+    for index, item in enumerate(clean_items, start=1):
+        prefix = f"{index}. " if ordered else "• "
+        story.append(Paragraph(prefix + format_inline(item), styles["list"]))
     story.append(Spacer(1, 2.2 * mm))
     items.clear()
 
