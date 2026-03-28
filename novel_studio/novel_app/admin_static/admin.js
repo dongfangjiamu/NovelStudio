@@ -38,6 +38,7 @@ const el = {
   ideaCaptureForm: document.getElementById("idea-capture-form"),
   projectForm: document.getElementById("project-form"),
   projectBriefSummary: document.getElementById("project-brief-summary"),
+  projectLaunchReadiness: document.getElementById("project-launch-readiness"),
   projectTitle: document.getElementById("project-title"),
   projectMeta: document.getElementById("project-meta"),
   summaryGoal: document.getElementById("summary-goal"),
@@ -1341,6 +1342,128 @@ function scopedSummarySource(project, scope) {
   return null;
 }
 
+function openingReadiness(project) {
+  if (!project) {
+    return {
+      ready: false,
+      completed: 0,
+      total: 3,
+      missingScopes: ["project_bootstrap", "character_room", "outline_room"],
+      items: [],
+    };
+  }
+  const projectStage = projectSummarySource(project);
+  const characterStage = scopedSummarySource(project, "character_room");
+  const outlineStage = scopedSummarySource(project, "outline_room");
+  const items = [
+    {
+      scope: "project_bootstrap",
+      label: "项目方向",
+      done: projectStage?.status === "applied",
+      summary: projectStage?.summary?.readiness || "先把立项共创整理成第一版项目设定摘要。",
+    },
+    {
+      scope: "character_room",
+      label: "人物设定",
+      done: characterStage?.status === "applied",
+      summary: characterStage?.summary?.readiness || "先把主角气质、欲望和边界收紧成人物设定摘要。",
+    },
+    {
+      scope: "outline_room",
+      label: "第一卷方向",
+      done: outlineStage?.status === "applied",
+      summary: outlineStage?.summary?.readiness || "先把第一卷推进方式、反转和卷末兑现整理成方向摘要。",
+    },
+  ];
+  const completed = items.filter((item) => item.done).length;
+  return {
+    ready: completed === items.length,
+    completed,
+    total: items.length,
+    missingScopes: items.filter((item) => !item.done).map((item) => item.scope),
+    items,
+  };
+}
+
+function renderProjectLaunchReadiness(project) {
+  if (!el.projectLaunchReadiness) return;
+  const readiness = openingReadiness(project);
+  if (!project) {
+    el.projectLaunchReadiness.innerHTML = `
+      <div class="panel-head">
+        <div>
+          <h3>开书确认页</h3>
+          <div class="muted">先选中项目，系统再告诉你是否已经具备开始首章的条件。</div>
+        </div>
+      </div>
+    `;
+    return;
+  }
+  const items = readiness.items
+    .map(
+      (item) => `
+        <div class="check-card ${item.done ? "ready" : "pending"}">
+          <div class="card-head">
+            <h4>${item.label}</h4>
+            <span class="status-chip ${item.done ? "status-approved" : "status-pending"}">${item.done ? "已确认" : "待补齐"}</span>
+          </div>
+          <div class="meta">${escapeHtml(item.summary || "")}</div>
+          ${
+            item.done
+              ? ""
+              : `<div class="actions"><button class="button ghost" type="button" data-launch-open-scope="${item.scope}">去补这一步</button></div>`
+          }
+        </div>
+      `
+    )
+    .join("");
+  const launchCopy = readiness.ready
+    ? "三层开书信息已经齐了。现在可以直接开始正式首章创作。"
+    : `当前已完成 ${readiness.completed}/${readiness.total} 项。建议先补齐缺口，再开始正式首章；如果只是想低成本试方向，可以继续用“快速试写”。`;
+  el.projectLaunchReadiness.innerHTML = `
+    <div class="panel-head">
+      <div>
+        <h3>开书确认页</h3>
+        <div class="muted">${launchCopy}</div>
+      </div>
+      <div class="actions">
+        <button class="button ${readiness.ready ? "primary" : "ghost"}" type="button" data-launch-start="true" ${readiness.ready ? "" : "disabled"}>开始正式首章</button>
+        <button class="button ghost" type="button" data-launch-quick="true">快速试写</button>
+      </div>
+    </div>
+    <div class="launch-checklist">${items}</div>
+  `;
+  el.projectLaunchReadiness.querySelectorAll("[data-launch-open-scope]").forEach((node) => {
+    node.addEventListener("click", async () => {
+      try {
+        await openOrCreateConversationScope(node.dataset.launchOpenScope);
+      } catch (error) {
+        setStatus(String(error.message || error), "error");
+      }
+    });
+  });
+  el.projectLaunchReadiness.querySelectorAll("[data-launch-start]").forEach((node) => {
+    node.addEventListener("click", async () => {
+      try {
+        setWorkspaceTab("dashboard");
+        await createRun({ quickMode: false });
+      } catch (error) {
+        setStatus(String(error.message || error), "error");
+      }
+    });
+  });
+  el.projectLaunchReadiness.querySelectorAll("[data-launch-quick]").forEach((node) => {
+    node.addEventListener("click", async () => {
+      try {
+        setWorkspaceTab("dashboard");
+        await createRun({ quickMode: true });
+      } catch (error) {
+        setStatus(String(error.message || error), "error");
+      }
+    });
+  });
+}
+
 function renderProjectBriefSummary(project) {
   if (!el.projectBriefSummary) return;
   if (!project) {
@@ -2169,6 +2292,7 @@ function deriveSummary(project, snapshot) {
   const stageGoal = progress.stage_goal || "等待下一步目标。";
   const possibleCause = progress.possible_cause || null;
   const interventionAction = focusRun?.result?.manual_intervention?.action || null;
+  const readiness = openingReadiness(project);
 
   if (!project) {
     return {
@@ -2183,6 +2307,24 @@ function deriveSummary(project, snapshot) {
       disableRunButton: true,
       disableQuickRunButton: true,
       runButtonLabel: "生成章节",
+      quickRunButtonLabel: "快速试写",
+    };
+  }
+
+  if (!latestChapter && !focusRun && !readiness.ready) {
+    const missingLabels = readiness.items.filter((item) => !item.done).map((item) => item.label);
+    return {
+      goal: "先补齐开书确认，再开始正式首章。",
+      system: "系统空闲，正在等待你把项目方向、人物设定和第一卷方向收紧成可执行摘要。",
+      event: `当前还缺：${missingLabels.join("、")}。`,
+      next: "去“项目设定”页补齐缺口；如果你只是想先试一下方向，可以点“快速试写”。",
+      heroNote: "正式首章建议在三层摘要都齐了之后再开始，这样后面的章卡和正文会更稳。",
+      pill: `开书确认 ${readiness.completed}/${readiness.total}`,
+      kind: "warn",
+      focusRun: null,
+      disableRunButton: true,
+      disableQuickRunButton: false,
+      runButtonLabel: "先补齐开书确认",
       quickRunButtonLabel: "快速试写",
     };
   }
@@ -2290,10 +2432,10 @@ function deriveSummary(project, snapshot) {
 
   return {
     goal: "启动首章生成。",
-    system: "系统空闲。",
-    event: "项目已创建，但还没有任何章节和 Run。",
-    next: "点击“生成章节”，启动第一个后台 Run。",
-    heroNote: "这是一个全新项目。先跑出第 1 章，再看系统给出的材料和建议。",
+    system: readiness.ready ? "系统空闲，已具备正式开书条件。" : "系统空闲。",
+    event: readiness.ready ? "项目三层摘要已齐，可以正式进入首章。" : "项目已创建，但还没有任何章节和 Run。",
+    next: readiness.ready ? "点击“生成章节”，启动正式首章。" : "点击“生成章节”，启动第一个后台 Run。",
+    heroNote: readiness.ready ? "这本书的项目方向、人物设定和第一卷方向已经形成摘要，可以开始正式首章。" : "这是一个全新项目。先跑出第 1 章，再看系统给出的材料和建议。",
     pill: "可以开始生成",
     kind: "ready",
     focusRun: null,
@@ -2698,6 +2840,7 @@ function renderProjectState() {
   const project = selectedProject();
   const snapshot = state.projectSnapshot;
   renderProjectBriefSummary(project);
+  renderProjectLaunchReadiness(project);
   renderChapters(snapshot.chapters || []);
   const focusRunId = pickFocusRun(snapshot.runs || [])?.run_id || null;
   const summary = deriveSummary(project, snapshot);

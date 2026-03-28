@@ -150,6 +150,30 @@ body {
   gap: 12px;
 }
 
+.launch-checklist {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.check-card {
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: rgba(255, 252, 246, 0.9);
+}
+
+.check-card.ready {
+  border-color: rgba(59, 122, 87, 0.26);
+  background: rgba(245, 252, 246, 0.94);
+}
+
+.check-card.pending {
+  border-color: rgba(138, 59, 18, 0.18);
+  background: rgba(255, 248, 240, 0.92);
+}
+
 .overview-strip {
   margin-top: 16px;
   display: grid;
