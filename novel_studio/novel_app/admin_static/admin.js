@@ -1861,6 +1861,43 @@ function artifactGuidanceBullets(artifactType) {
   return labels;
 }
 
+function formalLaunchReviewBullets() {
+  const run = artifactRunRecord();
+  const formalLaunch = formalLaunchInstruction(run);
+  if (!run || !formalLaunch) return [];
+  const phaseDecision = run.result?.phase_decision || {};
+  const reviewTrace = run.result?.review_resolution_trace || {};
+  const finalDecision = phaseDecision.final_decision || null;
+  const unresolvedCount = reviewTrace.recurring_count ?? reviewTrace.open_count ?? 0;
+  const bullets = [];
+
+  if (formalLaunch.chapterFocus) {
+    if (finalDecision === "pass" || finalDecision === "continue") {
+      bullets.push(`启动重点当前判断：已初步兑现“${formalLaunch.chapterFocus}”。`);
+    } else if (finalDecision === "rewrite" || finalDecision === "replan") {
+      bullets.push(`启动重点当前判断：还没站稳“${formalLaunch.chapterFocus}”，本轮仍需继续修。`);
+    } else if (finalDecision === "human_check") {
+      bullets.push(`启动重点当前判断：围绕“${formalLaunch.chapterFocus}”仍需人工确认。`);
+    } else if (unresolvedCount > 0) {
+      bullets.push(`启动重点当前判断：仍有 ${unresolvedCount} 个问题未收口，暂时还不能算稳定兑现。`);
+    } else {
+      bullets.push(`启动重点当前判断：本轮已围绕“${formalLaunch.chapterFocus}”展开，但还要结合后续审校继续看。`);
+    }
+  }
+
+  if (formalLaunch.launchNote) {
+    if (finalDecision === "pass" || finalDecision === "continue") {
+      bullets.push(`启动备注当前状态：暂未被判定为主要阻塞项。`);
+    } else if (finalDecision === "rewrite" || finalDecision === "replan" || finalDecision === "human_check" || unresolvedCount > 0) {
+      bullets.push(`启动备注当前仍需继续盯：${formalLaunch.launchNote}`);
+    } else {
+      bullets.push(`启动备注当前状态：已带入本轮判断，后续仍建议继续观察。`);
+    }
+  }
+
+  return bullets;
+}
+
 function conversationGuidanceSummary(run) {
   const guidance = conversationGuidance(run);
   if (!guidance || !guidance.decision_count) return null;
@@ -2040,6 +2077,9 @@ function escapeHtml(value) {
 function summarizeArtifact(item) {
   const payload = item.payload || {};
   const guidanceBullets = artifactGuidanceBullets(item.artifact_type);
+  const launchReviewBullets = ["latest_review_reports", "phase_decision", "review_resolution_trace", "human_guidance"].includes(item.artifact_type)
+    ? formalLaunchReviewBullets()
+    : [];
   if (item.artifact_type === "publish_package") {
     return {
       lead: `${payload.title || "未命名章节"} · 约 ${payload.word_count || 0} 字`,
@@ -2081,10 +2121,13 @@ function summarizeArtifact(item) {
     const reports = Array.isArray(payload) ? payload : [];
     return {
       lead: reports.length ? `共 ${reports.length} 份审校意见` : "暂无审校意见",
-      bullets: reports.slice(0, 4).map((report) => {
-        const reviewer = artifactLabel(`${report.reviewer}_reviewer`).replace("_reviewer", "");
-        return `${reviewer || report.reviewer}：${report.decision} / 总分 ${report.scores?.total ?? "?"}`;
-      }),
+      bullets: [
+        ...launchReviewBullets,
+        ...reports.slice(0, 4).map((report) => {
+          const reviewer = artifactLabel(`${report.reviewer}_reviewer`).replace("_reviewer", "");
+          return `${reviewer || report.reviewer}：${report.decision} / 总分 ${report.scores?.total ?? "?"}`;
+        }),
+      ],
       excerpt: reports[0]?.issues?.[0]
         ? `${reports[0].issues[0].evidence}\n建议：${reports[0].issues[0].fix_instruction}`
         : "",
@@ -2094,6 +2137,7 @@ function summarizeArtifact(item) {
     return {
       lead: `系统决定：${payload.final_decision || "未记录"}`,
       bullets: [
+        ...launchReviewBullets,
         payload.reason ? `原因：${payload.reason}` : null,
         ...(payload.must_fix || []).slice(0, 4).map((entry) => `必须修复：${entry}`),
         ...(payload.can_defer || []).slice(0, 2).map((entry) => `可延后：${entry}`),
@@ -2219,11 +2263,14 @@ function summarizeArtifact(item) {
     const entries = payload.items || [];
     return {
       lead: `问题关闭证据 · 已解决 ${payload.resolved_count ?? 0} 项，复发 ${payload.recurring_count ?? 0} 项，新增 ${payload.new_count ?? 0} 项`,
-      bullets: entries.slice(0, 4).map((entry) => {
-        const reviewer = entry.reviewer || "unknown";
-        const decision = entry.reviewer_decision || "未记录";
-        return `${entry.status || "open"} / ${reviewer} / ${decision}：${entry.resolution_summary || entry.fix_instruction || entry.issue_id}`;
-      }),
+      bullets: [
+        ...launchReviewBullets,
+        ...entries.slice(0, 4).map((entry) => {
+          const reviewer = entry.reviewer || "unknown";
+          const decision = entry.reviewer_decision || "未记录";
+          return `${entry.status || "open"} / ${reviewer} / ${decision}：${entry.resolution_summary || entry.fix_instruction || entry.issue_id}`;
+        }),
+      ],
       excerpt: entries
         .slice(0, 3)
         .map((entry) => {
@@ -2249,6 +2296,7 @@ function summarizeArtifact(item) {
     return {
       lead: payload.reason || "需要人工介入",
       bullets: [
+        ...launchReviewBullets,
         ...(payload.must_fix || []).slice(0, 4).map((entry) => `必须修复：${entry}`),
         ...(payload.can_defer || []).slice(0, 2).map((entry) => `可延后：${entry}`),
       ],
