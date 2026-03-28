@@ -1385,6 +1385,48 @@ function openingReadiness(project) {
   };
 }
 
+function launchAppliedSummarySources(project) {
+  return [
+    {
+      label: "项目方向",
+      source: projectSummarySource(project),
+    },
+    {
+      label: "人物设定",
+      source: scopedSummarySource(project, "character_room"),
+    },
+    {
+      label: "第一卷方向",
+      source: scopedSummarySource(project, "outline_room"),
+    },
+  ].filter((item) => item.source?.summary);
+}
+
+function launchInheritedItems(project) {
+  return launchAppliedSummarySources(project)
+    .flatMap((item) =>
+      (item.source.summary.items || []).slice(0, 2).map((entry) => ({
+        scopeLabel: item.label,
+        label: entry.label || item.label,
+        summary: entry.summary || "",
+      }))
+    )
+    .filter((item) => item.summary)
+    .slice(0, 6);
+}
+
+function launchOpenQuestions(project) {
+  return launchAppliedSummarySources(project)
+    .flatMap((item) =>
+      (item.source.summary.open_questions || []).map((question) => ({
+        scopeLabel: item.label,
+        question,
+      }))
+    )
+    .filter((item) => item.question)
+    .slice(0, 6);
+}
+
 function renderProjectLaunchReadiness(project) {
   if (!el.projectLaunchReadiness) return;
   const readiness = openingReadiness(project);
@@ -1399,6 +1441,8 @@ function renderProjectLaunchReadiness(project) {
     `;
     return;
   }
+  const inheritedItems = launchInheritedItems(project);
+  const openQuestions = launchOpenQuestions(project);
   const items = readiness.items
     .map(
       (item) => `
@@ -1417,6 +1461,39 @@ function renderProjectLaunchReadiness(project) {
       `
     )
     .join("");
+  const carryInHtml = inheritedItems.length
+    ? `<ul class="interview-list">${inheritedItems
+        .map(
+          (item) =>
+            `<li><strong>${escapeHtml(item.scopeLabel)} · ${escapeHtml(item.label || "")}</strong>：${escapeHtml(item.summary || "")}</li>`
+        )
+        .join("")}</ul>`
+    : `<div class="launch-note">首章真正会继承的内容，会在三层摘要写回后显示在这里。</div>`;
+  const unresolvedHtml = openQuestions.length
+    ? `<ul class="interview-list">${openQuestions
+        .map((item) => `<li><strong>${escapeHtml(item.scopeLabel)}</strong>：${escapeHtml(item.question || "")}</li>`)
+        .join("")}</ul>
+       <div class="launch-note">这些问题不会阻止你开书，但会继续保留到后续人物讨论、章卡讨论和正文修订里慢慢收紧。</div>`
+    : `<div class="launch-note">${readiness.ready ? "当前三层摘要里没有明显的未决问题，可以直接把注意力放到首章。": "等三层摘要再补齐一些，系统才会更清楚哪些问题可以留到后面慢慢解决。"} </div>`;
+  const readinessReasons = readiness.ready
+    ? [
+        `项目方向、人物设定、第一卷方向都已经写回，首章不会再从一团模糊想法开始。`,
+        `首章将直接继承 ${inheritedItems.length} 条已确认信息，章卡和正文会更稳。`,
+        openQuestions.length
+          ? `仍有 ${openQuestions.length} 个未决问题会被保留，但它们已经被收拢到可继续细化的范围内。`
+          : `当前没有明显未决问题，已经具备正式进入首章的条件。`,
+      ]
+    : [
+        `现在只完成了 ${readiness.completed}/${readiness.total} 项，正式首章还缺稳定的开书地基。`,
+        `优先补齐 ${readiness.items
+          .filter((item) => !item.done)
+          .map((item) => item.label)
+          .join("、")}，后续章卡和正文会明显更稳。`,
+        `如果你只是想先试试感觉，可以继续用“快速试写”，但它不等于正式开书。`,
+      ];
+  const readinessWhyHtml = `<ul class="interview-list">${readinessReasons
+    .map((item) => `<li>${escapeHtml(item)}</li>`)
+    .join("")}</ul>`;
   const launchCopy = readiness.ready
     ? "三层开书信息已经齐了。现在可以直接开始正式首章创作。"
     : `当前已完成 ${readiness.completed}/${readiness.total} 项。建议先补齐缺口，再开始正式首章；如果只是想低成本试方向，可以继续用“快速试写”。`;
@@ -1432,6 +1509,23 @@ function renderProjectLaunchReadiness(project) {
       </div>
     </div>
     <div class="launch-checklist">${items}</div>
+    <div class="launch-detail-grid">
+      <div class="summary-card accent">
+        <div class="summary-label">首章会直接继承什么</div>
+        <div class="summary-value">开始首章后，系统会优先把这些已确认信息带进章卡与正文。</div>
+        ${carryInHtml}
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">暂时保留哪些未决问题</div>
+        <div class="summary-value">开书不要求一次把所有问题都想清，但要知道哪些点会继续保留。</div>
+        ${unresolvedHtml}
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">为什么现在适合正式开书</div>
+        <div class="summary-value">这是系统对“现在就开书”是否合理的判断依据。</div>
+        ${readinessWhyHtml}
+      </div>
+    </div>
   `;
   el.projectLaunchReadiness.querySelectorAll("[data-launch-open-scope]").forEach((node) => {
     node.addEventListener("click", async () => {

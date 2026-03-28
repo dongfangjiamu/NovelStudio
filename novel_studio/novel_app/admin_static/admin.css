@@ -153,7 +153,14 @@ body {
 .launch-checklist {
   margin-top: 12px;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.launch-detail-grid {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 12px;
 }
 
@@ -172,6 +179,12 @@ body {
 .check-card.pending {
   border-color: rgba(138, 59, 18, 0.18);
   background: rgba(255, 248, 240, 0.92);
+}
+
+.launch-note {
+  margin-top: 8px;
+  color: var(--muted);
+  line-height: 1.55;
 }
 
 .overview-strip {
