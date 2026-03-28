@@ -324,6 +324,8 @@ def test_interview_state_builds_current_draft_after_two_answers() -> None:
     assert stage["project_summary"]["title"] == "第一版项目设定摘要"
     assert stage["decision_split_preview"]["counts"]["character_note"] == 1
     assert stage["decision_split_preview"]["counts"]["writer_playbook_rule"] == 1
+    assert stage["action_recommendation"]["mode"] == "continue_clarifying"
+    assert stage["action_recommendation"]["focus_topic"] == "故事推进方式"
 
 
 def test_draft_confirm_helper_does_not_advance_progress() -> None:
@@ -438,6 +440,9 @@ def test_project_bootstrap_stage_summary_can_split_into_decisions() -> None:
     assert "character_note" in types
     assert "outline_constraint" in types
     assert all(item["payload"]["source"] == "stage_confirmation" for item in decisions)
+
+    refreshed = client.get(f"/api/conversation-threads/{thread['thread_id']}").json()
+    assert refreshed["interview_state"]["stage_confirmation"]["action_recommendation"]["mode"] == "apply_and_split"
 
 
 def test_character_and_outline_rooms_expose_carry_over_context() -> None:

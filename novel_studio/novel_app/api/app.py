@@ -1032,6 +1032,48 @@ def create_app(
                 "items": decision_plan,
                 "counts": counts,
             }
+        action_recommendation = None
+        if unresolved_topics:
+            if len(unresolved_topics) >= 2:
+                action_recommendation = {
+                    "mode": "continue_clarifying",
+                    "title": "现在更适合先补一个关键点",
+                    "reason": f"当前还剩 {len(unresolved_topics)} 个关键点没有收紧，先把“{unresolved_topics[0]}”说清，这版摘要会稳很多。",
+                    "primary_label": "先补当前这一个",
+                    "focus_topic": unresolved_topics[0],
+                }
+            elif scope == "project_bootstrap" and decision_split_preview:
+                action_recommendation = {
+                    "mode": "apply_and_split",
+                    "title": "现在更适合先把这版方向落下来",
+                    "reason": f"当前只剩“{unresolved_topics[0]}”这类尾部问题，可以先确认这版项目方向，并拆出第一批结论去推进人物和大纲。",
+                    "primary_label": "确认并拆出第一批结论",
+                    "focus_topic": unresolved_topics[0],
+                }
+            else:
+                action_recommendation = {
+                    "mode": "apply_summary",
+                    "title": "现在更适合先确认这版摘要",
+                    "reason": f"当前只剩“{unresolved_topics[0]}”这类可后续细化的问题，先把这版摘要写回项目设定更划算。",
+                    "primary_label": "先确认这版摘要",
+                    "focus_topic": unresolved_topics[0],
+                }
+        elif scope == "project_bootstrap" and decision_split_preview:
+            action_recommendation = {
+                "mode": "apply_and_split",
+                "title": "现在可以把这版项目方向正式落下来",
+                "reason": "关键项目方向已经收紧到可以直接固化，并拆出第一批人物设定、卷纲约束和长期规则。",
+                "primary_label": "确认并拆出第一批结论",
+                "focus_topic": None,
+            }
+        else:
+            action_recommendation = {
+                "mode": "apply_summary",
+                "title": "现在可以把这版阶段摘要写回项目设定",
+                "reason": "当前这条线已经形成稳定摘要，适合先固化，再回到项目页继续往开书确认推进。",
+                "primary_label": "先确认这版摘要",
+                "focus_topic": None,
+            }
         return {
             "confirmed_items": confirmed_items[:4],
             "provisional_items": provisional_items[:4],
@@ -1040,6 +1082,7 @@ def create_app(
             "project_summary": project_summary,
             "stage_summary": stage_summary,
             "decision_split_preview": decision_split_preview,
+            "action_recommendation": action_recommendation,
         }
 
     def build_project_summary_brief(*, project, thread, interview_state: dict[str, object]) -> dict | None:

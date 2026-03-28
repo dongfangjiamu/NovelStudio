@@ -1124,6 +1124,30 @@ function renderInterviewSummary(thread) {
           <h4>阶段确认页</h4>
           <span class="status-chip status-approved">先确认，再分流</span>
         </div>
+        ${
+          interview.stage_confirmation.action_recommendation
+            ? `
+              <div class="interview-block accent-block">
+                <strong>${escapeHtml(interview.stage_confirmation.action_recommendation.title || "现在更适合先确认这版")}</strong>
+                <div class="meta">${escapeHtml(interview.stage_confirmation.action_recommendation.reason || "")}</div>
+                ${
+                  interview.stage_confirmation.action_recommendation.focus_topic
+                    ? `<div class="meta">当前最值得先补：${escapeHtml(interview.stage_confirmation.action_recommendation.focus_topic)}</div>`
+                    : ""
+                }
+                <div class="actions">
+                  ${
+                    interview.stage_confirmation.action_recommendation.mode === "apply_and_split"
+                      ? `<button class="button primary" type="button" data-stage-apply-and-split="${thread.thread_id}">${escapeHtml(interview.stage_confirmation.action_recommendation.primary_label || "确认并拆出第一批结论")}</button>`
+                      : interview.stage_confirmation.action_recommendation.mode === "apply_summary"
+                        ? `<button class="button secondary" type="button" data-apply-stage-summary="${thread.thread_id}">${escapeHtml(interview.stage_confirmation.action_recommendation.primary_label || stageSummaryApplyLabel(thread.scope))}</button>`
+                        : `<button class="button ghost" type="button" data-stage-focus-input="true">${escapeHtml(interview.stage_confirmation.action_recommendation.primary_label || "先补当前这一个")}</button>`
+                  }
+                </div>
+              </div>
+            `
+            : ""
+        }
         <div class="interview-grid">
           <div class="interview-block">
             <strong>已确认</strong>
@@ -1346,6 +1370,12 @@ function renderInterviewSummary(thread) {
       } catch (error) {
         setStatus(String(error.message || error), "error");
       }
+    });
+  });
+  el.conversationInterviewSummary.querySelectorAll("[data-stage-focus-input]").forEach((node) => {
+    node.addEventListener("click", () => {
+      el.conversationInput.focus();
+      setStatus("先把当前这一个关键点说清，再决定是否确认这版摘要。", "ready");
     });
   });
   el.conversationInterviewSummary.querySelectorAll("[data-apply-stage-summary]").forEach((node) => {
