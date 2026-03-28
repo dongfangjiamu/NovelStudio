@@ -788,17 +788,21 @@ def create_app(
         project_id: str,
         record,
         payload: dict[str, object],
-    ) -> tuple[str | None, list[str]]:
+    ) -> tuple[str | None, list[str], dict[str, int]]:
         handled_at = parse_timestamp(record.updated_at)
         if handled_at is None:
-            return None, []
+            return None, [], {"runs": 0, "completed": 0, "failed": 0, "awaiting": 0, "matched": 0}
         runs = [
             item
             for item in app.state.store.list_runs(project_id)
             if (parse_timestamp(item.created_at) or datetime.min.replace(tzinfo=timezone.utc)) >= handled_at
         ]
         if not runs:
-            return "处理后还没有新运行，先继续积累 1 到 2 条样本，再判断这条策略是否真的带来改善。", []
+            return (
+                "处理后还没有新运行，先继续积累 1 到 2 条样本，再判断这条策略是否真的带来改善。",
+                [],
+                {"runs": 0, "completed": 0, "failed": 0, "awaiting": 0, "matched": 0},
+            )
 
         completed = len([item for item in runs if item.status == "completed"])
         failed = len([item for item in runs if item.status == "failed"])
@@ -809,8 +813,8 @@ def create_app(
         ]
 
         preference_value = str(payload.get("adoption_preference_value") or "").strip()
+        matched = 0
         if preference_value:
-            matched = 0
             for run in runs:
                 checkpoint = (run.result or {}).get("human_checkpoint") or {}
                 if checkpoint.get("recommended_recovery_mode") == preference_value:
@@ -828,7 +832,37 @@ def create_app(
             summary = f"处理后新增 {len(runs)} 条运行，目前没有新的失败样本，方向看起来比之前更稳。"
         elif failed and not completed:
             summary = f"处理后新增 {len(runs)} 条运行，但失败样本仍然存在，这条策略还需要继续观察。"
-        return summary, items
+        return summary, items, {"runs": len(runs), "completed": completed, "failed": failed, "awaiting": awaiting, "matched": matched}
+
+    def strategy_suggestion_governance(
+        *,
+        status: str,
+        payload: dict[str, object],
+        impact_stats: dict[str, int],
+    ) -> tuple[str | None, str | None, str | None]:
+        run_count = int(impact_stats.get("runs") or 0)
+        completed = int(impact_stats.get("completed") or 0)
+        failed = int(impact_stats.get("failed") or 0)
+        matched = int(impact_stats.get("matched") or 0)
+
+        if run_count == 0:
+            return "先继续观察", "这条建议处理后还没有形成新样本，先不要急着改判断。", "neutral"
+
+        if status == "adopted":
+            if completed and not failed:
+                note = "处理后的新样本目前更稳，这条策略可以先继续保留。"
+                if payload.get("adoption_preference_value") and matched == 0:
+                    note = "目前新样本没有失败，但这条恢复偏好还没在足够多的人工检查点里触发，先保留并继续看。"
+                return "建议继续保留", note, "good"
+            if failed > completed:
+                return "建议重新评估", "处理后的失败样本仍然偏多，这条策略可能还不够对路。", "warn"
+            return "先继续观察", "这条策略已经开始生效，但样本还不够稳定，先继续观察。", "neutral"
+
+        if failed and not completed:
+            return "建议重新评估", "忽略之后失败仍然偏多，可以考虑把它重新纳入候选。", "warn"
+        if completed and not failed:
+            return "建议继续保持", "忽略之后新样本依然稳定，这条建议暂时可以继续保持忽略。", "good"
+        return "先继续观察", "忽略后的样本还不够稳定，先继续观察，再决定是否重新纳入。", "neutral"
 
     def strategy_suggestion_response_item(
         *,
@@ -840,6 +874,9 @@ def create_app(
         handled: bool = False,
         impact_summary: str | None = None,
         impact_items: list[str] | None = None,
+        governance_label: str | None = None,
+        governance_note: str | None = None,
+        governance_tone: str | None = None,
     ) -> StrategySuggestionItemResponse:
         return StrategySuggestionItemResponse(
             suggestion_key=str(item["suggestion_key"]),
@@ -860,6 +897,9 @@ def create_app(
             updated_at=updated_at,
             impact_summary=impact_summary,
             impact_items=list(impact_items or []),
+            governance_label=governance_label,
+            governance_note=governance_note,
+            governance_tone=governance_tone,
         )
 
     def project_recovery_preferences(project) -> dict[str, object]:
@@ -1019,10 +1059,15 @@ def create_app(
                         "evidence": [],
                         "tone": "neutral",
                     }
-                impact_summary, impact_items = strategy_suggestion_impact(
+                impact_summary, impact_items, impact_stats = strategy_suggestion_impact(
                     project_id=project.project_id,
                     record=record,
                     payload=item,
+                )
+                governance_label, governance_note, governance_tone = strategy_suggestion_governance(
+                    status=record.status,
+                    payload=item,
+                    impact_stats=impact_stats,
                 )
                 handled_items.append(
                     strategy_suggestion_response_item(
@@ -1034,6 +1079,9 @@ def create_app(
                         handled=True,
                         impact_summary=impact_summary,
                         impact_items=impact_items,
+                        governance_label=governance_label,
+                        governance_note=governance_note,
+                        governance_tone=governance_tone,
                     )
                 )
 

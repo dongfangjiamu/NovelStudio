@@ -572,6 +572,21 @@ body {
   margin-top: 8px;
 }
 
+.strategy-governance {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(111, 88, 61, 0.08);
+}
+
+.strategy-governance.good {
+  background: rgba(31, 107, 68, 0.1);
+}
+
+.strategy-governance.warn {
+  background: rgba(138, 59, 18, 0.1);
+}
+
 .summary-label {
   font-size: 11px;
   letter-spacing: 0.08em;

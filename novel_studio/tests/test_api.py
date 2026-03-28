@@ -201,6 +201,7 @@ def test_strategy_suggestion_can_be_adopted_into_project_rules() -> None:
     assert matched["status"] == "adopted"
     assert matched["impact_summary"]
     assert len(matched["impact_items"]) >= 1
+    assert matched["governance_label"] == "建议继续保留"
 
 
 def test_recovery_strategy_can_be_adopted_into_project_preferences() -> None:

@@ -66,6 +66,9 @@ class StrategySuggestionItemResponse(BaseModel):
     updated_at: str | None = None
     impact_summary: str | None = None
     impact_items: list[str] = Field(default_factory=list)
+    governance_label: str | None = None
+    governance_note: str | None = None
+    governance_tone: Literal["neutral", "good", "warn"] | None = None
 
 
 class StrategySuggestionsResponse(BaseModel):
