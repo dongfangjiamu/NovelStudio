@@ -1427,6 +1427,19 @@ function launchOpenQuestions(project) {
     .slice(0, 6);
 }
 
+function launchScopedItems(project, key) {
+  return launchAppliedSummarySources(project)
+    .flatMap((item) =>
+      (item.source.summary[key] || []).map((entry) => ({
+        scopeLabel: item.label,
+        label: entry.label || item.label,
+        summary: entry.summary || "",
+      }))
+    )
+    .filter((item) => item.summary)
+    .slice(0, 6);
+}
+
 function renderProjectLaunchReadiness(project) {
   if (!el.projectLaunchReadiness) return;
   const readiness = openingReadiness(project);
@@ -1442,6 +1455,8 @@ function renderProjectLaunchReadiness(project) {
     return;
   }
   const inheritedItems = launchInheritedItems(project);
+  const confirmedItems = launchScopedItems(project, "confirmed_items");
+  const provisionalItems = launchScopedItems(project, "provisional_items");
   const openQuestions = launchOpenQuestions(project);
   const items = readiness.items
     .map(
@@ -1461,14 +1476,29 @@ function renderProjectLaunchReadiness(project) {
       `
     )
     .join("");
-  const carryInHtml = inheritedItems.length
-    ? `<ul class="interview-list">${inheritedItems
+  const hardConstraintHtml = confirmedItems.length
+    ? `<ul class="interview-list">${confirmedItems
         .map(
           (item) =>
             `<li><strong>${escapeHtml(item.scopeLabel)} · ${escapeHtml(item.label || "")}</strong>：${escapeHtml(item.summary || "")}</li>`
         )
         .join("")}</ul>`
-    : `<div class="launch-note">首章真正会继承的内容，会在三层摘要写回后显示在这里。</div>`;
+    : inheritedItems.length
+      ? `<ul class="interview-list">${inheritedItems
+          .map(
+            (item) =>
+              `<li><strong>${escapeHtml(item.scopeLabel)} · ${escapeHtml(item.label || "")}</strong>：${escapeHtml(item.summary || "")}</li>`
+          )
+          .join("")}</ul>`
+      : `<div class="launch-note">正式首章的硬约束，会在三层摘要写回后显示在这里。</div>`;
+  const provisionalHtml = provisionalItems.length
+    ? `<ul class="interview-list">${provisionalItems
+        .map(
+          (item) =>
+            `<li><strong>${escapeHtml(item.scopeLabel)} · ${escapeHtml(item.label || "")}</strong>：${escapeHtml(item.summary || "")}</li>`
+        )
+        .join("")}</ul>`
+    : `<div class="launch-note">${readiness.ready ? "当前没有明显的暂定方向残留，首章可以按更稳定的项目理解起步。" : "等阶段摘要再收紧一些，这里会显示“先这样理解、后面再细化”的暂定方向。"} </div>`;
   const unresolvedHtml = openQuestions.length
     ? `<ul class="interview-list">${openQuestions
         .map((item) => `<li><strong>${escapeHtml(item.scopeLabel)}</strong>：${escapeHtml(item.question || "")}</li>`)
@@ -1478,7 +1508,7 @@ function renderProjectLaunchReadiness(project) {
   const readinessReasons = readiness.ready
     ? [
         `项目方向、人物设定、第一卷方向都已经写回，首章不会再从一团模糊想法开始。`,
-        `首章将直接继承 ${inheritedItems.length} 条已确认信息，章卡和正文会更稳。`,
+        `首章将优先遵守 ${Math.max(confirmedItems.length, inheritedItems.length)} 条硬约束，再带着暂定方向继续细化。`,
         openQuestions.length
           ? `仍有 ${openQuestions.length} 个未决问题会被保留，但它们已经被收拢到可继续细化的范围内。`
           : `当前没有明显未决问题，已经具备正式进入首章的条件。`,
@@ -1493,7 +1523,12 @@ function renderProjectLaunchReadiness(project) {
       ];
   const readinessWhyHtml = `<ul class="interview-list">${readinessReasons
     .map((item) => `<li>${escapeHtml(item)}</li>`)
-    .join("")}</ul>`;
+    .join("")}</ul>
+    <div class="launch-note">${
+      readiness.ready
+        ? "正式模式会先按完整项目摘要生成章卡，再进入正文、审校和必要的修订；它不是低成本试跑。"
+        : "在你只想快速摸方向时，可以先用“快速试写”；正式模式建议在三层摘要补齐后再启用。"
+    }</div>`;
   const launchCopy = readiness.ready
     ? "三层开书信息已经齐了。现在可以直接开始正式首章创作。"
     : `当前已完成 ${readiness.completed}/${readiness.total} 项。建议先补齐缺口，再开始正式首章；如果只是想低成本试方向，可以继续用“快速试写”。`;
@@ -1504,25 +1539,26 @@ function renderProjectLaunchReadiness(project) {
         <div class="muted">${launchCopy}</div>
       </div>
       <div class="actions">
-        <button class="button ${readiness.ready ? "primary" : "ghost"}" type="button" data-launch-start="true" ${readiness.ready ? "" : "disabled"}>开始正式首章</button>
-        <button class="button ghost" type="button" data-launch-quick="true">快速试写</button>
+        <button class="button ${readiness.ready ? "primary" : "ghost"}" type="button" data-launch-start="true" ${readiness.ready ? "" : "disabled"}>以正式模式开始首章</button>
+        <button class="button ghost" type="button" data-launch-quick="true">只做快速试写</button>
       </div>
     </div>
     <div class="launch-checklist">${items}</div>
     <div class="launch-detail-grid">
       <div class="summary-card accent">
-        <div class="summary-label">首章会直接继承什么</div>
-        <div class="summary-value">开始首章后，系统会优先把这些已确认信息带进章卡与正文。</div>
-        ${carryInHtml}
+        <div class="summary-label">首章硬约束</div>
+        <div class="summary-value">正式模式下，章卡和正文会优先遵守这些已经确认的约束。</div>
+        ${hardConstraintHtml}
       </div>
       <div class="summary-card">
-        <div class="summary-label">暂时保留哪些未决问题</div>
-        <div class="summary-value">开书不要求一次把所有问题都想清，但要知道哪些点会继续保留。</div>
+        <div class="summary-label">暂定方向与未决问题</div>
+        <div class="summary-value">这些内容会先按当前理解进入首章，后续仍允许继续细化。</div>
+        ${provisionalHtml}
         ${unresolvedHtml}
       </div>
       <div class="summary-card">
-        <div class="summary-label">为什么现在适合正式开书</div>
-        <div class="summary-value">这是系统对“现在就开书”是否合理的判断依据。</div>
+        <div class="summary-label">正式模式会怎么跑</div>
+        <div class="summary-value">这是系统判断“现在适不适合正式开书”以及正式模式默认做法的说明。</div>
         ${readinessWhyHtml}
       </div>
     </div>
@@ -2419,7 +2455,7 @@ function deriveSummary(project, snapshot) {
       disableRunButton: true,
       disableQuickRunButton: false,
       runButtonLabel: "先补齐开书确认",
-      quickRunButtonLabel: "快速试写",
+      quickRunButtonLabel: "只做快速试写",
     };
   }
 
@@ -2528,15 +2564,15 @@ function deriveSummary(project, snapshot) {
     goal: "启动首章生成。",
     system: readiness.ready ? "系统空闲，已具备正式开书条件。" : "系统空闲。",
     event: readiness.ready ? "项目三层摘要已齐，可以正式进入首章。" : "项目已创建，但还没有任何章节和 Run。",
-    next: readiness.ready ? "点击“生成章节”，启动正式首章。" : "点击“生成章节”，启动第一个后台 Run。",
-    heroNote: readiness.ready ? "这本书的项目方向、人物设定和第一卷方向已经形成摘要，可以开始正式首章。" : "这是一个全新项目。先跑出第 1 章，再看系统给出的材料和建议。",
+    next: readiness.ready ? "点击“以正式模式开始首章”，按完整项目摘要进入正式创作。" : "点击“生成章节”，启动第一个后台 Run。",
+    heroNote: readiness.ready ? "这本书的项目方向、人物设定和第一卷方向已经形成摘要，适合用正式模式开始首章。" : "这是一个全新项目。先跑出第 1 章，再看系统给出的材料和建议。",
     pill: "可以开始生成",
     kind: "ready",
     focusRun: null,
     disableRunButton: false,
     disableQuickRunButton: false,
-    runButtonLabel: "生成章节",
-    quickRunButtonLabel: "快速试写",
+    runButtonLabel: readiness.ready ? "以正式模式开始首章" : "生成章节",
+    quickRunButtonLabel: "只做快速试写",
   };
 }
 
