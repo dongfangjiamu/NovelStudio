@@ -284,6 +284,7 @@ function resetWorkspaceState() {
 
 function updateAuthUi() {
   const loggedIn = isAuthenticated();
+  document.body.classList.toggle("logged-in", loggedIn);
   document.body.classList.toggle("logged-out", !loggedIn);
   if (el.authCurrentUser) el.authCurrentUser.hidden = !loggedIn;
   if (el.authForm) el.authForm.hidden = loggedIn;

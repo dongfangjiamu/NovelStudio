@@ -1558,6 +1558,18 @@ body.logged-out .workspace-page {
   display: none;
 }
 
+body.logged-in #auth-form {
+  display: none;
+}
+
+body.logged-in #auth-current-user {
+  display: block;
+}
+
+body.logged-out #auth-current-user {
+  display: none;
+}
+
 body.logged-out #auth-guard {
   display: block;
 }
