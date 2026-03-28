@@ -1827,16 +1827,33 @@ function groupedRunGuidance(run) {
   return grouped;
 }
 
+function formalLaunchInstruction(run) {
+  const instruction = run?.request?.human_instruction || null;
+  if (!instruction || instruction.requested_action !== "formal_launch") return null;
+  const payload = instruction.payload || {};
+  return {
+    chapterFocus: payload.chapter_focus || null,
+    launchNote: payload.launch_note || null,
+  };
+}
+
 function artifactGuidanceBullets(artifactType) {
   const run = artifactRunRecord();
   if (!run) return [];
   const grouped = groupedRunGuidance(run);
+  const formalLaunch = formalLaunchInstruction(run);
   const labels = [];
   if (["current_card", "planning_context", "current_draft", "drafting_context"].includes(artifactType)) {
     if (grouped.characters[0]) labels.push(`人物设定输入：${grouped.characters[0]}`);
     if (grouped.outline[0]) labels.push(`卷纲约束输入：${grouped.outline[0]}`);
     if (grouped.long_term[0]) labels.push(`长期规则输入：${grouped.long_term[0]}`);
     if (grouped.chapter[0]) labels.push(`本章修订输入：${grouped.chapter[0]}`);
+  }
+  if (formalLaunch?.chapterFocus && ["current_card", "planning_context"].includes(artifactType)) {
+    labels.push(`首章启动重点：${formalLaunch.chapterFocus}`);
+  }
+  if (formalLaunch?.launchNote && ["current_draft", "drafting_context", "publish_package"].includes(artifactType)) {
+    labels.push(`本次启动备注已带入正文要求：${formalLaunch.launchNote}`);
   }
   return labels;
 }
@@ -2024,6 +2041,7 @@ function summarizeArtifact(item) {
     return {
       lead: `${payload.title || "未命名章节"} · 约 ${payload.word_count || 0} 字`,
       bullets: [
+        ...guidanceBullets,
         payload.blurb ? `章节提要：${payload.blurb}` : null,
         payload.chapter_end_question ? `章末钩子：${payload.chapter_end_question}` : null,
         payload.operator_notes ? `操作备注：${payload.operator_notes}` : null,
