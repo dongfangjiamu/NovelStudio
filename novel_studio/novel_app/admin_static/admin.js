@@ -1093,6 +1093,31 @@ function renderInterviewSummary(thread) {
           </div>
         </div>
         ${
+          interview.stage_confirmation.decision_split_preview
+            ? `
+              <div class="interview-block">
+                <strong>可直接拆出的第一批结论</strong>
+                <div class="meta">
+                  人物设定 ${interview.stage_confirmation.decision_split_preview.counts?.character_note || 0} 条 /
+                  卷纲约束 ${interview.stage_confirmation.decision_split_preview.counts?.outline_constraint || 0} 条 /
+                  长期规则 ${interview.stage_confirmation.decision_split_preview.counts?.writer_playbook_rule || 0} 条
+                </div>
+                <ul class="interview-list">
+                  ${(interview.stage_confirmation.decision_split_preview.items || [])
+                    .map(
+                      (item) =>
+                        `<li><strong>${escapeHtml(item.label || "")}</strong> → ${escapeHtml(conversationDecisionLabel(item.decision_type || ""))}：${escapeHtml(item.content || "")}</li>`
+                    )
+                    .join("")}
+                </ul>
+                <div class="actions">
+                  <button class="button secondary" type="button" data-stage-split-summary="${thread.thread_id}">拆成第一批结论</button>
+                </div>
+              </div>
+            `
+            : ""
+        }
+        ${
           interview.stage_confirmation.project_summary
             ? `
               <section class="interview-draft summary">
@@ -1211,6 +1236,15 @@ function renderInterviewSummary(thread) {
     node.addEventListener("click", async () => {
       try {
         await openOrCreateConversationScope(node.dataset.stageOpenScope);
+      } catch (error) {
+        setStatus(String(error.message || error), "error");
+      }
+    });
+  });
+  el.conversationInterviewSummary.querySelectorAll("[data-stage-split-summary]").forEach((node) => {
+    node.addEventListener("click", async () => {
+      try {
+        await splitStageSummary(node.dataset.stageSplitSummary);
       } catch (error) {
         setStatus(String(error.message || error), "error");
       }
@@ -3507,6 +3541,25 @@ async function applyProjectSummary(threadId) {
   }
   setWorkspaceTab("project");
   setStatus("已把这版阶段确认摘要写回项目设定", "ready");
+}
+
+async function splitStageSummary(threadId) {
+  if (!threadId) return;
+  const created = await api(`/api/conversation-threads/${threadId}/split-stage-summary`, {
+    method: "POST",
+  });
+  await selectProject(state.selectedProjectId);
+  if (state.selectedThreadId) {
+    await loadConversationMessages(state.selectedThreadId, { activateTab: false });
+  }
+  const counts = created.reduce((acc, item) => {
+    acc[item.decision_type] = (acc[item.decision_type] || 0) + 1;
+    return acc;
+  }, {});
+  setStatus(
+    `已拆出 ${created.length} 条结论：人物设定 ${counts.character_note || 0} / 卷纲约束 ${counts.outline_constraint || 0} / 长期规则 ${counts.writer_playbook_rule || 0}`,
+    "ready"
+  );
 }
 
 async function updateConversationDecision(decisionId) {

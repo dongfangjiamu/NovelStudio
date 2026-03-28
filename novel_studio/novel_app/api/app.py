@@ -930,12 +930,34 @@ def create_app(
                 "items": summary_items[:5],
                 "readiness": readiness,
             }
+        stage_stub = SimpleNamespace(thread_id="", scope=scope)
+        decision_plan = build_stage_decision_plan(
+            thread=stage_stub,
+            interview_state={
+                "current_draft": current_draft,
+                "stage_confirmation": {
+                    "provisional_items": provisional_items,
+                },
+            },
+        )
+        decision_split_preview = None
+        if decision_plan:
+            counts = {
+                "character_note": len([item for item in decision_plan if item["decision_type"] == "character_note"]),
+                "outline_constraint": len([item for item in decision_plan if item["decision_type"] == "outline_constraint"]),
+                "writer_playbook_rule": len([item for item in decision_plan if item["decision_type"] == "writer_playbook_rule"]),
+            }
+            decision_split_preview = {
+                "items": decision_plan,
+                "counts": counts,
+            }
         return {
             "confirmed_items": confirmed_items[:4],
             "provisional_items": provisional_items[:4],
             "open_questions": unresolved_topics[:4],
             "next_steps": next_steps,
             "project_summary": project_summary,
+            "decision_split_preview": decision_split_preview,
         }
 
     def build_project_summary_brief(*, project, thread, interview_state: dict[str, object]) -> dict | None:
@@ -976,6 +998,49 @@ def create_app(
         if not brief.get("title"):
             brief["title"] = project.name
         return brief
+
+    def infer_stage_decision_type(label: str) -> str | None:
+        normalized = str(label or "").strip()
+        if normalized == "主角行动方式":
+            return "character_note"
+        if normalized == "故事推进方式":
+            return "outline_constraint"
+        if normalized in {"最想保住的吸引力", "不能写歪的边界"}:
+            return "writer_playbook_rule"
+        return None
+
+    def build_stage_decision_plan(*, thread, interview_state: dict[str, object]) -> list[dict[str, str]]:
+        current_draft = interview_state.get("current_draft") or {}
+        sections = list(current_draft.get("sections") or [])
+        if not sections:
+            stage_confirmation = interview_state.get("stage_confirmation") or {}
+            sections = list(stage_confirmation.get("provisional_items") or [])
+        plan: list[dict[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for item in sections:
+            label = str(item.get("label") or "").strip()
+            summary = str(item.get("summary") or "").strip()
+            decision_type = infer_stage_decision_type(label)
+            if not decision_type or not summary:
+                continue
+            dedupe_key = (decision_type, summary)
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            plan.append(
+                {
+                    "label": label,
+                    "content": summary,
+                    "decision_type": decision_type,
+                    "source_label": f"阶段确认页 · {label}",
+                    "target_scope": (
+                        "character_room"
+                        if decision_type == "character_note"
+                        else "outline_room" if decision_type == "outline_constraint" else "project_bootstrap"
+                    ),
+                }
+            )
+        return plan
 
     def interview_prompt_variants(*, topic: dict, helper_action: str | None) -> tuple[str, list[str]]:
         if helper_action == "rephrase":
@@ -2189,6 +2254,85 @@ def create_app(
             payload={"thread_id": thread.thread_id, "scope": thread.scope, "capture_stage": "clarified"},
         )
         return ProjectResponse.model_validate(updated_project.__dict__)
+
+    @app.post("/api/conversation-threads/{thread_id}/split-stage-summary", response_model=list[ConversationDecisionResponse], status_code=201)
+    async def split_conversation_stage_summary(
+        thread_id: str,
+        request: Request,
+        response: Response,
+    ) -> list[ConversationDecisionResponse]:
+        thread = app.state.store.get_conversation_thread(thread_id)
+        if not thread:
+            raise HTTPException(status_code=404, detail="conversation_thread_not_found")
+        project = app.state.store.get_project(thread.project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="project_not_found")
+        interview_state = build_interview_state(thread=thread, project=project)
+        if interview_state is None:
+            raise HTTPException(status_code=409, detail="stage_confirmation_not_ready")
+        decision_plan = build_stage_decision_plan(thread=thread, interview_state=interview_state)
+        if not decision_plan:
+            raise HTTPException(status_code=409, detail="stage_confirmation_not_ready")
+        existing_decisions = app.state.store.list_conversation_decisions(project_id=thread.project_id, thread_id=thread.thread_id)
+        created_or_reused: list[object] = []
+        for item in decision_plan:
+            matched = next(
+                (
+                    decision
+                    for decision in existing_decisions
+                    if decision.decision_type == item["decision_type"]
+                    and str(decision.payload.get("content") or "").strip() == item["content"]
+                ),
+                None,
+            )
+            if matched is not None:
+                created_or_reused.append(matched)
+                continue
+            source_message = app.state.store.add_conversation_message(
+                thread_id=thread.thread_id,
+                role="system",
+                message_type="system_action_result",
+                content=f"已从阶段确认页采纳为{item['decision_type']}：{item['content']}",
+                structured_payload={
+                    "source": "stage_confirmation_split",
+                    "source_label": item["source_label"],
+                    "decision_type": item["decision_type"],
+                    "content": item["content"],
+                },
+            )
+            if source_message is None:
+                raise HTTPException(status_code=404, detail="conversation_thread_not_found")
+            decision = app.state.store.create_conversation_decision(
+                project_id=thread.project_id,
+                thread_id=thread.thread_id,
+                message_id=source_message.message_id,
+                decision_type=item["decision_type"],
+                payload=build_conversation_decision_payload_from_content(
+                    thread=thread,
+                    message_id=source_message.message_id,
+                    decision_type=item["decision_type"],
+                    content=item["content"],
+                    source="stage_confirmation",
+                    source_label=item["source_label"],
+                ),
+                applied_to_run_id=thread.linked_run_id,
+                applied_to_chapter_no=thread.linked_chapter_no,
+            )
+            existing_decisions.append(decision)
+            created_or_reused.append(decision)
+        audit(
+            request=request,
+            response=response,
+            status_code=201,
+            action="conversation_stage.split",
+            resource_type="conversation_thread",
+            resource_id=thread.thread_id,
+            project_id=thread.project_id,
+            run_id=thread.linked_run_id,
+            approval_id=None,
+            payload={"decision_count": len(created_or_reused)},
+        )
+        return [ConversationDecisionResponse.model_validate(item.__dict__) for item in created_or_reused]
 
     @app.get("/api/conversation-threads/{thread_id}/messages", response_model=list[ConversationMessageResponse])
     async def list_conversation_messages(thread_id: str) -> list[ConversationMessageResponse]:

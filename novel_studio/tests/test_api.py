@@ -274,6 +274,8 @@ def test_interview_state_builds_current_draft_after_two_answers() -> None:
     assert stage["next_steps"][0]["scope"] == "character_room"
     assert stage["next_steps"][1]["scope"] == "outline_room"
     assert stage["project_summary"]["title"] == "第一版项目设定摘要"
+    assert stage["decision_split_preview"]["counts"]["character_note"] == 1
+    assert stage["decision_split_preview"]["counts"]["writer_playbook_rule"] == 1
 
 
 def test_draft_confirm_helper_does_not_advance_progress() -> None:
@@ -348,6 +350,46 @@ def test_project_bootstrap_summary_can_be_applied_to_project_brief() -> None:
     messages = client.get(f"/api/conversation-threads/{thread['thread_id']}/messages").json()
     assert refreshed_thread.status_code == 200
     assert any("已把这版阶段确认摘要写回项目设定" in item["content"] for item in messages)
+
+
+def test_project_bootstrap_stage_summary_can_split_into_decisions() -> None:
+    client = make_client()
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "阶段拆分项目",
+            "default_user_brief": {"title": "长夜炉火", "idea_seed": "一个被逐出山门的人，靠炉火中的古老声音翻盘。"},
+            "default_target_chapters": 1,
+        },
+    ).json()
+
+    thread = client.post(
+        f"/api/projects/{project['project_id']}/conversation-threads",
+        json={"scope": "project_bootstrap"},
+    ).json()
+    client.post(
+        f"/api/conversation-threads/{thread['thread_id']}/messages",
+        json={"content": "我最想保住的是压迫中翻盘和悬念感。"},
+    )
+    client.post(
+        f"/api/conversation-threads/{thread['thread_id']}/messages",
+        json={"content": "主角要是那种克制但危险的人，平时忍着，关键时刻会立刻动手。"},
+    )
+    client.post(
+        f"/api/conversation-threads/{thread['thread_id']}/messages",
+        json={"content": "我希望前期更偏阴谋和压迫感推进，而不是纯升级刷图。"},
+    )
+
+    split = client.post(f"/api/conversation-threads/{thread['thread_id']}/split-stage-summary")
+
+    assert split.status_code == 201
+    decisions = split.json()
+    assert len(decisions) == 3
+    types = {item["decision_type"] for item in decisions}
+    assert "writer_playbook_rule" in types
+    assert "character_note" in types
+    assert "outline_constraint" in types
+    assert all(item["payload"]["source"] == "stage_confirmation" for item in decisions)
 
 
 def test_draft_recap_section_can_be_adopted_directly() -> None:
