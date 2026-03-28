@@ -1620,6 +1620,82 @@ function projectSetupDiagnosis(project) {
   };
 }
 
+function projectStageCompletionCriteria(project, stageKey) {
+  const readiness = openingReadiness(project);
+  const source =
+    stageKey === "project_bootstrap"
+      ? projectSummarySource(project)
+      : stageKey === "character_room" || stageKey === "outline_room"
+        ? scopedSummarySource(project, stageKey)
+        : null;
+  const items = source?.summary?.items || [];
+  const openQuestions = source?.summary?.open_questions || [];
+  const confirmedItems = source?.summary?.confirmed_items || [];
+  const provisionalItems = source?.summary?.provisional_items || [];
+  if (stageKey === "project_bootstrap") {
+    return [
+      {
+        label: "这本书的整体方向已经有一版可确认表达",
+        done: items.length >= 2 || confirmedItems.length >= 1 || source?.status === "applied",
+      },
+      {
+        label: "主角行动方式或故事推进方式，至少已经说清一个",
+        done: items.length >= 3 || provisionalItems.length >= 1 || source?.status === "applied",
+      },
+      {
+        label: "未决问题已经收缩到 1 到 2 个以内",
+        done: openQuestions.length > 0 && openQuestions.length <= 2,
+      },
+    ];
+  }
+  if (stageKey === "character_room") {
+    return [
+      {
+        label: "主角欲望、边界或角色气质，已经有可确认的说法",
+        done: items.length >= 2 || confirmedItems.length >= 1 || source?.status === "applied",
+      },
+      {
+        label: "关键关系张力或人物冲突，已经有一版明确表达",
+        done: items.length >= 3 || provisionalItems.length >= 1 || source?.status === "applied",
+      },
+      {
+        label: "剩下的人物问题已经收缩到少数尾部问题",
+        done: openQuestions.length <= 2 && (items.length > 0 || source?.status === "applied"),
+      },
+    ];
+  }
+  if (stageKey === "outline_room") {
+    return [
+      {
+        label: "第一卷靠什么往前推，已经能说清",
+        done: items.length >= 2 || confirmedItems.length >= 1 || source?.status === "applied",
+      },
+      {
+        label: "中段反转或卷末兑现，已经有一版方向",
+        done: items.length >= 3 || provisionalItems.length >= 1 || source?.status === "applied",
+      },
+      {
+        label: "大纲层还没定死的问题已经被压到少数尾部",
+        done: openQuestions.length <= 2 && (items.length > 0 || source?.status === "applied"),
+      },
+    ];
+  }
+  return [
+    {
+      label: "项目方向、人物设定、第一卷方向都已经写回",
+      done: readiness.ready,
+    },
+    {
+      label: "首章硬约束已经能直接拿来开书",
+      done: launchInheritedItems(project).length >= 3 || launchScopedItems(project, "confirmed_items").length >= 3,
+    },
+    {
+      label: "剩下的未决问题不会阻止首章开始",
+      done: readiness.ready || launchOpenQuestions(project).length <= 2,
+    },
+  ];
+}
+
 function renderProjectLaunchReadiness(project) {
   if (!el.projectLaunchReadiness) return;
   const readiness = openingReadiness(project);
@@ -1828,6 +1904,7 @@ function renderProjectBriefSummary(project) {
   const setupStages = projectSetupStages(project);
   const setupSummary = setupStages.find((item) => item.active) || setupStages[setupStages.length - 1];
   const setupDiagnosis = projectSetupDiagnosis(project);
+  const setupCriteria = projectStageCompletionCriteria(project, setupSummary.key);
   const setupTimeline = `
     <section class="project-setup-strip">
       <div class="summary-card accent">
@@ -1873,6 +1950,21 @@ function renderProjectBriefSummary(project) {
             }</button>
           </div>
         </div>
+      </div>
+      <div class="summary-card project-stage-criteria">
+        <div class="summary-label">进入下一段前，最好先满足</div>
+        <ul class="interview-list">
+          ${setupCriteria
+            .map(
+              (item) => `
+                <li class="criteria-item ${item.done ? "done" : "pending"}">
+                  <span class="criteria-badge">${item.done ? "已达成" : "待补齐"}</span>
+                  <span>${escapeHtml(item.label)}</span>
+                </li>
+              `
+            )
+            .join("")}
+        </ul>
       </div>
     </section>
   `;

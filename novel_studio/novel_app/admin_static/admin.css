@@ -168,6 +168,43 @@ body {
   gap: 10px;
 }
 
+.project-stage-criteria {
+  background: rgba(255, 251, 245, 0.92);
+}
+
+.criteria-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.criteria-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 56px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  border: 1px solid var(--line);
+  background: rgba(255, 252, 247, 0.95);
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+
+.criteria-item.done .criteria-badge {
+  border-color: rgba(31, 107, 68, 0.24);
+  background: rgba(245, 252, 246, 0.94);
+  color: var(--success);
+}
+
+.criteria-item.pending .criteria-badge {
+  border-color: rgba(138, 59, 18, 0.18);
+  background: rgba(255, 248, 240, 0.92);
+  color: var(--accent);
+}
+
 .project-setup-step {
   display: flex;
   align-items: center;
