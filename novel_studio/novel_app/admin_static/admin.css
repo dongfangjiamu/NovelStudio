@@ -587,6 +587,10 @@ body {
   background: rgba(138, 59, 18, 0.1);
 }
 
+.strategy-next-step {
+  margin-top: 6px;
+}
+
 .summary-label {
   font-size: 11px;
   letter-spacing: 0.08em;

@@ -3345,6 +3345,7 @@ function renderStrategySuggestions(payload) {
           ? `<div class="strategy-governance ${item.governance_tone || "neutral"}">
               <strong>治理判断：${escapeHtml(item.governance_label)}</strong>
               ${item.governance_note ? `<div class="meta">${escapeHtml(item.governance_note)}</div>` : ""}
+              ${item.governance_next_step ? `<div class="meta strategy-next-step">现在建议：${escapeHtml(item.governance_next_step)}</div>` : ""}
             </div>`
           : ""
       }
@@ -3363,7 +3364,7 @@ function renderStrategySuggestions(payload) {
         ? `<div class="actions">
             ${item.can_adopt ? `<button class="button ghost" data-action="adopt-strategy" data-id="${escapeHtml(item.suggestion_key || "")}">${escapeHtml(item.adoption_label || "采纳")}</button>` : ""}
             ${item.can_dismiss ? `<button class="button ghost" data-action="dismiss-strategy" data-id="${escapeHtml(item.suggestion_key || "")}">忽略这条</button>` : ""}
-            ${item.can_reopen ? `<button class="button ghost" data-action="reopen-strategy" data-id="${escapeHtml(item.suggestion_key || "")}">重新纳入候选</button>` : ""}
+            ${item.can_reopen ? `<button class="button ghost" data-action="reopen-strategy" data-id="${escapeHtml(item.suggestion_key || "")}">${escapeHtml(item.reopen_label || "重新纳入候选")}</button>` : ""}
           </div>`
         : ""}
     </article>

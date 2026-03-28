@@ -839,30 +839,48 @@ def create_app(
         status: str,
         payload: dict[str, object],
         impact_stats: dict[str, int],
-    ) -> tuple[str | None, str | None, str | None]:
+    ) -> tuple[str | None, str | None, str | None, str | None, str | None]:
         run_count = int(impact_stats.get("runs") or 0)
         completed = int(impact_stats.get("completed") or 0)
         failed = int(impact_stats.get("failed") or 0)
         matched = int(impact_stats.get("matched") or 0)
 
         if run_count == 0:
-            return "先继续观察", "这条建议处理后还没有形成新样本，先不要急着改判断。", "neutral"
+            return (
+                "先继续观察",
+                "这条建议处理后还没有形成新样本，先不要急着改判断。",
+                "neutral",
+                "先继续按当前方式使用，至少再积累 1 到 2 条新运行后再回来判断。",
+                None,
+            )
 
         if status == "adopted":
             if completed and not failed:
                 note = "处理后的新样本目前更稳，这条策略可以先继续保留。"
                 if payload.get("adoption_preference_value") and matched == 0:
                     note = "目前新样本没有失败，但这条恢复偏好还没在足够多的人工检查点里触发，先保留并继续看。"
-                return "建议继续保留", note, "good"
+                return "建议继续保留", note, "good", "继续观察后续 2 条新运行。如果仍然稳定，就暂时不要动它。", None
             if failed > completed:
-                return "建议重新评估", "处理后的失败样本仍然偏多，这条策略可能还不够对路。", "warn"
-            return "先继续观察", "这条策略已经开始生效，但样本还不够稳定，先继续观察。", "neutral"
+                return (
+                    "建议重新评估",
+                    "处理后的失败样本仍然偏多，这条策略可能还不够对路。",
+                    "warn",
+                    "先把它重新纳入候选池，再看系统是否给出新的替代建议或恢复路径。",
+                    "按建议重新纳入候选",
+                )
+            return "先继续观察", "这条策略已经开始生效，但样本还不够稳定，先继续观察。", "neutral", "先继续积累 1 到 2 条新运行，再决定是否保留为长期做法。", None
 
         if failed and not completed:
-            return "建议重新评估", "忽略之后失败仍然偏多，可以考虑把它重新纳入候选。", "warn"
+            return (
+                "建议重新评估",
+                "忽略之后失败仍然偏多，可以考虑把它重新纳入候选。",
+                "warn",
+                "按建议重新纳入候选，再观察系统是否重新把它列为优先改法。",
+                "按建议重新纳入候选",
+            )
         if completed and not failed:
-            return "建议继续保持", "忽略之后新样本依然稳定，这条建议暂时可以继续保持忽略。", "good"
-        return "先继续观察", "忽略后的样本还不够稳定，先继续观察，再决定是否重新纳入。", "neutral"
+            return "建议继续保持", "忽略之后新样本依然稳定，这条建议暂时可以继续保持忽略。", "good", "先继续保持当前做法，等后续再出现同类问题时再重新评估。", None
+        return "先继续观察", "忽略后的样本还不够稳定，先继续观察，再决定是否重新纳入。", "neutral", "先继续积累 1 到 2 条新运行；如果同类问题再出现，再把它重新纳入候选。", None
 
     def strategy_suggestion_response_item(
         *,
@@ -877,6 +895,8 @@ def create_app(
         governance_label: str | None = None,
         governance_note: str | None = None,
         governance_tone: str | None = None,
+        governance_next_step: str | None = None,
+        reopen_label: str | None = None,
     ) -> StrategySuggestionItemResponse:
         return StrategySuggestionItemResponse(
             suggestion_key=str(item["suggestion_key"]),
@@ -900,6 +920,8 @@ def create_app(
             governance_label=governance_label,
             governance_note=governance_note,
             governance_tone=governance_tone,
+            governance_next_step=governance_next_step,
+            reopen_label=reopen_label,
         )
 
     def project_recovery_preferences(project) -> dict[str, object]:
@@ -1064,7 +1086,7 @@ def create_app(
                     record=record,
                     payload=item,
                 )
-                governance_label, governance_note, governance_tone = strategy_suggestion_governance(
+                governance_label, governance_note, governance_tone, governance_next_step, reopen_label = strategy_suggestion_governance(
                     status=record.status,
                     payload=item,
                     impact_stats=impact_stats,
@@ -1082,6 +1104,8 @@ def create_app(
                         governance_label=governance_label,
                         governance_note=governance_note,
                         governance_tone=governance_tone,
+                        governance_next_step=governance_next_step,
+                        reopen_label=reopen_label,
                     )
                 )
 

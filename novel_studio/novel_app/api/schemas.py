@@ -69,6 +69,8 @@ class StrategySuggestionItemResponse(BaseModel):
     governance_label: str | None = None
     governance_note: str | None = None
     governance_tone: Literal["neutral", "good", "warn"] | None = None
+    governance_next_step: str | None = None
+    reopen_label: str | None = None
 
 
 class StrategySuggestionsResponse(BaseModel):
