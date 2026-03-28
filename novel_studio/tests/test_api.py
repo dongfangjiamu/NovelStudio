@@ -123,6 +123,18 @@ def test_conversation_thread_flow() -> None:
     assert refreshed_thread.json()["interview_state"]["confirmed_topics"] == ["最想保住的吸引力"]
     assert refreshed_thread.json()["interview_state"]["unresolved_topics"][0] == "主角行动方式"
 
+    adopted = client.post(
+        f"/api/conversation-messages/{created_messages[0]['message_id']}/adopt",
+        json={"decision_type": "writer_playbook_rule"},
+    )
+    assert adopted.status_code == 201
+    assert "克制型" in adopted.json()["summary"]
+    assert "克制型" in adopted.json()["content"]
+
+    thread_after_adopt = client.get(f"/api/conversation-threads/{thread['thread_id']}")
+    assert thread_after_adopt.status_code == 200
+    assert "克制型" in thread_after_adopt.json()["interview_state"]["adopted_highlights"][0]
+
 
 def test_project_bootstrap_opening_uses_idea_seed() -> None:
     client = make_client()

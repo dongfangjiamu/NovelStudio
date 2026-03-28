@@ -239,6 +239,10 @@ class ConversationDecisionResponse(BaseModel):
         "chapter_card_patch",
     ]
     payload: dict[str, Any]
+    summary: str = ""
+    content: str = ""
+    source: str | None = None
+    source_label: str | None = None
     applied_to_run_id: str | None = None
     applied_to_chapter_no: int | None = None
     created_at: str

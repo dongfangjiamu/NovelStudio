@@ -1228,7 +1228,7 @@ def create_app(
             "answer_mode": next_topic.get("answer_mode", "short_text") if next_topic else "review",
             "basis": basis,
             "adopted_count": len(adopted),
-            "adopted_highlights": [item.summary for item in adopted[:3]],
+            "adopted_highlights": [conversation_decision_summary(item) for item in adopted[:3]],
             "reflection_summary": reflection_summary,
             "current_draft": current_draft,
             "stage_confirmation": stage_confirmation,
@@ -1681,6 +1681,32 @@ def create_app(
             updated["instruction"] = content
         return updated
 
+    def conversation_decision_summary(decision) -> str:
+        payload = dict(getattr(decision, "payload", {}) or {})
+        return str(
+            payload.get("comment")
+            or payload.get("rule")
+            or payload.get("note")
+            or payload.get("constraint")
+            or payload.get("instruction")
+            or payload.get("content")
+            or ""
+        ).strip()
+
+    def conversation_decision_response(decision) -> ConversationDecisionResponse:
+        payload = dict(decision.payload or {})
+        summary = conversation_decision_summary(decision)
+        return ConversationDecisionResponse.model_validate(
+            {
+                **decision.__dict__,
+                "payload": payload,
+                "summary": summary,
+                "content": str(payload.get("content") or summary),
+                "source": payload.get("source"),
+                "source_label": payload.get("source_label"),
+            }
+        )
+
     def merge_conversation_decisions_into_request(*, project_id: str, request_payload: dict[str, object]) -> dict[str, object]:
         decisions = app.state.store.list_conversation_decisions(project_id=project_id)
         if not decisions:
@@ -1697,13 +1723,7 @@ def create_app(
                 "decision_id": item.decision_id,
                 "decision_type": item.decision_type,
                 "thread_id": item.thread_id,
-                "summary": (
-                    item.payload.get("comment")
-                    or item.payload.get("rule")
-                    or item.payload.get("instruction")
-                    or item.payload.get("content")
-                    or ""
-                ),
+                "summary": conversation_decision_summary(item),
             }
             for item in decisions[:8]
         ]
@@ -2499,7 +2519,7 @@ def create_app(
             approval_id=None,
             payload={"decision_count": len(created_or_reused)},
         )
-        return [ConversationDecisionResponse.model_validate(item.__dict__) for item in created_or_reused]
+        return [conversation_decision_response(item) for item in created_or_reused]
 
     @app.get("/api/conversation-threads/{thread_id}/messages", response_model=list[ConversationMessageResponse])
     async def list_conversation_messages(thread_id: str) -> list[ConversationMessageResponse]:
@@ -2572,7 +2592,7 @@ def create_app(
         if not project:
             raise HTTPException(status_code=404, detail="project_not_found")
         return [
-            ConversationDecisionResponse.model_validate(item.__dict__)
+            conversation_decision_response(item)
             for item in app.state.store.list_conversation_decisions(project_id=project_id)
         ]
 
@@ -2608,7 +2628,7 @@ def create_app(
             approval_id=None,
             payload={"decision_type": updated.decision_type},
         )
-        return ConversationDecisionResponse.model_validate(updated.__dict__)
+        return conversation_decision_response(updated)
 
     @app.delete("/api/conversation-decisions/{decision_id}", status_code=204)
     async def delete_conversation_decision(
@@ -2689,7 +2709,7 @@ def create_app(
             approval_id=None,
             payload={"decision_type": payload.decision_type, "thread_id": thread.thread_id, "source_label": source_label},
         )
-        return ConversationDecisionResponse.model_validate(decision.__dict__)
+        return conversation_decision_response(decision)
 
     @app.post("/api/conversation-messages/{message_id}/adopt", response_model=ConversationDecisionResponse, status_code=201)
     async def adopt_conversation_message(
@@ -2729,7 +2749,7 @@ def create_app(
             approval_id=None,
             payload={"decision_type": payload.decision_type, "message_id": message_id},
         )
-        return ConversationDecisionResponse.model_validate(decision.__dict__)
+        return conversation_decision_response(decision)
 
     @app.get("/api/audit-logs", response_model=list[AuditLogResponse])
     async def list_audit_logs(limit: int = 100) -> list[AuditLogResponse]:
