@@ -3298,6 +3298,7 @@ function renderApprovals(items) {
     const interventionThread = conversationThreadForRun(item.run_id, "rewrite_intervention");
     const recoveryMode = interventionThread ? inferRecoveryModeForThread(interventionThread) : (isRecoveryMode(item.requested_action) ? item.requested_action : "continue");
     const recoveryPlan = recoveryModePlan(recoveryMode, { chapter_no: item.chapter_no });
+    const reviewSummary = approvalReviewSummary(item, recoveryMode);
     const title = approvalDecisionTitle(item, recoveryMode);
     const summary = approvalDecisionSummary(item, recoveryMode, recoveryPlan);
     const nextStep = approvalDecisionActions(item);
@@ -3321,6 +3322,17 @@ function renderApprovals(items) {
           <span class="status-chip status-${item.status}">${item.status === "approved" && !item.executed_run_id ? "待执行" : item.status}</span>
         </div>
         <div class="meta">${summary}</div>
+        ${
+          reviewSummary
+            ? `
+              <div class="focus-metric">
+                <strong>为什么现在建议这样处理</strong>
+                <div class="meta">${escapeHtml(reviewSummary.lead)}</div>
+                ${reviewSummary.items.map((entry) => `<div class="meta">${escapeHtml(entry)}</div>`).join("")}
+              </div>
+            `
+            : ""
+        }
         <div class="meta">${nextStep}</div>
         <div class="meta">当前恢复路径：${recoveryModeLabel(recoveryMode)}</div>
         <div class="meta">会保留：${escapeHtml(recoveryPlan.preserves[0])}</div>
@@ -3504,6 +3516,29 @@ function renderFocusRunReviewSummary(run) {
       }
     </div>
   `;
+}
+
+function approvalReviewSummary(item, recoveryMode) {
+  const run = (state.projectSnapshot.runs || []).find((entry) => entry.run_id === item.run_id) || null;
+  const review = run ? buildReviewOutcomeSummary(null, run) : null;
+  if (!review?.visible) return null;
+
+  let recommendation = null;
+  if (recoveryMode === "continue") {
+    recommendation = "当前更像是：保留这一章，继续往后推进。";
+  } else if (recoveryMode === "replan") {
+    recommendation = "当前更像是：这一章方向还不稳，先回到章卡层重做。";
+  } else if (recoveryMode === "rewrite") {
+    recommendation = "当前更像是：方向可以保留，但正文表达还要重写。";
+  }
+
+  return {
+    lead: review.lead,
+    items: [
+      recommendation,
+      ...review.items,
+    ].filter(Boolean).slice(0, 3),
+  };
 }
 
 function renderArtifacts(items) {
