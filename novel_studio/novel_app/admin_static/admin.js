@@ -685,7 +685,43 @@ function conversationInputPlaceholder(thread) {
 
 function renderThreadContext(thread) {
   const context = threadContext(thread);
-  if (!thread || !context || !["chapter_planning", "rewrite_intervention"].includes(thread.scope)) {
+  if (!thread || !context) {
+    el.conversationThreadContext.innerHTML = "";
+    return;
+  }
+  if (["character_room", "outline_room"].includes(thread.scope)) {
+    const inherited = context.inherited_items?.length
+      ? `<ul class="interview-list">${context.inherited_items.map((item) => `<li><strong>${escapeHtml(item.label || "")}</strong>：${escapeHtml(item.summary || "")}</li>`).join("")}</ul>`
+      : `<div class="meta">当前还没有明确可继承的稳定结论。</div>`;
+    const missing = context.missing_items?.length
+      ? `<ul class="interview-list">${context.missing_items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+      : `<div class="meta">这一步没有额外缺口，可以开始整理稳定结论。</div>`;
+    el.conversationThreadContext.innerHTML = `
+      <section class="interview-card">
+        <div class="card-head">
+          <h4>${escapeHtml(context.title || "承接说明")}</h4>
+          <span class="status-chip status-approved">${thread.scope === "character_room" ? "人物线" : "大纲线"}</span>
+        </div>
+        <div class="meta">${escapeHtml(context.reason || "")}</div>
+        <div class="interview-grid">
+          <div class="interview-block">
+            <strong>这一步会继承什么</strong>
+            ${inherited}
+          </div>
+          <div class="interview-block">
+            <strong>这一步还要补什么</strong>
+            ${missing}
+          </div>
+        </div>
+        <div class="interview-block">
+          <strong>当前目标</strong>
+          <div class="meta">${escapeHtml(context.next_goal || "")}</div>
+        </div>
+      </section>
+    `;
+    return;
+  }
+  if (!["chapter_planning", "rewrite_intervention"].includes(thread.scope)) {
     el.conversationThreadContext.innerHTML = "";
     return;
   }

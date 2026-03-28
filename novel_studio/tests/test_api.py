@@ -392,6 +392,54 @@ def test_project_bootstrap_stage_summary_can_split_into_decisions() -> None:
     assert all(item["payload"]["source"] == "stage_confirmation" for item in decisions)
 
 
+def test_character_and_outline_rooms_expose_carry_over_context() -> None:
+    client = make_client()
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "分流承接项目",
+            "default_user_brief": {"title": "长夜炉火", "idea_seed": "一个被逐出山门的人，靠炉火中的古老声音翻盘。"},
+            "default_target_chapters": 1,
+        },
+    ).json()
+
+    bootstrap = client.post(
+        f"/api/projects/{project['project_id']}/conversation-threads",
+        json={"scope": "project_bootstrap"},
+    ).json()
+    for content in [
+        "我最想保住的是压迫中翻盘和悬念感。",
+        "主角要是那种克制但危险的人，平时忍着，关键时刻会立刻动手。",
+        "我希望前期更偏阴谋和压迫感推进，而不是纯升级刷图。",
+    ]:
+        client.post(
+            f"/api/conversation-threads/{bootstrap['thread_id']}/messages",
+            json={"content": content},
+        )
+    client.post(f"/api/conversation-threads/{bootstrap['thread_id']}/apply-project-summary")
+    client.post(f"/api/conversation-threads/{bootstrap['thread_id']}/split-stage-summary")
+
+    character_thread = client.post(
+        f"/api/projects/{project['project_id']}/conversation-threads",
+        json={"scope": "character_room"},
+    ).json()
+    outline_thread = client.post(
+        f"/api/projects/{project['project_id']}/conversation-threads",
+        json={"scope": "outline_room"},
+    ).json()
+
+    character_context = character_thread["thread_context"]
+    outline_context = outline_thread["thread_context"]
+
+    assert character_context["title"] == "人物讨论承接说明"
+    assert any("克制但危险" in item["summary"] for item in character_context["inherited_items"])
+    assert "关键关系张力" in character_context["missing_items"]
+
+    assert outline_context["title"] == "大纲讨论承接说明"
+    assert any("阴谋和压迫感推进" in item["summary"] for item in outline_context["inherited_items"])
+    assert "卷末高潮" in outline_context["missing_items"]
+
+
 def test_draft_recap_section_can_be_adopted_directly() -> None:
     app = create_app(
         config=AppConfig(

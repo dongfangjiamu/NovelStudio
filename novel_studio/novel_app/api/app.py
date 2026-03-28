@@ -1042,6 +1042,50 @@ def create_app(
             )
         return plan
 
+    def build_guided_room_context(*, scope: str, project) -> dict | None:
+        if scope not in {"character_room", "outline_room"}:
+            return None
+        brief = dict(project.default_user_brief or {})
+        project_summary = dict(brief.get("project_summary") or {})
+        summary_items = list(project_summary.get("items") or [])
+        intent_profile = dict(brief.get("intent_profile") or {})
+        decisions = app.state.store.list_conversation_decisions(project_id=project.project_id)
+        if scope == "character_room":
+            inherited = []
+            if intent_profile.get("reader_pull"):
+                inherited.append({"label": "当前保住的吸引力", "summary": str(intent_profile["reader_pull"])[:160]})
+            for item in summary_items:
+                if item.get("label") in {"原始灵感", "最想保住的吸引力", "主角行动方式"}:
+                    inherited.append({"label": item.get("label"), "summary": item.get("summary")})
+            for decision in decisions:
+                if decision.decision_type == "character_note":
+                    inherited.append({"label": "已采纳人物设定", "summary": decision.payload.get("note")})
+            missing = ["主角真正想摆脱什么", "关键关系张力", "角色边界"]
+            return {
+                "title": "人物讨论承接说明",
+                "reason": "这一轮只收紧人物，不再重复从头立项。你现在主要要把主角气质、欲望和关系张力说清。",
+                "inherited_items": [item for item in inherited if str(item.get("summary") or "").strip()][:4],
+                "missing_items": missing,
+                "next_goal": "把人物感觉收紧成稳定的人物设定，便于后面写章卡和正文时保持同一个主角。",
+            }
+        inherited = []
+        if intent_profile.get("reader_pull"):
+            inherited.append({"label": "当前保住的吸引力", "summary": str(intent_profile["reader_pull"])[:160]})
+        for item in summary_items:
+            if item.get("label") in {"原始灵感", "最想保住的吸引力", "故事推进方式"}:
+                inherited.append({"label": item.get("label"), "summary": item.get("summary")})
+        for decision in decisions:
+            if decision.decision_type == "outline_constraint":
+                inherited.append({"label": "已采纳卷纲约束", "summary": decision.payload.get("constraint")})
+        missing = ["第一卷主推动力", "阶段反转", "卷末高潮"]
+        return {
+            "title": "大纲讨论承接说明",
+            "reason": "这一轮只收紧第一卷怎么推进，不再回头重问灵感本身。你现在主要要确认推进方式、关键反转和卷末兑现。",
+            "inherited_items": [item for item in inherited if str(item.get("summary") or "").strip()][:4],
+            "missing_items": missing,
+            "next_goal": "把第一卷怎么往前推聊清楚，形成真正能约束章卡和正文的大纲方向。",
+        }
+
     def interview_prompt_variants(*, topic: dict, helper_action: str | None) -> tuple[str, list[str]]:
         if helper_action == "rephrase":
             prompt = topic.get("rephrase_prompt") or topic["prompt"]
@@ -1151,6 +1195,11 @@ def create_app(
         return latest
 
     def build_thread_context(thread) -> dict | None:
+        if thread.scope in {"character_room", "outline_room"}:
+            project = app.state.store.get_project(thread.project_id)
+            if not project:
+                return None
+            return build_guided_room_context(scope=thread.scope, project=project)
         if thread.scope not in {"chapter_planning", "rewrite_intervention"} or not thread.linked_run_id:
             return None
         run = app.state.store.get_run(thread.linked_run_id)
@@ -1327,30 +1376,38 @@ def create_app(
         if scope == "character_room":
             thread_stub = SimpleNamespace(thread_id="", project_id=project.project_id, scope=scope)
             interview_state = build_interview_state(thread=thread_stub, project=project)
+            room_context = build_guided_room_context(scope=scope, project=project) or {}
             brief = project.default_user_brief or {}
             title = brief.get("title") or project.name
             content = (
                 f"这是《{title}》的人物讨论线程。\n\n"
+                f"当前承接：{room_context.get('reason') or '先承接前面已经确认的人物方向。'}\n"
+                f"已经继承：{'；'.join(item.get('summary', '') for item in room_context.get('inherited_items', [])[:2]) if room_context.get('inherited_items') else '还没有稳定继承项，可以边问边定。'}\n"
+                f"这一轮还要补：{'、'.join(room_context.get('missing_items') or [])}\n\n"
                 f"本线程目标：{interview_state['goal']}\n"
                 f"当前进度：{interview_state['completion_label']}\n\n"
                 f"先回答第 1 问：{interview_state['next_prompt']}\n"
                 f"可直接选：{' / '.join(interview_state['next_options']) if interview_state['next_options'] else '也可以直接补一句。'}"
             )
-            return "assistant_question", content, {"interview_state": interview_state}
+            return "assistant_question", content, {"interview_state": interview_state, "thread_context": room_context}
 
         if scope == "outline_room":
             thread_stub = SimpleNamespace(thread_id="", project_id=project.project_id, scope=scope)
             interview_state = build_interview_state(thread=thread_stub, project=project)
+            room_context = build_guided_room_context(scope=scope, project=project) or {}
             brief = project.default_user_brief or {}
             title = brief.get("title") or project.name
             content = (
                 f"这是《{title}》的大纲讨论线程。\n\n"
+                f"当前承接：{room_context.get('reason') or '先承接前面已经确认的项目方向。'}\n"
+                f"已经继承：{'；'.join(item.get('summary', '') for item in room_context.get('inherited_items', [])[:2]) if room_context.get('inherited_items') else '还没有稳定继承项，可以边问边定。'}\n"
+                f"这一轮还要补：{'、'.join(room_context.get('missing_items') or [])}\n\n"
                 f"本线程目标：{interview_state['goal']}\n"
                 f"当前进度：{interview_state['completion_label']}\n\n"
                 f"先回答第 1 问：{interview_state['next_prompt']}\n"
                 f"可直接选：{' / '.join(interview_state['next_options']) if interview_state['next_options'] else '也可以直接补一句。'}"
             )
-            return "assistant_question", content, {"interview_state": interview_state}
+            return "assistant_question", content, {"interview_state": interview_state, "thread_context": room_context}
 
         if scope == "rewrite_intervention" and run is not None:
             result = run.result or {}
