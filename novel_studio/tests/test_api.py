@@ -180,6 +180,14 @@ def test_strategy_suggestion_can_be_adopted_into_project_rules() -> None:
     assert adopt.json()["status"] == "adopted"
     assert adopt.json()["adopted_decision_id"]
 
+    app.state.store.save_run(
+        project_id=project["project_id"],
+        status="completed",
+        request={"user_brief": project["default_user_brief"], "target_chapters": 2, "operator_id": "tester"},
+        result={"progress": {"chapter_no": 2}},
+        error=None,
+    )
+
     decisions = client.get(f"/api/projects/{project['project_id']}/conversation-decisions")
     assert decisions.status_code == 200
     assert any(item["decision_type"] == "writer_playbook_rule" for item in decisions.json())
@@ -188,7 +196,11 @@ def test_strategy_suggestion_can_be_adopted_into_project_rules() -> None:
     assert suggestions_after.status_code == 200
     assert all(item["suggestion_key"] != "codify_pacing_and_hook_rules" for item in suggestions_after.json()["items"])
     handled = suggestions_after.json()["handled_items"]
-    assert any(item["suggestion_key"] == "codify_pacing_and_hook_rules" and item["status"] == "adopted" for item in handled)
+    matched = next((item for item in handled if item["suggestion_key"] == "codify_pacing_and_hook_rules"), None)
+    assert matched is not None
+    assert matched["status"] == "adopted"
+    assert matched["impact_summary"]
+    assert len(matched["impact_items"]) >= 1
 
 
 def test_recovery_strategy_can_be_adopted_into_project_preferences() -> None:

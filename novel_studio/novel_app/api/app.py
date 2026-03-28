@@ -783,6 +783,53 @@ def create_app(
             return "已忽略，系统暂时不会再把这条建议放到待处理列表里。"
         return None
 
+    def strategy_suggestion_impact(
+        *,
+        project_id: str,
+        record,
+        payload: dict[str, object],
+    ) -> tuple[str | None, list[str]]:
+        handled_at = parse_timestamp(record.updated_at)
+        if handled_at is None:
+            return None, []
+        runs = [
+            item
+            for item in app.state.store.list_runs(project_id)
+            if (parse_timestamp(item.created_at) or datetime.min.replace(tzinfo=timezone.utc)) >= handled_at
+        ]
+        if not runs:
+            return "处理后还没有新运行，先继续积累 1 到 2 条样本，再判断这条策略是否真的带来改善。", []
+
+        completed = len([item for item in runs if item.status == "completed"])
+        failed = len([item for item in runs if item.status == "failed"])
+        awaiting = len([item for item in runs if item.status == "awaiting_approval"])
+        items = [
+            f"处理后新增运行 {len(runs)} 条。",
+            f"其中完成 {completed} 条，待人工 {awaiting} 条，失败 {failed} 条。",
+        ]
+
+        preference_value = str(payload.get("adoption_preference_value") or "").strip()
+        if preference_value:
+            matched = 0
+            for run in runs:
+                checkpoint = (run.result or {}).get("human_checkpoint") or {}
+                if checkpoint.get("recommended_recovery_mode") == preference_value:
+                    matched += 1
+            if matched:
+                label = {
+                    "continue": "继续当前流程",
+                    "replan": "重做章卡",
+                    "rewrite": "重写正文",
+                }.get(preference_value, preference_value)
+                items.append(f"其中 {matched} 条人工检查点已经按“{label}”给出推荐。")
+
+        summary = f"处理后系统又产生了 {len(runs)} 条新运行，当前更适合继续观察它是否让完成率更稳。"
+        if completed and not failed:
+            summary = f"处理后新增 {len(runs)} 条运行，目前没有新的失败样本，方向看起来比之前更稳。"
+        elif failed and not completed:
+            summary = f"处理后新增 {len(runs)} 条运行，但失败样本仍然存在，这条策略还需要继续观察。"
+        return summary, items
+
     def strategy_suggestion_response_item(
         *,
         item: dict[str, object],
@@ -791,6 +838,8 @@ def create_app(
         adopted_decision_id: str | None = None,
         updated_at: str | None = None,
         handled: bool = False,
+        impact_summary: str | None = None,
+        impact_items: list[str] | None = None,
     ) -> StrategySuggestionItemResponse:
         return StrategySuggestionItemResponse(
             suggestion_key=str(item["suggestion_key"]),
@@ -809,6 +858,8 @@ def create_app(
             adopted_decision_id=adopted_decision_id,
             result_note=strategy_suggestion_result_note(status=status, payload=item, adopted_decision_id=adopted_decision_id),
             updated_at=updated_at,
+            impact_summary=impact_summary,
+            impact_items=list(impact_items or []),
         )
 
     def project_recovery_preferences(project) -> dict[str, object]:
@@ -968,6 +1019,11 @@ def create_app(
                         "evidence": [],
                         "tone": "neutral",
                     }
+                impact_summary, impact_items = strategy_suggestion_impact(
+                    project_id=project.project_id,
+                    record=record,
+                    payload=item,
+                )
                 handled_items.append(
                     strategy_suggestion_response_item(
                         item=item,
@@ -976,6 +1032,8 @@ def create_app(
                         adopted_decision_id=record.adopted_decision_id,
                         updated_at=record.updated_at,
                         handled=True,
+                        impact_summary=impact_summary,
+                        impact_items=impact_items,
                     )
                 )
 

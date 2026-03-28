@@ -64,6 +64,8 @@ class StrategySuggestionItemResponse(BaseModel):
     adopted_decision_id: str | None = None
     result_note: str | None = None
     updated_at: str | None = None
+    impact_summary: str | None = None
+    impact_items: list[str] = Field(default_factory=list)
 
 
 class StrategySuggestionsResponse(BaseModel):

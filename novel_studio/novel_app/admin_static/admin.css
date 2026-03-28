@@ -564,6 +564,14 @@ body {
   color: var(--ink);
 }
 
+.strategy-impact-summary {
+  margin-top: 6px;
+}
+
+.strategy-impact-list {
+  margin-top: 8px;
+}
+
 .summary-label {
   font-size: 11px;
   letter-spacing: 0.08em;

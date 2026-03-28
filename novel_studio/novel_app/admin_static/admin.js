@@ -3340,8 +3340,14 @@ function renderStrategySuggestions(payload) {
       <div class="summary-value">${escapeHtml(item.action || "")}</div>
       ${item.result_note ? `<div class="meta strategy-result-note">${escapeHtml(item.result_note)}</div>` : ""}
       ${item.updated_at ? `<div class="meta">最近处理时间：${escapeHtml(formatTimestamp(item.updated_at))}</div>` : ""}
+      ${item.impact_summary ? `<div class="meta strategy-impact-summary">${escapeHtml(item.impact_summary)}</div>` : ""}
       ${(item.evidence || []).length
         ? `<ul class="strategy-evidence">${item.evidence
+            .map((entry) => `<li>${escapeHtml(entry)}</li>`)
+            .join("")}</ul>`
+        : ""}
+      ${(item.impact_items || []).length
+        ? `<ul class="strategy-evidence strategy-impact-list">${item.impact_items
             .map((entry) => `<li>${escapeHtml(entry)}</li>`)
             .join("")}</ul>`
         : ""}
