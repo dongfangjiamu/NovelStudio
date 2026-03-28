@@ -2490,6 +2490,21 @@ function buildReviewOutcomeSummary(items = null, runOverride = null) {
   };
 }
 
+function compactDecisionNarrative(lead, items = [], limit = 2) {
+  const normalized = [];
+  const seen = new Set();
+  items.forEach((item) => {
+    const text = String(item || "").trim();
+    if (!text || seen.has(text)) return;
+    seen.add(text);
+    normalized.push(text);
+  });
+  return {
+    lead: String(lead || "").trim(),
+    items: normalized.slice(0, limit),
+  };
+}
+
 function renderLearningPanel(run) {
   if (!run) {
     el.learningCaption.textContent = "需要先选中一个项目";
@@ -3517,13 +3532,14 @@ function renderFocusRunReviewSummary(run) {
     run
   );
   if (!summary.visible) return "";
+  const narrative = compactDecisionNarrative(summary.lead, summary.items);
   return `
     <div class="focus-metric">
       <strong>这章现在能不能继续</strong>
-      <div class="meta">${escapeHtml(summary.lead)}</div>
+      <div class="meta">${escapeHtml(narrative.lead)}</div>
       ${
-        summary.items.length
-          ? summary.items.slice(0, 2).map((entry) => `<div class="meta">${escapeHtml(entry)}</div>`).join("")
+        narrative.items.length
+          ? narrative.items.map((entry) => `<div class="meta">${escapeHtml(entry)}</div>`).join("")
           : ""
       }
     </div>
@@ -3544,13 +3560,10 @@ function approvalReviewSummary(item, recoveryMode) {
     recommendation = "当前更像是：方向可以保留，但正文表达还要重写。";
   }
 
-  return {
-    lead: review.lead,
-    items: [
-      recommendation,
-      ...review.items,
-    ].filter(Boolean).slice(0, 3),
-  };
+  return compactDecisionNarrative(review.lead, [
+    recommendation,
+    ...review.items,
+  ]);
 }
 
 function runRecommendationSummary(item) {
@@ -3571,10 +3584,10 @@ function runRecommendationSummary(item) {
   }
 
   if (!review.visible && !recommendation) return null;
-  return {
-    lead: review.visible ? review.lead : "这条运行已经收口，下一步重点是决定怎么处理。",
-    items: [recommendation, ...(review.items || [])].filter(Boolean).slice(0, 3),
-  };
+  return compactDecisionNarrative(
+    review.visible ? review.lead : "这条运行已经收口，下一步重点是决定怎么处理。",
+    [recommendation, ...(review.items || [])]
+  );
 }
 
 function renderArtifacts(items) {
