@@ -150,6 +150,84 @@ body {
   gap: 12px;
 }
 
+.project-setup-strip {
+  margin-top: 12px;
+  display: grid;
+  gap: 12px;
+}
+
+.project-setup-steps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.project-setup-step {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: rgba(255, 252, 247, 0.95);
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+
+.project-setup-step.done {
+  border-color: rgba(31, 107, 68, 0.24);
+  background: rgba(245, 252, 246, 0.94);
+}
+
+.project-setup-step.active {
+  border-color: rgba(138, 59, 18, 0.32);
+  background: linear-gradient(135deg, rgba(255, 244, 235, 0.98), rgba(251, 236, 224, 0.92));
+  box-shadow: 0 0 0 2px rgba(138, 59, 18, 0.08);
+}
+
+.project-setup-step.pending {
+  opacity: 0.9;
+}
+
+.step-index {
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(138, 59, 18, 0.1);
+  color: var(--accent);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  flex: 0 0 auto;
+}
+
+.project-setup-step.done .step-index {
+  background: rgba(31, 107, 68, 0.12);
+  color: var(--success);
+}
+
+.step-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.step-copy strong {
+  font-size: 14px;
+}
+
+.step-copy span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .launch-checklist {
   margin-top: 12px;
   display: grid;
@@ -1250,6 +1328,7 @@ pre {
   .conversation-layout,
   .columns,
   .overview-strip,
+  .project-setup-steps,
   .summary-grid,
   .focus-run-grid,
   .interview-grid {

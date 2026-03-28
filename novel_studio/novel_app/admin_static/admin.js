@@ -1539,6 +1539,44 @@ function nextPlannedChapter(project) {
   return Number(project?.default_target_chapters || 1) > 0 ? 1 : 1;
 }
 
+function projectSetupStages(project) {
+  const projectStage = projectSummarySource(project);
+  const characterStage = scopedSummarySource(project, "character_room");
+  const outlineStage = scopedSummarySource(project, "outline_room");
+  const readiness = openingReadiness(project);
+  const stages = [
+    {
+      key: "project_bootstrap",
+      label: "项目方向",
+      done: projectStage?.status === "applied",
+      summary: projectStage?.summary?.readiness || "先把立项共创整理成第一版项目方向。",
+    },
+    {
+      key: "character_room",
+      label: "人物设定",
+      done: characterStage?.status === "applied",
+      summary: characterStage?.summary?.readiness || "先把主角气质、欲望和边界收紧成人物设定摘要。",
+    },
+    {
+      key: "outline_room",
+      label: "第一卷方向",
+      done: outlineStage?.status === "applied",
+      summary: outlineStage?.summary?.readiness || "先把第一卷推进方式、反转和卷末兑现整理成方向摘要。",
+    },
+    {
+      key: "launch_readiness",
+      label: "开书确认",
+      done: readiness.ready,
+      summary: readiness.ready ? "三层开书信息已经齐了，可以直接进入正式首章。" : "先补齐项目方向、人物设定、第一卷方向，再进入正式首章。",
+    },
+  ];
+  const current = stages.find((item) => !item.done)?.key || "launch_readiness";
+  return stages.map((item) => ({
+    ...item,
+    active: item.key === current,
+  }));
+}
+
 function renderProjectLaunchReadiness(project) {
   if (!el.projectLaunchReadiness) return;
   const readiness = openingReadiness(project);
@@ -1744,6 +1782,32 @@ function renderProjectBriefSummary(project) {
     `;
     return;
   }
+  const setupStages = projectSetupStages(project);
+  const setupSummary = setupStages.find((item) => item.active) || setupStages[setupStages.length - 1];
+  const setupTimeline = `
+    <section class="project-setup-strip">
+      <div class="summary-card accent">
+        <div class="summary-label">当前开书进度</div>
+        <div class="summary-value">${escapeHtml(setupSummary.label)} · ${setupSummary.done ? "已就绪" : "正在补齐"}</div>
+        <div class="meta">${escapeHtml(setupSummary.summary || "")}</div>
+      </div>
+      <div class="project-setup-steps">
+        ${setupStages
+          .map(
+            (item) => `
+              <button class="project-setup-step ${item.done ? "done" : item.active ? "active" : "pending"}" type="button" data-project-stage-open="${item.key}">
+                <span class="step-index">${item.done ? "已" : item.active ? "今" : "待"}</span>
+                <span class="step-copy">
+                  <strong>${escapeHtml(item.label)}</strong>
+                  <span>${escapeHtml(item.done ? "已就绪" : item.active ? "当前重点" : "待推进")}</span>
+                </span>
+              </button>
+            `
+          )
+          .join("")}
+      </div>
+    </section>
+  `;
   const summarySource = projectSummarySource(project);
   const characterSource = scopedSummarySource(project, "character_room");
   const outlineSource = scopedSummarySource(project, "outline_room");
@@ -1792,6 +1856,7 @@ function renderProjectBriefSummary(project) {
           <button class="button ghost" type="button" data-project-summary-open="project_bootstrap">继续立项共创</button>
         </div>
       </div>
+      ${setupTimeline}
     `;
   } else {
     const items = (summarySource.summary.items || [])
@@ -1820,6 +1885,7 @@ function renderProjectBriefSummary(project) {
           <button class="button ghost" type="button" data-project-summary-open="outline_room">进入大纲讨论</button>
         </div>
       </div>
+      ${setupTimeline}
       <div class="project-brief-summary">
         <div class="summary-card">
           <div class="summary-label">第一版项目设定摘要</div>
@@ -1843,6 +1909,21 @@ function renderProjectBriefSummary(project) {
     node.addEventListener("click", async () => {
       try {
         await openOrCreateConversationScope(node.dataset.projectSummaryOpen);
+      } catch (error) {
+        setStatus(String(error.message || error), "error");
+      }
+    });
+  });
+  el.projectBriefSummary.querySelectorAll("[data-project-stage-open]").forEach((node) => {
+    node.addEventListener("click", async () => {
+      try {
+        const key = node.dataset.projectStageOpen;
+        if (key === "launch_readiness") {
+          el.projectLaunchReadiness?.scrollIntoView({ behavior: "smooth", block: "start" });
+          setStatus("已定位到开书确认页。", "ready");
+          return;
+        }
+        await openOrCreateConversationScope(key);
       } catch (error) {
         setStatus(String(error.message || error), "error");
       }
