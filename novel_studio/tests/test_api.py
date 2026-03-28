@@ -310,6 +310,46 @@ def test_draft_confirm_helper_does_not_advance_progress() -> None:
     assert refreshed["interview_state"]["last_helper_action"] == "draft_confirm"
 
 
+def test_project_bootstrap_summary_can_be_applied_to_project_brief() -> None:
+    client = make_client()
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "阶段摘要项目",
+            "default_user_brief": {"title": "长夜炉火", "idea_seed": "一个被逐出山门的人，靠炉火中的古老声音翻盘。"},
+            "default_target_chapters": 1,
+        },
+    ).json()
+
+    thread = client.post(
+        f"/api/projects/{project['project_id']}/conversation-threads",
+        json={"scope": "project_bootstrap"},
+    ).json()
+    client.post(
+        f"/api/conversation-threads/{thread['thread_id']}/messages",
+        json={"content": "我最想保住的是压迫中翻盘和悬念感。"},
+    )
+    client.post(
+        f"/api/conversation-threads/{thread['thread_id']}/messages",
+        json={"content": "主角要是那种克制但危险的人，平时忍着，关键时刻会立刻动手。"},
+    )
+
+    applied = client.post(f"/api/conversation-threads/{thread['thread_id']}/apply-project-summary")
+
+    assert applied.status_code == 200
+    brief = applied.json()["default_user_brief"]
+    assert brief["capture_stage"] == "clarified"
+    assert brief["project_summary"]["title"] == "第一版项目设定摘要"
+    assert brief["project_summary"]["source_thread_id"] == thread["thread_id"]
+    assert brief["intent_profile"]["reader_pull"] == "我最想保住的是压迫中翻盘和悬念感。"
+    assert brief["intent_profile"]["protagonist_mode"] == "主角要是那种克制但危险的人，平时忍着，关键时刻会立刻动手。"
+
+    refreshed_thread = client.get(f"/api/conversation-threads/{thread['thread_id']}")
+    messages = client.get(f"/api/conversation-threads/{thread['thread_id']}/messages").json()
+    assert refreshed_thread.status_code == 200
+    assert any("已把这版阶段确认摘要写回项目设定" in item["content"] for item in messages)
+
+
 def test_draft_recap_section_can_be_adopted_directly() -> None:
     app = create_app(
         config=AppConfig(

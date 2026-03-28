@@ -938,6 +938,45 @@ def create_app(
             "project_summary": project_summary,
         }
 
+    def build_project_summary_brief(*, project, thread, interview_state: dict[str, object]) -> dict | None:
+        stage_confirmation = interview_state.get("stage_confirmation") or {}
+        project_summary = stage_confirmation.get("project_summary")
+        if not project_summary:
+            return None
+        brief = dict(project.default_user_brief or {})
+        intent_profile = dict(brief.get("intent_profile") or {})
+        field_map = {
+            "最想保住的吸引力": "reader_pull",
+            "主角行动方式": "protagonist_mode",
+            "故事推进方式": "drive_mode",
+            "不能写歪的边界": "guardrail",
+        }
+        for item in list(stage_confirmation.get("confirmed_items") or []) + list(stage_confirmation.get("provisional_items") or []):
+            label = str(item.get("label") or "").strip()
+            summary = str(item.get("summary") or "").strip()
+            if not label or not summary:
+                continue
+            mapped_field = field_map.get(label)
+            if mapped_field and mapped_field not in intent_profile:
+                intent_profile[mapped_field] = summary
+        merged_summary = {
+            **project_summary,
+            "confirmed_items": list(stage_confirmation.get("confirmed_items") or [])[:4],
+            "provisional_items": list(stage_confirmation.get("provisional_items") or [])[:4],
+            "open_questions": list(stage_confirmation.get("open_questions") or [])[:4],
+            "source_thread_id": thread.thread_id,
+            "source_scope": thread.scope,
+        }
+        if interview_state.get("current_draft"):
+            merged_summary["draft_recap"] = interview_state["current_draft"]
+        brief["project_summary"] = merged_summary
+        brief["capture_stage"] = "clarified"
+        if intent_profile:
+            brief["intent_profile"] = intent_profile
+        if not brief.get("title"):
+            brief["title"] = project.name
+        return brief
+
     def interview_prompt_variants(*, topic: dict, helper_action: str | None) -> tuple[str, list[str]]:
         if helper_action == "rephrase":
             prompt = topic.get("rephrase_prompt") or topic["prompt"]
@@ -2101,6 +2140,55 @@ def create_app(
         if not thread:
             raise HTTPException(status_code=404, detail="conversation_thread_not_found")
         return ConversationThreadResponse.model_validate(enrich_thread_payload(thread))
+
+    @app.post("/api/conversation-threads/{thread_id}/apply-project-summary", response_model=ProjectResponse)
+    async def apply_conversation_project_summary(
+        thread_id: str,
+        request: Request,
+        response: Response,
+    ) -> ProjectResponse:
+        thread = app.state.store.get_conversation_thread(thread_id)
+        if not thread:
+            raise HTTPException(status_code=404, detail="conversation_thread_not_found")
+        project = app.state.store.get_project(thread.project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="project_not_found")
+        interview_state = build_interview_state(thread=thread, project=project)
+        if interview_state is None or not (interview_state.get("stage_confirmation") or {}).get("project_summary"):
+            raise HTTPException(status_code=409, detail="project_summary_not_ready")
+        updated_brief = build_project_summary_brief(project=project, thread=thread, interview_state=interview_state)
+        if updated_brief is None:
+            raise HTTPException(status_code=409, detail="project_summary_not_ready")
+        updated_project = app.state.store.update_project_brief(
+            project_id=project.project_id,
+            default_user_brief=updated_brief,
+        )
+        if updated_project is None:
+            raise HTTPException(status_code=404, detail="project_not_found")
+        app.state.store.add_conversation_message(
+            thread_id=thread.thread_id,
+            role="system",
+            message_type="system_action_result",
+            content="已把这版阶段确认摘要写回项目设定。接下来可以继续进入人物讨论或大纲讨论。",
+            structured_payload={
+                "source": "project_summary_apply",
+                "project_id": project.project_id,
+                "capture_stage": "clarified",
+            },
+        )
+        audit(
+            request=request,
+            response=response,
+            status_code=200,
+            action="project_summary.apply",
+            resource_type="project",
+            resource_id=updated_project.project_id,
+            project_id=updated_project.project_id,
+            run_id=None,
+            approval_id=None,
+            payload={"thread_id": thread.thread_id, "scope": thread.scope, "capture_stage": "clarified"},
+        )
+        return ProjectResponse.model_validate(updated_project.__dict__)
 
     @app.get("/api/conversation-threads/{thread_id}/messages", response_model=list[ConversationMessageResponse])
     async def list_conversation_messages(thread_id: str) -> list[ConversationMessageResponse]:

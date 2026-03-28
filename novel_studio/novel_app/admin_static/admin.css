@@ -143,6 +143,13 @@ body {
   background: rgba(255, 251, 245, 0.88);
 }
 
+.project-brief-summary {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
 .overview-strip {
   margin-top: 16px;
   display: grid;

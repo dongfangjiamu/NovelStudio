@@ -208,6 +208,16 @@ class SqlAlchemyStore:
                 return None
             return self._project_record(row)
 
+    def update_project_brief(self, *, project_id: str, default_user_brief: dict) -> ProjectRecord | None:
+        with session_scope(self.session_factory) as session:
+            row = session.get(ProjectModel, project_id)
+            if row is None:
+                return None
+            row.default_user_brief = default_user_brief
+            session.add(row)
+            session.flush()
+            return self._project_record(row)
+
     def save_run(
         self,
         *,

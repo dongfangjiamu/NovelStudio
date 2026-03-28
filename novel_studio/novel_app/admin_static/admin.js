@@ -37,6 +37,7 @@ const el = {
   createRunQuick: document.getElementById("create-run-quick"),
   ideaCaptureForm: document.getElementById("idea-capture-form"),
   projectForm: document.getElementById("project-form"),
+  projectBriefSummary: document.getElementById("project-brief-summary"),
   projectTitle: document.getElementById("project-title"),
   projectMeta: document.getElementById("project-meta"),
   summaryGoal: document.getElementById("summary-goal"),
@@ -318,6 +319,12 @@ function selectedProject() {
 
 function selectedThread() {
   return (state.projectSnapshot.conversationThreads || []).find((item) => item.thread_id === state.selectedThreadId) || null;
+}
+
+function latestThreadByScope(scope) {
+  return (state.projectSnapshot.conversationThreads || [])
+    .filter((item) => item.scope === scope)
+    .sort((left, right) => String(right.updated_at || "").localeCompare(String(left.updated_at || "")))[0] || null;
 }
 
 function conversationThreadForRun(runId, scope = "rewrite_intervention") {
@@ -1099,6 +1106,11 @@ function renderInterviewSummary(thread) {
                     .join("")}
                 </ul>
                 <div class="meta">${escapeHtml(interview.stage_confirmation.project_summary.readiness || "")}</div>
+                ${
+                  thread.scope === "project_bootstrap"
+                    ? `<div class="actions"><button class="button secondary" type="button" data-apply-project-summary="${thread.thread_id}">写回项目设定</button></div>`
+                    : ""
+                }
               </section>
             `
             : ""
@@ -1199,6 +1211,128 @@ function renderInterviewSummary(thread) {
     node.addEventListener("click", async () => {
       try {
         await openOrCreateConversationScope(node.dataset.stageOpenScope);
+      } catch (error) {
+        setStatus(String(error.message || error), "error");
+      }
+    });
+  });
+  el.conversationInterviewSummary.querySelectorAll("[data-apply-project-summary]").forEach((node) => {
+    node.addEventListener("click", async () => {
+      try {
+        await applyProjectSummary(node.dataset.applyProjectSummary);
+      } catch (error) {
+        setStatus(String(error.message || error), "error");
+      }
+    });
+  });
+}
+
+function projectSummarySource(project) {
+  if (!project) return null;
+  const applied = project.default_user_brief?.project_summary;
+  if (applied) {
+    return {
+      summary: applied,
+      status: "applied",
+      threadId: applied.source_thread_id || null,
+    };
+  }
+  const bootstrapThread = latestThreadByScope("project_bootstrap");
+  const draftSummary = bootstrapThread?.interview_state?.stage_confirmation?.project_summary;
+  if (draftSummary) {
+    return {
+      summary: draftSummary,
+      status: "draft",
+      threadId: bootstrapThread.thread_id,
+    };
+  }
+  return null;
+}
+
+function renderProjectBriefSummary(project) {
+  if (!el.projectBriefSummary) return;
+  if (!project) {
+    el.projectBriefSummary.innerHTML = `
+      <div class="panel-head">
+        <div>
+          <h3>当前项目摘要</h3>
+          <div class="muted">先选择一个项目，或从下方开始新的立项共创。</div>
+        </div>
+      </div>
+    `;
+    return;
+  }
+  const summarySource = projectSummarySource(project);
+  const intentProfile = project.default_user_brief?.intent_profile || {};
+  if (!summarySource) {
+    el.projectBriefSummary.innerHTML = `
+      <div class="panel-head">
+        <div>
+          <h3>当前项目摘要</h3>
+          <div class="muted">这个项目还没有整理出第一版摘要。建议先进入立项共创，把模糊想法问清。</div>
+        </div>
+        <div class="actions">
+          <button class="button ghost" type="button" data-project-summary-open="project_bootstrap">继续立项共创</button>
+        </div>
+      </div>
+    `;
+  } else {
+    const items = (summarySource.summary.items || [])
+      .map((item) => `<li><strong>${escapeHtml(item.label || "")}</strong>：${escapeHtml(item.summary || "")}</li>`)
+      .join("");
+    const intentList = Object.entries(intentProfile)
+      .filter(([, value]) => String(value || "").trim())
+      .slice(0, 4)
+      .map(([key, value]) => `<li><strong>${escapeHtml(key)}</strong>：${escapeHtml(String(value))}</li>`)
+      .join("");
+    el.projectBriefSummary.innerHTML = `
+      <div class="panel-head">
+        <div>
+          <h3>当前项目摘要</h3>
+          <div class="muted">${summarySource.status === "applied" ? "这版摘要已经写回项目设定，后续会持续作为默认项目稿使用。" : "这是一版待确认的阶段摘要。确认后可直接写回项目设定。"}
+          </div>
+        </div>
+        <div class="actions">
+          ${
+            summarySource.status === "draft"
+              ? `<button class="button secondary" type="button" data-project-summary-apply="${escapeHtml(summarySource.threadId || "")}">写回项目设定</button>`
+              : ""
+          }
+          <button class="button ghost" type="button" data-project-summary-open="project_bootstrap">继续立项共创</button>
+          <button class="button ghost" type="button" data-project-summary-open="character_room">进入人物讨论</button>
+          <button class="button ghost" type="button" data-project-summary-open="outline_room">进入大纲讨论</button>
+        </div>
+      </div>
+      <div class="project-brief-summary">
+        <div class="summary-card">
+          <div class="summary-label">第一版项目设定摘要</div>
+          <ul class="interview-list">${items || "<li>当前还没有摘要内容。</li>"}</ul>
+          <div class="meta">${escapeHtml(summarySource.summary.readiness || "")}</div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-label">当前意图画像</div>
+          ${
+            intentList
+              ? `<ul class="interview-list">${intentList}</ul>`
+              : `<div class="meta">意图画像会在立项共创确认后写回这里。</div>`
+          }
+        </div>
+      </div>
+    `;
+  }
+  el.projectBriefSummary.querySelectorAll("[data-project-summary-open]").forEach((node) => {
+    node.addEventListener("click", async () => {
+      try {
+        await openOrCreateConversationScope(node.dataset.projectSummaryOpen);
+      } catch (error) {
+        setStatus(String(error.message || error), "error");
+      }
+    });
+  });
+  el.projectBriefSummary.querySelectorAll("[data-project-summary-apply]").forEach((node) => {
+    node.addEventListener("click", async () => {
+      try {
+        await applyProjectSummary(node.dataset.projectSummaryApply);
       } catch (error) {
         setStatus(String(error.message || error), "error");
       }
@@ -2425,6 +2559,7 @@ function renderFocusRun(summary) {
 function renderProjectState() {
   const project = selectedProject();
   const snapshot = state.projectSnapshot;
+  renderProjectBriefSummary(project);
   renderChapters(snapshot.chapters || []);
   const focusRunId = pickFocusRun(snapshot.runs || [])?.run_id || null;
   const summary = deriveSummary(project, snapshot);
@@ -3356,6 +3491,22 @@ async function createConversationDecisionFromDraft({ threadId, decisionType, con
     await loadConversationMessages(state.selectedThreadId, { activateTab: false });
   }
   setStatus(`已从草案采纳为${conversationDecisionLabel(decisionType)}`, "ready");
+}
+
+async function applyProjectSummary(threadId) {
+  if (!threadId) return;
+  await api(`/api/conversation-threads/${threadId}/apply-project-summary`, {
+    method: "POST",
+  });
+  await loadProjects();
+  if (state.selectedProjectId) {
+    await selectProject(state.selectedProjectId);
+  }
+  if (state.selectedThreadId) {
+    await loadConversationMessages(state.selectedThreadId, { activateTab: false });
+  }
+  setWorkspaceTab("project");
+  setStatus("已把这版阶段确认摘要写回项目设定", "ready");
 }
 
 async function updateConversationDecision(decisionId) {

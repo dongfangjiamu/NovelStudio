@@ -171,6 +171,27 @@ class InMemoryStore:
         with self._lock:
             return self._projects.get(project_id)
 
+    def update_project_brief(
+        self,
+        *,
+        project_id: str,
+        default_user_brief: dict[str, Any],
+    ) -> ProjectRecord | None:
+        with self._lock:
+            current = self._projects.get(project_id)
+            if current is None:
+                return None
+            updated = ProjectRecord(
+                project_id=current.project_id,
+                name=current.name,
+                description=current.description,
+                default_user_brief=default_user_brief,
+                default_target_chapters=current.default_target_chapters,
+                created_at=current.created_at,
+            )
+            self._projects[project_id] = updated
+            return updated
+
     def save_run(
         self,
         *,
