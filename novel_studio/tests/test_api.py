@@ -187,6 +187,199 @@ def test_strategy_suggestion_can_be_adopted_into_project_rules() -> None:
     suggestions_after = client.get(f"/api/strategy-suggestions?project_id={project['project_id']}")
     assert suggestions_after.status_code == 200
     assert all(item["suggestion_key"] != "codify_pacing_and_hook_rules" for item in suggestions_after.json()["items"])
+    handled = suggestions_after.json()["handled_items"]
+    assert any(item["suggestion_key"] == "codify_pacing_and_hook_rules" and item["status"] == "adopted" for item in handled)
+
+
+def test_recovery_strategy_can_be_adopted_into_project_preferences() -> None:
+    client = make_client()
+
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "恢复偏好项目",
+            "default_user_brief": {"title": "长夜炉火", "genre": "东方玄幻"},
+            "default_target_chapters": 1,
+        },
+    ).json()
+
+    app = client.app
+    rewrite_source = app.state.store.save_run(
+        project_id=project["project_id"],
+        status="awaiting_approval",
+        request={"user_brief": project["default_user_brief"], "target_chapters": 1, "operator_id": "tester"},
+        result={
+            "blockers": ["需要人工判断"],
+            "human_guidance": {
+                "chapter_no": 1,
+                "reason": "这一章方向还没站稳。",
+                "issue_progress_summary": "方向还没站稳，但正文里也出现了需要修的点。",
+                "must_fix": ["主角这一步为什么冒险还没站稳"],
+            }
+        },
+        error=None,
+    )
+    before = client.get(f"/api/runs/{rewrite_source.run_id}")
+    assert before.status_code == 200
+    assert before.json()["result"]["human_checkpoint"]["recommended_recovery_mode"] == "rewrite"
+
+    rewrite_approval = app.state.store.create_approval_request(
+        project_id=project["project_id"],
+        run_id=rewrite_source.run_id,
+        chapter_no=1,
+        requested_action="rewrite",
+        reason="正文表达还不稳",
+        payload={},
+    )
+    app.state.store.resolve_approval_request(
+        approval_id=rewrite_approval.approval_id,
+        decision="approved",
+        operator_id="tester",
+        comment="先按旧路径恢复",
+    )
+    rewrite_followup = app.state.store.save_run(
+        project_id=project["project_id"],
+        status="failed",
+        request={"user_brief": project["default_user_brief"], "target_chapters": 1, "operator_id": "tester"},
+        result={"progress": {"chapter_no": 1}},
+        error="direction_not_stable",
+    )
+    app.state.store.mark_approval_request_executed(approval_id=rewrite_approval.approval_id, run_id=rewrite_followup.run_id)
+
+    replan_source = app.state.store.save_run(
+        project_id=project["project_id"],
+        status="awaiting_approval",
+        request={"user_brief": project["default_user_brief"], "target_chapters": 1, "operator_id": "tester"},
+        result={
+            "blockers": ["需要人工判断"],
+            "human_guidance": {
+                "chapter_no": 1,
+                "reason": "这一章目标和冲突落点不够稳，最好先回到章卡层。",
+                "suggested_actions": ["先重做章卡"],
+            }
+        },
+        error=None,
+    )
+    replan_approval = app.state.store.create_approval_request(
+        project_id=project["project_id"],
+        run_id=replan_source.run_id,
+        chapter_no=1,
+        requested_action="replan",
+        reason="先回到章卡层",
+        payload={},
+    )
+    app.state.store.resolve_approval_request(
+        approval_id=replan_approval.approval_id,
+        decision="approved",
+        operator_id="tester",
+        comment="先按系统建议恢复",
+    )
+    replan_followup = app.state.store.save_run(
+        project_id=project["project_id"],
+        status="completed",
+        request={"user_brief": project["default_user_brief"], "target_chapters": 1, "operator_id": "tester"},
+        result={"progress": {"chapter_no": 1}},
+        error=None,
+    )
+    app.state.store.mark_approval_request_executed(approval_id=replan_approval.approval_id, run_id=replan_followup.run_id)
+
+    suggestions = client.get(f"/api/strategy-suggestions?project_id={project['project_id']}")
+    assert suggestions.status_code == 200
+    item = next((entry for entry in suggestions.json()["items"] if entry["suggestion_key"] == "prefer_replan_for_direction_issues"), None)
+    assert item is not None
+    assert item["can_adopt"] is True
+
+    adopt = client.post(
+        f"/api/projects/{project['project_id']}/strategy-suggestions/prefer_replan_for_direction_issues/actions",
+        json={"action": "adopt"},
+    )
+    assert adopt.status_code == 200
+    assert adopt.json()["status"] == "adopted"
+    assert "重做章卡" in adopt.json()["result_note"]
+
+    updated_project = client.get(f"/api/projects/{project['project_id']}")
+    assert updated_project.status_code == 200
+    assert updated_project.json()["default_user_brief"]["recovery_preferences"]["direction_issue_mode"] == "replan"
+
+    fresh_checkpoint_run = app.state.store.save_run(
+        project_id=project["project_id"],
+        status="awaiting_approval",
+        request={"user_brief": updated_project.json()["default_user_brief"], "target_chapters": 1, "operator_id": "tester"},
+        result={
+            "blockers": ["需要人工判断"],
+            "human_guidance": {
+                "chapter_no": 1,
+                "reason": "这一章方向还没站稳。",
+                "issue_progress_summary": "方向还没站稳，但正文里也出现了需要修的点。",
+                "must_fix": ["主角这一步为什么冒险还没站稳"],
+            }
+        },
+        error=None,
+    )
+
+    checkpoint = client.get(f"/api/runs/{fresh_checkpoint_run.run_id}")
+    assert checkpoint.status_code == 200
+    assert checkpoint.json()["result"]["human_checkpoint"]["recommended_recovery_mode"] == "replan"
+
+    suggestions_after = client.get(f"/api/strategy-suggestions?project_id={project['project_id']}")
+    assert suggestions_after.status_code == 200
+    handled = suggestions_after.json()["handled_items"]
+    assert any(item["suggestion_key"] == "prefer_replan_for_direction_issues" and item["can_reopen"] for item in handled)
+
+
+def test_strategy_suggestion_can_be_reopened() -> None:
+    client = make_client()
+
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "建议重开项目",
+            "default_user_brief": {"title": "长夜炉火", "genre": "东方玄幻"},
+            "default_target_chapters": 1,
+        },
+    ).json()
+
+    app = client.app
+    run = app.state.store.save_run(
+        project_id=project["project_id"],
+        status="completed",
+        request={"user_brief": project["default_user_brief"], "target_chapters": 1, "operator_id": "tester"},
+        result={
+            "issue_ledger": {
+                "chapter_no": 1,
+                "status": "needs_revision",
+                "open_count": 2,
+                "issues": [
+                    {"issue_id": "iss_1", "category": "pacing", "status": "open"},
+                    {"issue_id": "iss_2", "category": "hook", "status": "recurring"},
+                ],
+            }
+        },
+        error=None,
+    )
+    app.state.store.save_run_outputs(run=run, result=run.result or {})
+
+    dismiss = client.post(
+        f"/api/projects/{project['project_id']}/strategy-suggestions/codify_pacing_and_hook_rules/actions",
+        json={"action": "dismiss"},
+    )
+    assert dismiss.status_code == 200
+    assert dismiss.json()["status"] == "dismissed"
+
+    after_dismiss = client.get(f"/api/strategy-suggestions?project_id={project['project_id']}")
+    assert after_dismiss.status_code == 200
+    assert any(item["suggestion_key"] == "codify_pacing_and_hook_rules" for item in after_dismiss.json()["handled_items"])
+
+    reopen = client.post(
+        f"/api/projects/{project['project_id']}/strategy-suggestions/codify_pacing_and_hook_rules/actions",
+        json={"action": "reopen"},
+    )
+    assert reopen.status_code == 200
+    assert reopen.json()["status"] == "pending"
+
+    after_reopen = client.get(f"/api/strategy-suggestions?project_id={project['project_id']}")
+    assert after_reopen.status_code == 200
+    assert any(item["suggestion_key"] == "codify_pacing_and_hook_rules" for item in after_reopen.json()["items"])
 
 
 def test_project_create_and_list() -> None:

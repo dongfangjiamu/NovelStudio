@@ -3328,33 +3328,46 @@ function renderStrategySuggestions(payload) {
     return;
   }
   el.strategyCaption.textContent = payload.summary || "系统会根据最近的运行结果，先告诉你最值得试的改法。";
-  el.strategySuggestions.innerHTML = (payload.items || []).length
-    ? payload.items
-        .map(
-          (item) => `
-            <article class="strategy-card ${item.tone || "neutral"}">
-              <div class="strategy-head">
-                <h4>${escapeHtml(item.title || "")}</h4>
-                <span class="priority-chip ${item.priority || "medium"}">${escapeHtml(priorityLabel(item.priority))}</span>
-              </div>
-              <div class="meta">${escapeHtml(item.why_now || "")}</div>
-              <div class="summary-value">${escapeHtml(item.action || "")}</div>
-              ${(item.evidence || []).length
-                ? `<ul class="strategy-evidence">${item.evidence
-                    .map((entry) => `<li>${escapeHtml(entry)}</li>`)
-                    .join("")}</ul>`
-                : ""}
-              ${(item.can_adopt || item.can_dismiss)
-                ? `<div class="actions">
-                    ${item.can_adopt ? `<button class="button ghost" data-action="adopt-strategy" data-id="${escapeHtml(item.suggestion_key || "")}">${escapeHtml(item.adoption_label || "采纳")}</button>` : ""}
-                    ${item.can_dismiss ? `<button class="button ghost" data-action="dismiss-strategy" data-id="${escapeHtml(item.suggestion_key || "")}">忽略这条</button>` : ""}
-                  </div>`
-                : ""}
-            </article>
-          `
-        )
-        .join("")
-    : `<div class="empty">暂无进化建议</div>`;
+  const pendingItems = payload.items || [];
+  const handledItems = payload.handled_items || [];
+  const renderCard = (item, handled = false) => `
+    <article class="strategy-card ${item.tone || "neutral"} ${handled ? "handled" : ""}">
+      <div class="strategy-head">
+        <h4>${escapeHtml(item.title || "")}</h4>
+        <span class="priority-chip ${item.priority || "medium"}">${escapeHtml(priorityLabel(item.priority))}</span>
+      </div>
+      <div class="meta">${escapeHtml(item.why_now || "")}</div>
+      <div class="summary-value">${escapeHtml(item.action || "")}</div>
+      ${item.result_note ? `<div class="meta strategy-result-note">${escapeHtml(item.result_note)}</div>` : ""}
+      ${item.updated_at ? `<div class="meta">最近处理时间：${escapeHtml(formatTimestamp(item.updated_at))}</div>` : ""}
+      ${(item.evidence || []).length
+        ? `<ul class="strategy-evidence">${item.evidence
+            .map((entry) => `<li>${escapeHtml(entry)}</li>`)
+            .join("")}</ul>`
+        : ""}
+      ${(item.can_adopt || item.can_dismiss || item.can_reopen)
+        ? `<div class="actions">
+            ${item.can_adopt ? `<button class="button ghost" data-action="adopt-strategy" data-id="${escapeHtml(item.suggestion_key || "")}">${escapeHtml(item.adoption_label || "采纳")}</button>` : ""}
+            ${item.can_dismiss ? `<button class="button ghost" data-action="dismiss-strategy" data-id="${escapeHtml(item.suggestion_key || "")}">忽略这条</button>` : ""}
+            ${item.can_reopen ? `<button class="button ghost" data-action="reopen-strategy" data-id="${escapeHtml(item.suggestion_key || "")}">重新纳入候选</button>` : ""}
+          </div>`
+        : ""}
+    </article>
+  `;
+  el.strategySuggestions.innerHTML = `
+    <section class="stack strategy-section">
+      <div class="meta"><strong>待处理建议</strong>${pendingItems.length ? ` · 当前 ${pendingItems.length} 条` : ""}</div>
+      ${pendingItems.length ? pendingItems.map((item) => renderCard(item)).join("") : `<div class="empty">暂无待处理建议</div>`}
+    </section>
+    ${
+      handledItems.length
+        ? `<section class="stack strategy-section">
+            <div class="meta"><strong>最近已处理</strong> · 最近 ${handledItems.length} 条</div>
+            ${handledItems.map((item) => renderCard(item, true)).join("")}
+          </section>`
+        : ""
+    }
+  `;
   el.strategySuggestions.querySelectorAll("[data-action='adopt-strategy']").forEach((node) => {
     node.addEventListener("click", () => {
       handleStrategySuggestionAction(node.dataset.id, "adopt").catch((error) => setStatus(String(error.message || error), "error"));
@@ -3365,6 +3378,11 @@ function renderStrategySuggestions(payload) {
       handleStrategySuggestionAction(node.dataset.id, "dismiss").catch((error) => setStatus(String(error.message || error), "error"));
     });
   });
+  el.strategySuggestions.querySelectorAll("[data-action='reopen-strategy']").forEach((node) => {
+    node.addEventListener("click", () => {
+      handleStrategySuggestionAction(node.dataset.id, "reopen").catch((error) => setStatus(String(error.message || error), "error"));
+    });
+  });
 }
 
 async function handleStrategySuggestionAction(suggestionKey, action) {
@@ -3372,16 +3390,18 @@ async function handleStrategySuggestionAction(suggestionKey, action) {
     setStatus("请先选择一个项目，再处理这条进化建议。", "error");
     return;
   }
-  await api(`/api/projects/${state.selectedProjectId}/strategy-suggestions/${suggestionKey}/actions`, {
+  const result = await api(`/api/projects/${state.selectedProjectId}/strategy-suggestions/${suggestionKey}/actions`, {
     method: "POST",
     body: JSON.stringify({ action }),
   });
   await selectProject(state.selectedProjectId);
-  if (action === "adopt") {
-    setStatus("已采纳这条进化建议。相关长期规则会进入后续运行。", "ready");
-  } else {
-    setStatus("已忽略这条进化建议。", "warn");
-  }
+  const fallback =
+    action === "adopt"
+      ? "已采纳这条进化建议。"
+      : action === "dismiss"
+        ? "已忽略这条进化建议。"
+        : "已重新纳入候选池。";
+  setStatus(result?.result_note || fallback, action === "dismiss" ? "warn" : "ready");
 }
 
 function renderReviewProgressCard(reviewProgress) {

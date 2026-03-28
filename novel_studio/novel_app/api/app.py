@@ -93,15 +93,33 @@ def suggested_recovery_mode(
     *,
     human_guidance: dict[str, object] | None = None,
     requested_action: str | None = None,
+    recovery_preferences: dict[str, object] | None = None,
 ) -> str:
     if requested_action in {"continue", "rewrite", "replan"}:
         return requested_action
     guidance = human_guidance or {}
+    preferences = recovery_preferences or {}
     suggested_actions = " ".join(str(item) for item in (guidance.get("suggested_actions") or []))
+    reason_blob = " ".join(
+        str(item)
+        for item in (
+            guidance.get("reason"),
+            guidance.get("issue_progress_summary"),
+            suggested_actions,
+        )
+        if item
+    )
+    direction_issue_mode = preferences.get("direction_issue_mode")
+    stable_chapter_mode = preferences.get("stable_chapter_mode")
+    if any(keyword in reason_blob for keyword in ("章卡", "重做章卡", "重规划", "方向", "视角", "冲突落点")):
+        if direction_issue_mode in {"continue", "rewrite", "replan"}:
+            return str(direction_issue_mode)
     if "章卡" in suggested_actions or "重做章卡" in suggested_actions or "重规划" in suggested_actions:
         return "replan"
     if guidance.get("must_fix") or guidance.get("stubborn_issues"):
         return "rewrite"
+    if stable_chapter_mode in {"continue", "rewrite", "replan"}:
+        return str(stable_chapter_mode)
     return "continue"
 
 
@@ -605,6 +623,10 @@ def create_app(
             adoption_label: str | None = None,
             adoption_decision_type: str | None = None,
             adoption_content: str | None = None,
+            adoption_target: str | None = None,
+            adoption_preference_key: str | None = None,
+            adoption_preference_value: str | None = None,
+            adoption_effect_note: str | None = None,
         ) -> None:
             candidates.append(
                 {
@@ -620,6 +642,10 @@ def create_app(
                     "adoption_label": adoption_label,
                     "adoption_decision_type": adoption_decision_type,
                     "adoption_content": adoption_content,
+                    "adoption_target": adoption_target,
+                    "adoption_preference_key": adoption_preference_key,
+                    "adoption_preference_value": adoption_preference_value,
+                    "adoption_effect_note": adoption_effect_note,
                 }
             )
 
@@ -674,6 +700,8 @@ def create_app(
                 adoption_label="采纳为长期规则",
                 adoption_decision_type="writer_playbook_rule",
                 adoption_content="长期规则：主角主动动作前置，章末必须落到更危险的选择，避免节奏后置和钩子发虚。",
+                adoption_target="conversation_decision",
+                adoption_effect_note="已采纳为长期规则，后续章节会自动带入这条写法要求。",
             )
 
         rewrite_stats = recovery_counts.get("rewrite", {})
@@ -692,6 +720,12 @@ def create_app(
                     f"重做章卡：恢复成功 {replan_stats.get('completed', 0)} 次，恢复后失败 {replan_stats.get('failed', 0)} 次。",
                 ],
                 tone="neutral",
+                can_adopt=True,
+                adoption_label="采纳为恢复偏好",
+                adoption_target="recovery_preference",
+                adoption_preference_key="direction_issue_mode",
+                adoption_preference_value="replan",
+                adoption_effect_note="已记住：后续遇到明显方向问题时，系统会优先推荐“重做章卡”。",
             )
         elif continue_stats.get("completed", 0) > 0 and continue_stats.get("failed", 0) == 0:
             add_candidate(
@@ -705,6 +739,12 @@ def create_app(
                     f"继续当前流程：恢复成功 {continue_stats.get('completed', 0)} 次，恢复后失败 {continue_stats.get('failed', 0)} 次。",
                 ],
                 tone="good",
+                can_adopt=True,
+                adoption_label="采纳为恢复偏好",
+                adoption_target="recovery_preference",
+                adoption_preference_key="stable_chapter_mode",
+                adoption_preference_value="continue",
+                adoption_effect_note="已记住：当章节已经站稳时，系统会更坚定地推荐“继续当前流程”。",
             )
 
         if approval_pending_count > 0:
@@ -731,6 +771,122 @@ def create_app(
                 tone="good",
             )
         return candidates
+
+    def strategy_suggestion_result_note(*, status: str, payload: dict[str, object], adopted_decision_id: str | None) -> str | None:
+        if status == "adopted":
+            if payload.get("adoption_effect_note"):
+                return str(payload.get("adoption_effect_note"))
+            if adopted_decision_id:
+                return "已采纳，这条建议已经转成后续可复用的项目结论。"
+            return "已采纳，这条建议会影响后续推荐和执行。"
+        if status == "dismissed":
+            return "已忽略，系统暂时不会再把这条建议放到待处理列表里。"
+        return None
+
+    def strategy_suggestion_response_item(
+        *,
+        item: dict[str, object],
+        status: str,
+        project_scoped: bool,
+        adopted_decision_id: str | None = None,
+        updated_at: str | None = None,
+        handled: bool = False,
+    ) -> StrategySuggestionItemResponse:
+        return StrategySuggestionItemResponse(
+            suggestion_key=str(item["suggestion_key"]),
+            title=str(item["title"]),
+            priority=str(item["priority"]),
+            category=str(item["category"]),
+            status=status,
+            why_now=str(item["why_now"]),
+            action=str(item["action"]),
+            evidence=list(item.get("evidence") or []),
+            tone=str(item.get("tone") or "neutral"),
+            can_adopt=bool(project_scoped and not handled and item.get("can_adopt")),
+            can_dismiss=bool(project_scoped and not handled),
+            can_reopen=bool(project_scoped and handled),
+            adoption_label=str(item.get("adoption_label") or "") or None,
+            adopted_decision_id=adopted_decision_id,
+            result_note=strategy_suggestion_result_note(status=status, payload=item, adopted_decision_id=adopted_decision_id),
+            updated_at=updated_at,
+        )
+
+    def project_recovery_preferences(project) -> dict[str, object]:
+        if project is None:
+            return {}
+        brief = getattr(project, "default_user_brief", None) or {}
+        return dict(brief.get("recovery_preferences") or {})
+
+    def apply_strategy_adoption(*, project, candidate_payload: dict[str, object]) -> tuple[object, str | None]:
+        adopted_decision_id: str | None = None
+        result_note = str(candidate_payload.get("adoption_effect_note") or "").strip() or None
+        target = str(candidate_payload.get("adoption_target") or "").strip() or None
+        if target == "conversation_decision":
+            thread = ensure_strategy_thread(project=project)
+            content = str(candidate_payload.get("adoption_content") or "").strip()
+            decision_type = candidate_payload.get("adoption_decision_type")
+            if content and decision_type:
+                source_message = app.state.store.add_conversation_message(
+                    thread_id=thread.thread_id,
+                    role="system",
+                    message_type="system_action_result",
+                    content=f"已从当前进化建议采纳为{decision_type}：{content}",
+                    structured_payload={
+                        "source": "strategy_suggestion",
+                        "source_label": f"当前进化建议 · {candidate_payload.get('title')}",
+                        "decision_type": decision_type,
+                        "content": content,
+                    },
+                )
+                if source_message is not None:
+                    decision = app.state.store.create_conversation_decision(
+                        project_id=project.project_id,
+                        thread_id=thread.thread_id,
+                        message_id=source_message.message_id,
+                        decision_type=decision_type,
+                        payload=build_conversation_decision_payload_from_content(
+                            thread=thread,
+                            message_id=source_message.message_id,
+                            decision_type=decision_type,
+                            content=content,
+                            source="strategy_suggestion",
+                            source_label=f"当前进化建议 · {candidate_payload.get('title')}",
+                        ),
+                        applied_to_run_id=thread.linked_run_id,
+                        applied_to_chapter_no=thread.linked_chapter_no,
+                    )
+                    adopted_decision_id = decision.decision_id
+            return adopted_decision_id, result_note
+
+        if target == "recovery_preference":
+            preference_key = str(candidate_payload.get("adoption_preference_key") or "").strip()
+            preference_value = str(candidate_payload.get("adoption_preference_value") or "").strip()
+            if preference_key and preference_value:
+                brief = dict(project.default_user_brief or {})
+                recovery_preferences = dict(brief.get("recovery_preferences") or {})
+                recovery_preferences[preference_key] = preference_value
+                brief["recovery_preferences"] = recovery_preferences
+                updated = app.state.store.update_project_brief(
+                    project_id=project.project_id,
+                    default_user_brief=brief,
+                )
+                project = updated or project
+                thread = ensure_strategy_thread(project=project)
+                app.state.store.add_conversation_message(
+                    thread_id=thread.thread_id,
+                    role="system",
+                    message_type="system_action_result",
+                    content=f"已把这条进化建议记为恢复偏好：{candidate_payload.get('title')}",
+                    structured_payload={
+                        "source": "strategy_suggestion",
+                        "source_label": f"当前进化建议 · {candidate_payload.get('title')}",
+                        "preference_key": preference_key,
+                        "preference_value": preference_value,
+                    },
+                )
+            return adopted_decision_id, result_note
+
+        return adopted_decision_id, result_note
 
     def ensure_strategy_thread(*, project) -> object:
         existing = next(
@@ -774,33 +930,54 @@ def create_app(
 
         diagnostics = collect_business_diagnostics(projects)
         candidates = build_strategy_candidates(diagnostics=diagnostics)
+        candidate_map = {str(item["suggestion_key"]): item for item in candidates}
         records = {}
         if scope == "project" and project is not None:
             records = {item.suggestion_key: item for item in app.state.store.list_strategy_suggestions(project_id=project.project_id)}
 
         suggestions: list[StrategySuggestionItemResponse] = []
+        handled_items: list[StrategySuggestionItemResponse] = []
         for item in candidates:
             record = records.get(item["suggestion_key"])
             status = record.status if record is not None else "pending"
             if status != "pending":
                 continue
             suggestions.append(
-                StrategySuggestionItemResponse(
-                    suggestion_key=item["suggestion_key"],
-                    title=item["title"],
-                    priority=item["priority"],
-                    category=item["category"],
+                strategy_suggestion_response_item(
+                    item=item,
                     status=status,
-                    why_now=item["why_now"],
-                    action=item["action"],
-                    evidence=item["evidence"],
-                    tone=item["tone"],
-                    can_adopt=bool(project_id and item.get("can_adopt")),
-                    can_dismiss=bool(project_id),
-                    adoption_label=item.get("adoption_label"),
+                    project_scoped=bool(project_id),
                     adopted_decision_id=record.adopted_decision_id if record is not None else None,
+                    updated_at=record.updated_at if record is not None else None,
                 )
             )
+
+        if scope == "project":
+            for record in records.values():
+                if record.status == "pending":
+                    continue
+                item = dict(record.payload or {})
+                if not item:
+                    item = candidate_map.get(record.suggestion_key) or {
+                        "suggestion_key": record.suggestion_key,
+                        "title": record.suggestion_key,
+                        "priority": "medium",
+                        "category": "workflow",
+                        "why_now": "这条建议之前已经被处理过。",
+                        "action": "如需重新评估，可把它重新纳入候选池。",
+                        "evidence": [],
+                        "tone": "neutral",
+                    }
+                handled_items.append(
+                    strategy_suggestion_response_item(
+                        item=item,
+                        status=record.status,
+                        project_scoped=True,
+                        adopted_decision_id=record.adopted_decision_id,
+                        updated_at=record.updated_at,
+                        handled=True,
+                    )
+                )
 
         headline = f"{project.name} 的当前进化建议" if scope == "project" and project is not None else "系统当前进化建议"
         summary = (
@@ -813,6 +990,7 @@ def create_app(
             headline=headline,
             summary=summary,
             items=suggestions[:4],
+            handled_items=handled_items[:4],
         )
 
     def build_stale_failure_result(run, *, stale_seconds: int) -> dict[str, object]:
@@ -1975,6 +2153,7 @@ def create_app(
         latest_by_type = latest_artifact_payloads(run.run_id)
         result = run.result or {}
         if thread.scope == "rewrite_intervention":
+            project = app.state.store.get_project(thread.project_id)
             human_guidance = result.get("human_guidance") or latest_by_type.get("human_guidance") or {}
             issue_ledger = result.get("issue_ledger") or latest_by_type.get("issue_ledger") or {}
             latest_approval = next(
@@ -1994,6 +2173,7 @@ def create_app(
             recovery_mode = suggested_recovery_mode(
                 human_guidance=human_guidance,
                 requested_action=latest_approval.requested_action if latest_approval else None,
+                recovery_preferences=project_recovery_preferences(project),
             )
             return {
                 "chapter_no": human_guidance.get("chapter_no"),
@@ -2105,6 +2285,7 @@ def create_app(
         recovery_mode = suggested_recovery_mode(
             human_guidance=human_guidance,
             requested_action=approval.requested_action if approval else None,
+            recovery_preferences=project_recovery_preferences(app.state.store.get_project(run.project_id)),
         )
         return {
             "run_id": run.run_id,
@@ -2615,44 +2796,13 @@ def create_app(
                 suggestion_key=suggestion_key,
                 status="pending",
                 adopted_decision_id=None,
+                result_note="已重新纳入候选池。系统会再次把它当成待处理建议展示。",
             )
 
         adopted_decision_id = existing.adopted_decision_id if existing is not None else None
+        result_note = None
         if payload.action == "adopt" and candidate_payload.get("can_adopt"):
-            thread = ensure_strategy_thread(project=project)
-            content = str(candidate_payload.get("adoption_content") or "").strip()
-            decision_type = candidate_payload.get("adoption_decision_type")
-            if content and decision_type:
-                source_message = app.state.store.add_conversation_message(
-                    thread_id=thread.thread_id,
-                    role="system",
-                    message_type="system_action_result",
-                    content=f"已从当前进化建议采纳为{decision_type}：{content}",
-                    structured_payload={
-                        "source": "strategy_suggestion",
-                        "source_label": f"当前进化建议 · {candidate_payload.get('title')}",
-                        "decision_type": decision_type,
-                        "content": content,
-                    },
-                )
-                if source_message is not None:
-                    decision = app.state.store.create_conversation_decision(
-                        project_id=project.project_id,
-                        thread_id=thread.thread_id,
-                        message_id=source_message.message_id,
-                        decision_type=decision_type,
-                        payload=build_conversation_decision_payload_from_content(
-                            thread=thread,
-                            message_id=source_message.message_id,
-                            decision_type=decision_type,
-                            content=content,
-                            source="strategy_suggestion",
-                            source_label=f"当前进化建议 · {candidate_payload.get('title')}",
-                        ),
-                        applied_to_run_id=thread.linked_run_id,
-                        applied_to_chapter_no=thread.linked_chapter_no,
-                    )
-                    adopted_decision_id = decision.decision_id
+            adopted_decision_id, result_note = apply_strategy_adoption(project=project, candidate_payload=candidate_payload)
 
         new_status = "adopted" if payload.action == "adopt" else "dismissed"
         updated = app.state.store.upsert_strategy_suggestion(
@@ -2679,6 +2829,7 @@ def create_app(
             suggestion_key=suggestion_key,
             status=new_status,
             adopted_decision_id=adopted_decision_id,
+            result_note=result_note or strategy_suggestion_result_note(status=new_status, payload=candidate_payload, adopted_decision_id=adopted_decision_id),
         )
 
     @app.get("/", include_in_schema=False)

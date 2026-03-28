@@ -59,8 +59,11 @@ class StrategySuggestionItemResponse(BaseModel):
     tone: Literal["neutral", "good", "warn"] = "neutral"
     can_adopt: bool = False
     can_dismiss: bool = True
+    can_reopen: bool = False
     adoption_label: str | None = None
     adopted_decision_id: str | None = None
+    result_note: str | None = None
+    updated_at: str | None = None
 
 
 class StrategySuggestionsResponse(BaseModel):
@@ -70,6 +73,7 @@ class StrategySuggestionsResponse(BaseModel):
     headline: str
     summary: str
     items: list[StrategySuggestionItemResponse] = Field(default_factory=list)
+    handled_items: list[StrategySuggestionItemResponse] = Field(default_factory=list)
 
 
 class StrategySuggestionActionRequest(BaseModel):
@@ -81,6 +85,7 @@ class StrategySuggestionActionResponse(BaseModel):
     suggestion_key: str
     status: Literal["pending", "adopted", "dismissed"]
     adopted_decision_id: str | None = None
+    result_note: str | None = None
 
 
 class ProjectCreateRequest(BaseModel):
