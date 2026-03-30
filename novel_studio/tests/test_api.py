@@ -608,7 +608,8 @@ def test_conversation_scene_scopes_seed_targeted_opening_messages() -> None:
 
     assert "人物讨论线程" in character_messages.json()[0]["content"]
     assert "先回答第 1 问" in character_messages.json()[0]["content"]
-    assert "如果只用一个感觉描述主角" in character_messages.json()[0]["content"]
+    assert "默认可以先聊男主" in character_messages.json()[0]["content"]
+    assert "如果你更想先定女主" in character_messages.json()[0]["content"]
     assert "大纲讨论线程" in outline_messages.json()[0]["content"]
     assert "第一卷最主要靠什么把读者往下带" in outline_messages.json()[0]["content"]
 
