@@ -97,6 +97,16 @@ body {
   color: var(--success);
 }
 
+.conversation-feedback {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(155, 28, 28, 0.22);
+  background: rgba(155, 28, 28, 0.08);
+  color: #8d2020;
+  line-height: 1.6;
+}
+
 .grid {
   display: grid;
   grid-template-columns: 360px 1fr;

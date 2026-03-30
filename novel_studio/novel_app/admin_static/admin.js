@@ -13,6 +13,7 @@ const state = {
   businessMetrics: null,
   strategySuggestions: null,
   currentUser: null,
+  conversationFeedback: null,
   launchPlan: {
     chapterFocus: "先把悬念抛出来",
     launchNote: "",
@@ -79,6 +80,7 @@ const el = {
   conversationThreadCaption: document.getElementById("conversation-thread-caption"),
   conversationActionCopy: document.getElementById("conversation-action-copy"),
   conversationExecute: document.getElementById("conversation-execute"),
+  conversationFeedback: document.getElementById("conversation-feedback"),
   conversationInterviewSummary: document.getElementById("conversation-interview-summary"),
   conversationThreadContext: document.getElementById("conversation-thread-context"),
   conversationMessageList: document.getElementById("conversation-message-list"),
@@ -233,6 +235,28 @@ function setStatus(text, kind = "ready") {
   el.statusPill.textContent = text;
   el.statusPill.style.color = kind === "error" ? "#9b1c1c" : kind === "warn" ? "#8d5b00" : "#1f6b44";
   el.statusPill.style.background = kind === "error" ? "rgba(155,28,28,0.12)" : kind === "warn" ? "rgba(141,91,0,0.12)" : "rgba(31,107,68,0.12)";
+}
+
+function setConversationFeedback(text = "", kind = "error") {
+  state.conversationFeedback = text ? { text, kind } : null;
+  if (!el.conversationFeedback) return;
+  if (!text) {
+    el.conversationFeedback.hidden = true;
+    el.conversationFeedback.textContent = "";
+    return;
+  }
+  el.conversationFeedback.hidden = false;
+  el.conversationFeedback.textContent = text;
+}
+
+function clearConversationFeedback() {
+  setConversationFeedback("");
+}
+
+function reportConversationError(error, fallback = "对话协作发生错误，请稍后重试。") {
+  const message = formatErrorMessage(error) || fallback;
+  setConversationFeedback(message, "error");
+  setStatus(message, "error");
 }
 
 function renderWorkspaceTab() {
@@ -437,6 +461,40 @@ function formatDuration(ms) {
 
 function selectedProject() {
   return state.projects.find((item) => item.project_id === state.selectedProjectId) || null;
+}
+
+function renderScopeSummary(label, source, openScope) {
+  if (!source) {
+    return `
+      <div class="summary-card">
+        <div class="summary-label">${label}</div>
+        <div class="meta">这条线还没有形成阶段摘要。</div>
+        <div class="actions">
+          <button class="button ghost" type="button" data-project-summary-open="${openScope}">进入${conversationScopeLabel(openScope)}</button>
+        </div>
+      </div>
+    `;
+  }
+  return `
+    <div class="summary-card">
+      <div class="summary-label">${label}</div>
+      <ul class="interview-list">
+        ${(source.summary.items || [])
+          .slice(0, 3)
+          .map((item) => `<li><strong>${escapeHtml(item.label || "")}</strong>：${escapeHtml(item.summary || "")}</li>`)
+          .join("")}
+      </ul>
+      <div class="meta">${escapeHtml(source.summary.readiness || "")}</div>
+      <div class="actions">
+        ${
+          source.status === "draft"
+            ? `<button class="button secondary" type="button" data-apply-stage-summary="${escapeHtml(source.threadId || "")}">${escapeHtml(stageSummaryApplyLabel(openScope))}</button>`
+            : ""
+        }
+        <button class="button ghost" type="button" data-project-summary-open="${openScope}">进入${conversationScopeLabel(openScope)}</button>
+      </div>
+    </div>
+  `;
 }
 
 function selectedThread() {
@@ -2090,39 +2148,6 @@ function renderProjectBriefSummary(project) {
   const outlineSource = scopedSummarySource(project, "outline_room");
   const intentProfile = project.default_user_brief?.intent_profile || {};
   if (!summarySource) {
-    const renderScopeSummary = (label, source, openScope) => {
-      if (!source) {
-        return `
-          <div class="summary-card">
-            <div class="summary-label">${label}</div>
-            <div class="meta">这条线还没有形成阶段摘要。</div>
-            <div class="actions">
-              <button class="button ghost" type="button" data-project-summary-open="${openScope}">进入${conversationScopeLabel(openScope)}</button>
-            </div>
-          </div>
-        `;
-      }
-      return `
-        <div class="summary-card">
-          <div class="summary-label">${label}</div>
-          <ul class="interview-list">
-            ${(source.summary.items || [])
-              .slice(0, 3)
-              .map((item) => `<li><strong>${escapeHtml(item.label || "")}</strong>：${escapeHtml(item.summary || "")}</li>`)
-              .join("")}
-          </ul>
-          <div class="meta">${escapeHtml(source.summary.readiness || "")}</div>
-          <div class="actions">
-            ${
-              source.status === "draft"
-                ? `<button class="button secondary" type="button" data-apply-stage-summary="${escapeHtml(source.threadId || "")}">${escapeHtml(stageSummaryApplyLabel(openScope))}</button>`
-                : ""
-            }
-            <button class="button ghost" type="button" data-project-summary-open="${openScope}">进入${conversationScopeLabel(openScope)}</button>
-          </div>
-        </div>
-      `;
-    };
     el.projectBriefSummary.innerHTML = `
       <div class="panel-head">
         <div>
@@ -3743,7 +3768,7 @@ function renderFocusRun(summary) {
   el.focusRun.querySelectorAll("[data-action]:not([disabled])").forEach((node) => {
     node.addEventListener("click", () => {
       if (node.dataset.action === "open-thread") {
-        openConversationThread(node.dataset.id).catch((error) => setStatus(String(error.message || error), "error"));
+        openConversationThread(node.dataset.id).catch((error) => reportConversationError(error));
         return;
       }
       handleRunAction(node.dataset.action, node.dataset.id);
@@ -3900,7 +3925,7 @@ function renderRuns(runs, focusRunId) {
   el.runsList.querySelectorAll("[data-action]:not([disabled])").forEach((node) => {
     node.addEventListener("click", () => {
       if (node.dataset.action === "open-thread") {
-        openConversationThread(node.dataset.id).catch((error) => setStatus(String(error.message || error), "error"));
+        openConversationThread(node.dataset.id).catch((error) => reportConversationError(error));
         return;
       }
       handleRunAction(node.dataset.action, node.dataset.id);
@@ -3998,7 +4023,7 @@ function renderApprovals(items) {
   el.approvalsList.querySelectorAll("[data-action]").forEach((node) => {
     node.addEventListener("click", () => {
       if (node.dataset.action === "open-thread") {
-        openConversationThread(node.dataset.id).catch((error) => setStatus(String(error.message || error), "error"));
+        openConversationThread(node.dataset.id).catch((error) => reportConversationError(error));
         return;
       }
       handleApprovalAction(node.dataset.action, node.dataset.id);
@@ -4310,7 +4335,7 @@ function renderConversationThreads(items) {
   el.conversationThreadList.innerHTML = blocks.join("");
   el.conversationThreadList.querySelectorAll("[data-thread-id]").forEach((node) => {
     node.addEventListener("click", () => {
-      loadConversationMessages(node.dataset.threadId).catch((error) => setStatus(String(error.message || error), "error"));
+      loadConversationMessages(node.dataset.threadId).catch((error) => reportConversationError(error));
     });
   });
 }
@@ -4582,6 +4607,11 @@ function renderConversationPanel() {
   el.conversationExecute.dataset.runId = actionPlan.action?.runId || "";
   el.conversationExecute.dataset.approvalId = actionPlan.action?.approvalId || "";
   el.conversationExecute.dataset.recoveryMode = actionPlan.action?.recoveryMode || "";
+  if (state.conversationFeedback?.text) {
+    setConversationFeedback(state.conversationFeedback.text, state.conversationFeedback.kind || "error");
+  } else {
+    clearConversationFeedback();
+  }
   el.conversationInput.placeholder = conversationInputPlaceholder(thread);
   renderInterviewSummary(thread);
   renderThreadContext(thread);
@@ -4630,6 +4660,7 @@ async function openConversationThread(threadId) {
   state.selectedThreadId = threadId;
   setWorkspaceTab("conversation");
   await loadConversationMessages(threadId, { activateTab: true });
+  clearConversationFeedback();
   setStatus("已进入人工协作线程", "ready");
 }
 
@@ -4646,6 +4677,7 @@ function conversationThreadBody(scope) {
 async function createConversationThread(scope) {
   if (!state.selectedProjectId) return;
   setWorkspaceTab("conversation");
+  clearConversationFeedback();
   const body = conversationThreadBody(scope);
   const thread = await api(`/api/projects/${state.selectedProjectId}/conversation-threads`, {
     method: "POST",
@@ -4654,6 +4686,7 @@ async function createConversationThread(scope) {
   await selectProject(state.selectedProjectId);
   state.selectedThreadId = thread.thread_id;
   await loadConversationMessages(thread.thread_id, { activateTab: true });
+  clearConversationFeedback();
   setStatus(`已创建${conversationScopeLabel(scope)}线程`, "ready");
 }
 
@@ -4756,6 +4789,7 @@ async function submitConversationMessage(content) {
   if (!state.selectedThreadId) return;
   if (!content) return;
   try {
+    clearConversationFeedback();
     await api(`/api/conversation-threads/${state.selectedThreadId}/messages`, {
       method: "POST",
       body: JSON.stringify({ content }),
@@ -4767,12 +4801,13 @@ async function submitConversationMessage(content) {
     }
     setStatus("对话已记录，并已生成下一步协作提示", "ready");
   } catch (error) {
-    setStatus(String(error.message || error), "error");
+    reportConversationError(error);
   }
 }
 
 async function adoptConversationMessage(messageId, decisionType) {
   try {
+    clearConversationFeedback();
     await api(`/api/conversation-messages/${messageId}/adopt`, {
       method: "POST",
       body: JSON.stringify({ decision_type: decisionType }),
@@ -4783,7 +4818,7 @@ async function adoptConversationMessage(messageId, decisionType) {
     }
     setStatus(`已采纳为${conversationDecisionLabel(decisionType)}`, "ready");
   } catch (error) {
-    setStatus(String(error.message || error), "error");
+    reportConversationError(error);
   }
 }
 
@@ -4868,10 +4903,12 @@ async function updateConversationDecision(decisionId) {
   const editor = el.conversationDecisionList.querySelector(`[data-decision-editor="${decisionId}"]`);
   const content = editor?.value.trim() || "";
   if (!content) {
+    setConversationFeedback("结论内容不能为空。", "error");
     setStatus("结论内容不能为空", "error");
     return;
   }
   try {
+    clearConversationFeedback();
     await api(`/api/conversation-decisions/${decisionId}`, {
       method: "PATCH",
       body: JSON.stringify({ content }),
@@ -4882,7 +4919,7 @@ async function updateConversationDecision(decisionId) {
     }
     setStatus("已更新对话结论", "ready");
   } catch (error) {
-    setStatus(String(error.message || error), "error");
+    reportConversationError(error);
   }
 }
 
@@ -4891,6 +4928,7 @@ async function deleteConversationDecision(decisionId) {
     return;
   }
   try {
+    clearConversationFeedback();
     await api(`/api/conversation-decisions/${decisionId}`, { method: "DELETE" });
     await selectProject(state.selectedProjectId);
     if (state.selectedThreadId) {
@@ -4898,7 +4936,7 @@ async function deleteConversationDecision(decisionId) {
     }
     setStatus("已撤销这条采纳结论", "warn");
   } catch (error) {
-    setStatus(String(error.message || error), "error");
+    reportConversationError(error);
   }
 }
 
@@ -4906,10 +4944,12 @@ async function saveDecisionDraft(draftId, decisionType) {
   const editor = el.conversationDecisionList.querySelector(`[data-draft-editor="${draftId}"]`);
   const content = editor?.value.trim() || "";
   if (!content) {
+    setConversationFeedback("结论内容不能为空。", "error");
     setStatus("结论内容不能为空", "error");
     return;
   }
   try {
+    clearConversationFeedback();
     const thread = await ensureThreadForDecisionType(decisionType);
     const createdMessages = await api(`/api/conversation-threads/${thread.thread_id}/messages`, {
       method: "POST",
@@ -4927,7 +4967,7 @@ async function saveDecisionDraft(draftId, decisionType) {
     }
     setStatus(`已新增${conversationDecisionLabel(decisionType)}`, "ready");
   } catch (error) {
-    setStatus(String(error.message || error), "error");
+    reportConversationError(error);
   }
 }
 
@@ -5381,13 +5421,13 @@ async function boot() {
   el.projectForm.addEventListener("submit", createProject);
   el.createRun.addEventListener("click", () => createRun({ quickMode: false }));
   el.createRunQuick.addEventListener("click", () => createRun({ quickMode: true }));
-  el.conversationExecute.addEventListener("click", () => executeConversationAction().catch((error) => setStatus(String(error.message || error), "error")));
-  el.conversationCreateBootstrap.addEventListener("click", () => createConversationThread("project_bootstrap").catch((error) => setStatus(String(error.message || error), "error")));
-  el.conversationCreateCharacters.addEventListener("click", () => createConversationThread("character_room").catch((error) => setStatus(String(error.message || error), "error")));
-  el.conversationCreateOutline.addEventListener("click", () => createConversationThread("outline_room").catch((error) => setStatus(String(error.message || error), "error")));
-  el.conversationCreatePlanning.addEventListener("click", () => createConversationThread("chapter_planning").catch((error) => setStatus(String(error.message || error), "error")));
-  el.conversationCreateRewrite.addEventListener("click", () => createConversationThread("rewrite_intervention").catch((error) => setStatus(String(error.message || error), "error")));
-  el.conversationCreateRetro.addEventListener("click", () => createConversationThread("chapter_retro").catch((error) => setStatus(String(error.message || error), "error")));
+  el.conversationExecute.addEventListener("click", () => executeConversationAction().catch((error) => reportConversationError(error)));
+  el.conversationCreateBootstrap.addEventListener("click", () => createConversationThread("project_bootstrap").catch((error) => reportConversationError(error)));
+  el.conversationCreateCharacters.addEventListener("click", () => createConversationThread("character_room").catch((error) => reportConversationError(error)));
+  el.conversationCreateOutline.addEventListener("click", () => createConversationThread("outline_room").catch((error) => reportConversationError(error)));
+  el.conversationCreatePlanning.addEventListener("click", () => createConversationThread("chapter_planning").catch((error) => reportConversationError(error)));
+  el.conversationCreateRewrite.addEventListener("click", () => createConversationThread("rewrite_intervention").catch((error) => reportConversationError(error)));
+  el.conversationCreateRetro.addEventListener("click", () => createConversationThread("chapter_retro").catch((error) => reportConversationError(error)));
   el.conversationForm.addEventListener("submit", sendConversationMessage);
 
   try {
