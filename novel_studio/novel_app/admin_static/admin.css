@@ -77,6 +77,26 @@ body {
   line-height: 1.6;
 }
 
+.auth-feedback {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(114, 100, 87, 0.18);
+  background: rgba(248, 242, 231, 0.7);
+  line-height: 1.5;
+}
+
+.auth-feedback.feedback-error {
+  border-color: rgba(155, 28, 28, 0.22);
+  background: rgba(155, 28, 28, 0.08);
+  color: #8d2020;
+}
+
+.auth-feedback.feedback-success {
+  border-color: rgba(31, 107, 68, 0.24);
+  background: rgba(31, 107, 68, 0.08);
+  color: var(--success);
+}
+
 .grid {
   display: grid;
   grid-template-columns: 360px 1fr;

@@ -33,6 +33,7 @@ const el = {
   authForm: document.getElementById("auth-form"),
   authPenName: document.getElementById("auth-pen-name"),
   authPassword: document.getElementById("auth-password"),
+  authFeedback: document.getElementById("auth-feedback"),
   loginButton: document.getElementById("login-button"),
   registerButton: document.getElementById("register-button"),
   logoutButton: document.getElementById("logout-button"),
@@ -297,10 +298,37 @@ function updateAuthUi() {
       ? `当前以“${state.currentUser.pen_name}”身份登录。你只能看到自己的作品。`
       : "先用笔名注册或登录。默认最多允许 5 位作家注册。";
   }
+  if (loggedIn) {
+    setAuthFeedback(`欢迎回来，${state.currentUser.pen_name}。`, "success");
+  } else {
+    setAuthFeedback("第一次使用时，先注册笔名，再登录进入你的创作空间。");
+  }
   if (!loggedIn) {
     renderProjects();
     renderProjectState();
     renderAudit([]);
+  }
+}
+
+function setAuthFeedback(text, kind = "muted") {
+  if (!el.authFeedback) return;
+  el.authFeedback.textContent = text;
+  el.authFeedback.classList.remove("feedback-error", "feedback-success");
+  if (kind === "error") {
+    el.authFeedback.classList.add("feedback-error");
+  } else if (kind === "success") {
+    el.authFeedback.classList.add("feedback-success");
+  }
+}
+
+function setAuthBusy(mode, busy) {
+  if (el.loginButton) {
+    el.loginButton.disabled = busy;
+    el.loginButton.textContent = busy && mode === "login" ? "登录中…" : "登录";
+  }
+  if (el.registerButton) {
+    el.registerButton.disabled = busy;
+    el.registerButton.textContent = busy && mode === "register" ? "注册中…" : "注册笔名";
   }
 }
 
@@ -5268,22 +5296,39 @@ async function submitAuth(mode) {
   const penName = el.authPenName.value.trim();
   const password = el.authPassword.value;
   if (!penName || !password) {
+    setAuthFeedback("请先填写笔名和密码。", "error");
     setStatus("请先填写笔名和密码。", "error");
+    return;
+  }
+  if (password.length < 8) {
+    setAuthFeedback("密码至少需要 8 位。", "error");
+    setStatus("密码至少需要 8 位。", "error");
     return;
   }
   const path = mode === "register" ? "/api/auth/register" : "/api/auth/login";
   const label = mode === "register" ? "注册" : "登录";
+  setAuthBusy(mode, true);
   try {
     state.currentUser = await api(path, {
       method: "POST",
       body: JSON.stringify({ pen_name: penName, password }),
     });
     el.authPassword.value = "";
+    setAuthFeedback(
+      mode === "register"
+        ? `笔名“${state.currentUser.pen_name}”注册成功，已自动登录。`
+        : `欢迎回来，${state.currentUser.pen_name}。`,
+      "success",
+    );
     updateAuthUi();
     await refreshAfterAuth();
     setStatus(`${label}成功，已进入你的创作空间。`, "ready");
   } catch (error) {
-    setStatus(String(error.message || error), "error");
+    const message = formatErrorMessage(error);
+    setAuthFeedback(message, "error");
+    setStatus(message, "error");
+  } finally {
+    setAuthBusy(mode, false);
   }
 }
 
@@ -5310,10 +5355,26 @@ async function boot() {
   });
   el.authForm.addEventListener("submit", (event) => {
     event.preventDefault();
-    submitAuth("login").catch((error) => setStatus(String(error.message || error), "error"));
+    submitAuth("login").catch((error) => {
+      const message = formatErrorMessage(error);
+      setAuthFeedback(message, "error");
+      setStatus(message, "error");
+    });
   });
-  el.registerButton.addEventListener("click", () => submitAuth("register").catch((error) => setStatus(String(error.message || error), "error")));
+  el.registerButton.addEventListener("click", () =>
+    submitAuth("register").catch((error) => {
+      const message = formatErrorMessage(error);
+      setAuthFeedback(message, "error");
+      setStatus(message, "error");
+    })
+  );
   el.logoutButton.addEventListener("click", () => logout().catch((error) => setStatus(String(error.message || error), "error")));
+  el.authPenName.addEventListener("input", () => {
+    if (!isAuthenticated()) setAuthFeedback("第一次使用时，先注册笔名，再登录进入你的创作空间。");
+  });
+  el.authPassword.addEventListener("input", () => {
+    if (!isAuthenticated()) setAuthFeedback("第一次使用时，先注册笔名，再登录进入你的创作空间。");
+  });
   el.refreshProjects.addEventListener("click", () => loadProjects().catch((error) => setStatus(error.message, "error")));
   el.refreshAudit.addEventListener("click", () => loadAudit().catch((error) => setStatus(error.message, "error")));
   el.ideaCaptureForm.addEventListener("submit", createIdeaProject);
