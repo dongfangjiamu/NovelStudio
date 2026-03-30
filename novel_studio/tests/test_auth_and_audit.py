@@ -83,6 +83,32 @@ def test_registration_limit_is_enforced() -> None:
     assert blocked.json()["detail"] == "registration_limit_reached"
 
 
+def test_single_character_pen_name_is_allowed() -> None:
+    app = create_app(
+        config=AppConfig(
+            stub_mode=True,
+            openai_api_key=None,
+            admin_token=None,
+            database_url="sqlite:///:memory:",
+            model_name="gpt-5-nano",
+            project_id="auth-test",
+            operator_id="tester",
+        ),
+        store=InMemoryStore(),
+    )
+    client = TestClient(app)
+
+    registered = client.post("/api/auth/register", json={"pen_name": "玲", "password": "password123"})
+    assert registered.status_code == 201, registered.text
+    assert registered.json()["pen_name"] == "玲"
+
+    assert client.post("/api/auth/logout").status_code == 204
+
+    logged_in = client.post("/api/auth/login", json={"pen_name": "玲", "password": "password123"})
+    assert logged_in.status_code == 200, logged_in.text
+    assert logged_in.json()["pen_name"] == "玲"
+
+
 def test_writer_can_only_see_own_projects() -> None:
     app = create_app(
         config=AppConfig(

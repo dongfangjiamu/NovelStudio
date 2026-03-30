@@ -18,12 +18,12 @@ class ApiErrorResponse(BaseModel):
 
 
 class AuthRegisterRequest(BaseModel):
-    pen_name: str = Field(min_length=2, max_length=32)
+    pen_name: str = Field(min_length=1, max_length=32)
     password: str = Field(min_length=8, max_length=128)
 
 
 class AuthLoginRequest(BaseModel):
-    pen_name: str = Field(min_length=2, max_length=32)
+    pen_name: str = Field(min_length=1, max_length=32)
     password: str = Field(min_length=8, max_length=128)
 
 

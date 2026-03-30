@@ -3010,7 +3010,7 @@ def create_app(
         response: Response,
     ) -> CurrentUserResponse:
         pen_name = normalize_pen_name(payload.pen_name)
-        if len(pen_name) < 2:
+        if len(pen_name) < 1:
             raise HTTPException(status_code=400, detail="pen_name_too_short")
         if app.state.store.count_writer_users() >= app.state.config.writer_registration_limit:
             raise HTTPException(status_code=403, detail="registration_limit_reached")

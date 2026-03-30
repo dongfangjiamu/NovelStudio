@@ -308,6 +308,35 @@ function headers() {
   return { "content-type": "application/json" };
 }
 
+function formatApiDetail(detail) {
+  if (Array.isArray(detail)) {
+    const first = detail[0];
+    if (first && typeof first === "object") {
+      const field = Array.isArray(first.loc) ? first.loc[first.loc.length - 1] : null;
+      if (field === "pen_name") return "笔名格式不正确，请换一个更短或更清晰的笔名。";
+      if (field === "password") return "密码长度不符合要求，请使用 8 到 128 位密码。";
+      if (first.msg) return String(first.msg);
+    }
+    return "提交内容格式不正确，请检查后重试。";
+  }
+  if (detail && typeof detail === "object") {
+    if (typeof detail.message === "string") return detail.message;
+    return "请求失败，请稍后重试。";
+  }
+  const value = String(detail || "");
+  if (value === "pen_name_too_short") return "笔名至少需要 1 个字。";
+  if (value === "pen_name_taken") return "这个笔名已经被注册了，请换一个。";
+  if (value === "registration_limit_reached") return "当前可注册作家名额已满。";
+  if (value === "invalid_credentials") return "笔名或密码不正确。";
+  if (value === "login_required") return "请先登录。";
+  return value || "请求失败，请稍后重试。";
+}
+
+function formatErrorMessage(error) {
+  if (error instanceof Error) return formatApiDetail(error.message);
+  return formatApiDetail(error);
+}
+
 async function api(path, options = {}) {
   const response = await fetch(path, {
     ...options,
@@ -320,7 +349,10 @@ async function api(path, options = {}) {
   const text = await response.text();
   const data = text ? JSON.parse(text) : null;
   if (!response.ok) {
-    throw new Error(data?.detail || `request_failed:${response.status}`);
+    const detail = data?.detail || `request_failed:${response.status}`;
+    const error = new Error(formatApiDetail(detail));
+    error.detail = detail;
+    throw error;
   }
   return data;
 }
@@ -5217,7 +5249,7 @@ async function loadCurrentUser() {
   try {
     state.currentUser = await api("/api/me");
   } catch (error) {
-    if (String(error.message || error) === "login_required") {
+    if (error?.detail === "login_required") {
       state.currentUser = null;
       return null;
     }
