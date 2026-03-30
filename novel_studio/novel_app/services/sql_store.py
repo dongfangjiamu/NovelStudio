@@ -639,6 +639,22 @@ class SqlAlchemyStore:
                 return None
             return self._conversation_thread_record(row)
 
+    def update_conversation_thread_status(
+        self,
+        *,
+        thread_id: str,
+        status: str,
+    ) -> ConversationThreadRecord | None:
+        with session_scope(self.session_factory) as session:
+            row = session.get(ConversationThreadModel, thread_id)
+            if row is None:
+                return None
+            row.status = status
+            row.updated_at = utc_now_iso()
+            session.add(row)
+            session.flush()
+            return self._conversation_thread_record(row)
+
     def list_conversation_threads(self, project_id: str) -> list[ConversationThreadRecord]:
         with session_scope(self.session_factory) as session:
             rows = session.execute(

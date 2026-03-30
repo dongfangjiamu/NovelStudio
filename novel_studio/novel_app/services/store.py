@@ -619,6 +619,30 @@ class InMemoryStore:
         with self._lock:
             return self._conversation_threads.get(thread_id)
 
+    def update_conversation_thread_status(
+        self,
+        *,
+        thread_id: str,
+        status: str,
+    ) -> ConversationThreadRecord | None:
+        with self._lock:
+            current = self._conversation_threads.get(thread_id)
+            if current is None:
+                return None
+            updated = ConversationThreadRecord(
+                thread_id=current.thread_id,
+                project_id=current.project_id,
+                scope=current.scope,
+                status=status,
+                title=current.title,
+                linked_run_id=current.linked_run_id,
+                linked_chapter_no=current.linked_chapter_no,
+                created_at=current.created_at,
+                updated_at=utc_now_iso(),
+            )
+            self._conversation_threads[thread_id] = updated
+            return updated
+
     def list_conversation_threads(self, project_id: str) -> list[ConversationThreadRecord]:
         with self._lock:
             return sorted(

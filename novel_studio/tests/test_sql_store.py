@@ -148,6 +148,32 @@ def test_sql_store_persists_conversation_threads_and_messages(tmp_path: Path) ->
     assert messages[1].role == "user"
 
 
+def test_sql_store_can_update_conversation_thread_status(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'novel_studio.db'}"
+    store = SqlAlchemyStore(database_url)
+    store.create_tables()
+
+    project = store.create_project(
+        name="对话项目",
+        description=None,
+        default_user_brief={"title": "长夜炉火"},
+        default_target_chapters=1,
+    )
+    thread = store.create_conversation_thread(
+        project_id=project.project_id,
+        scope="project_bootstrap",
+        title="项目共创对话",
+        linked_run_id=None,
+        linked_chapter_no=None,
+    )
+
+    updated = store.update_conversation_thread_status(thread_id=thread.thread_id, status="archived")
+
+    assert updated is not None
+    assert updated.status == "archived"
+    assert store.get_conversation_thread(thread.thread_id).status == "archived"
+
+
 def test_sql_store_persists_conversation_decisions(tmp_path: Path) -> None:
     database_url = f"sqlite:///{tmp_path / 'novel_studio.db'}"
     store = SqlAlchemyStore(database_url)

@@ -109,6 +109,9 @@ const STATUS_LABELS = {
   pending: "待处理",
   approved: "已通过",
   rejected: "已驳回",
+  open: "进行中",
+  resolved: "已完成",
+  archived: "已归档",
 };
 
 const CONVERSATION_SCOPE_LABELS = {
@@ -381,6 +384,8 @@ function formatApiDetail(detail) {
   if (value === "registration_limit_reached") return "当前可注册作家名额已满。";
   if (value === "invalid_credentials") return "笔名或密码不正确。";
   if (value === "login_required") return "请先登录。";
+  if (value === "conversation_thread_not_open") return "这条线程已经关闭，不能继续作答。请使用“重开本阶段”或切回最新线程。";
+  if (value === "interview_restart_not_supported") return "当前线程不支持重开本阶段。";
   return value || "请求失败，请稍后重试。";
 }
 
@@ -852,6 +857,9 @@ function conversationInputPlaceholder(thread) {
   if (!thread) {
     return "例如：这章我想保留主角克制的气质，但请把冲突前置，不要拖到中段。";
   }
+  if (thread.status !== "open") {
+    return "这条线程已归档，不能继续输入。请打开最新线程，或使用“重开本阶段”重新开始。";
+  }
   if (thread.scope === "project_bootstrap") {
     return "例如：我脑子里现在最清楚的是，一个被逐出山门的人，靠偷听禁地里的古老声音翻身，但我还没想清楚它更偏爽感还是悬念。";
   }
@@ -1292,6 +1300,23 @@ function renderInterviewSummary(thread) {
       </section>
     `
     : "";
+  const restartBlock =
+    thread.status === "open"
+      ? `
+        <div class="interview-block accent-block">
+          <strong>回答记录错位了？</strong>
+          <div class="meta">如果因为报错或误答导致后续问题被污染，可以重开本阶段。系统会保留旧线程作为历史记录，并从当前阶段第 1 问重新开始。</div>
+          <div class="actions">
+            <button class="button ghost" type="button" data-restart-thread="${thread.thread_id}">重开本阶段</button>
+          </div>
+        </div>
+      `
+      : `
+        <div class="interview-block">
+          <strong>历史线程</strong>
+          <div class="meta">这条线程已归档，只保留作参考。请切换到最新线程继续，或在最新线程里重新开始回答。</div>
+        </div>
+      `;
   const stageConfirmation = interview.stage_confirmation
     ? `
       <section class="interview-stage-card">
@@ -1440,6 +1465,7 @@ function renderInterviewSummary(thread) {
       <div class="meta">${escapeHtml(interview.goal || "")}</div>
       <div class="meta">${escapeHtml(interview.reflection_summary || "")}</div>
       ${basis}
+      ${restartBlock}
       <div class="interview-grid">
         <div class="interview-block">
           <strong>已确认事项</strong>
@@ -1559,6 +1585,15 @@ function renderInterviewSummary(thread) {
         await applyStageSummary(node.dataset.applyStageSummary);
       } catch (error) {
         setStatus(String(error.message || error), "error");
+      }
+    });
+  });
+  el.conversationInterviewSummary.querySelectorAll("[data-restart-thread]").forEach((node) => {
+    node.addEventListener("click", async () => {
+      try {
+        await restartConversationThread(node.dataset.restartThread);
+      } catch (error) {
+        reportConversationError(error);
       }
     });
   });
@@ -4310,7 +4345,7 @@ function renderConversationThreads(items) {
       <button class="${classes.filter(Boolean).join(" ")}" data-thread-id="${item.thread_id}">
         <div class="card-head">
           <h4>${item.title}</h4>
-          <span class="status-chip status-${item.status}">${item.status === "open" ? "进行中" : item.status}</span>
+          <span class="status-chip status-${item.status}">${STATUS_LABELS[item.status] || item.status}</span>
         </div>
         <div class="meta">${conversationScopeLabel(item.scope)} · ${chapterText}</div>
         ${progressLabel ? `<div class="meta">采访进度 ${progressLabel}</div>` : ""}
@@ -4616,7 +4651,7 @@ function renderConversationPanel() {
   renderInterviewSummary(thread);
   renderThreadContext(thread);
   renderConversationMessages(state.conversationMessages || []);
-  el.conversationSend.disabled = !thread;
+  el.conversationSend.disabled = !thread || thread.status !== "open";
   if (!thread && !state.conversationMessages.length) {
     el.conversationInterviewSummary.innerHTML = "";
     el.conversationThreadContext.innerHTML = "";
@@ -4688,6 +4723,21 @@ async function createConversationThread(scope) {
   await loadConversationMessages(thread.thread_id, { activateTab: true });
   clearConversationFeedback();
   setStatus(`已创建${conversationScopeLabel(scope)}线程`, "ready");
+}
+
+async function restartConversationThread(threadId) {
+  if (!threadId) return;
+  const confirmed = window.confirm("重开后，这条旧线程会被归档，当前阶段会从第 1 问重新开始。是否继续？");
+  if (!confirmed) return;
+  clearConversationFeedback();
+  const thread = await api(`/api/conversation-threads/${threadId}/restart`, {
+    method: "POST",
+  });
+  await selectProject(state.selectedProjectId);
+  state.selectedThreadId = thread.thread_id;
+  await loadConversationMessages(thread.thread_id, { activateTab: true });
+  clearConversationFeedback();
+  setStatus("已重开当前阶段，请从第 1 问重新回答。", "ready");
 }
 
 function inferIdeaProjectName(title, seed) {

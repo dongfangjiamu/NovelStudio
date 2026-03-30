@@ -251,6 +251,11 @@ def create_app(
         project = require_project_access(thread.project_id, request)
         return thread, project
 
+    def require_open_thread(thread):
+        if thread.status != "open":
+            raise HTTPException(status_code=409, detail="conversation_thread_not_open")
+        return thread
+
     def require_decision_access(decision_id: str, request: Request):
         decision = app.state.store.get_conversation_decision(decision_id)
         if decision is None:
@@ -3624,6 +3629,69 @@ def create_app(
         thread, _project = require_thread_access(thread_id, request)
         return ConversationThreadResponse.model_validate(enrich_thread_payload(thread))
 
+    @app.post("/api/conversation-threads/{thread_id}/restart", response_model=ConversationThreadResponse, status_code=201)
+    async def restart_conversation_thread(
+        thread_id: str,
+        request: Request,
+        response: Response,
+    ) -> ConversationThreadResponse:
+        thread, project = require_thread_access(thread_id, request)
+        require_open_thread(thread)
+        blueprint = interview_blueprint(thread.scope)
+        if blueprint is None:
+            raise HTTPException(status_code=409, detail="interview_restart_not_supported")
+
+        archived = app.state.store.update_conversation_thread_status(thread_id=thread.thread_id, status="archived")
+        if archived is None:
+            raise HTTPException(status_code=404, detail="conversation_thread_not_found")
+
+        linked_run = app.state.store.get_run(thread.linked_run_id) if thread.linked_run_id else None
+        restarted = app.state.store.create_conversation_thread(
+            project_id=thread.project_id,
+            scope=thread.scope,
+            title=thread.title or conversation_title(scope=thread.scope, chapter_no=thread.linked_chapter_no),
+            linked_run_id=thread.linked_run_id,
+            linked_chapter_no=thread.linked_chapter_no,
+        )
+        opening_type, opening_content, opening_payload = build_thread_opening(
+            scope=restarted.scope,
+            project=project,
+            run=linked_run,
+            chapter_no=restarted.linked_chapter_no,
+        )
+        app.state.store.add_conversation_message(
+            thread_id=restarted.thread_id,
+            role="assistant",
+            message_type=opening_type,
+            content=opening_content,
+            structured_payload=opening_payload,
+        )
+        app.state.store.add_conversation_message(
+            thread_id=restarted.thread_id,
+            role="system",
+            message_type="system_action_result",
+            content="系统已按你的要求重开本阶段。旧回答会保留在历史线程中，这里请从第 1 问重新回答。",
+            structured_payload={
+                "source": "thread_restart",
+                "restarted_from_thread_id": thread.thread_id,
+                "scope": thread.scope,
+            },
+        )
+        restarted = app.state.store.get_conversation_thread(restarted.thread_id) or restarted
+        audit(
+            request=request,
+            response=response,
+            status_code=201,
+            action="conversation_thread.restart",
+            resource_type="conversation_thread",
+            resource_id=restarted.thread_id,
+            project_id=restarted.project_id,
+            run_id=restarted.linked_run_id,
+            approval_id=None,
+            payload={"source_thread_id": thread.thread_id, "scope": restarted.scope},
+        )
+        return ConversationThreadResponse.model_validate(enrich_thread_payload(restarted))
+
     @app.post("/api/conversation-threads/{thread_id}/apply-project-summary", response_model=ProjectResponse)
     async def apply_conversation_project_summary(
         thread_id: str,
@@ -3631,6 +3699,7 @@ def create_app(
         response: Response,
     ) -> ProjectResponse:
         thread, project = require_thread_access(thread_id, request)
+        require_open_thread(thread)
         interview_state = build_interview_state(thread=thread, project=project)
         if interview_state is None or not (interview_state.get("stage_confirmation") or {}).get("project_summary"):
             raise HTTPException(status_code=409, detail="project_summary_not_ready")
@@ -3675,6 +3744,7 @@ def create_app(
         response: Response,
     ) -> ProjectResponse:
         thread, project = require_thread_access(thread_id, request)
+        require_open_thread(thread)
         interview_state = build_interview_state(thread=thread, project=project)
         if interview_state is None or not (interview_state.get("stage_confirmation") or {}).get("stage_summary"):
             raise HTTPException(status_code=409, detail="stage_summary_not_ready")
@@ -3728,6 +3798,7 @@ def create_app(
         response: Response,
     ) -> list[ConversationDecisionResponse]:
         thread, project = require_thread_access(thread_id, request)
+        require_open_thread(thread)
         interview_state = build_interview_state(thread=thread, project=project)
         if interview_state is None:
             raise HTTPException(status_code=409, detail="stage_confirmation_not_ready")
@@ -3811,6 +3882,7 @@ def create_app(
         response: Response,
     ) -> list[ConversationMessageResponse]:
         thread, _project = require_thread_access(thread_id, request)
+        require_open_thread(thread)
         user_message = app.state.store.add_conversation_message(
             thread_id=thread_id,
             role="user",
@@ -3928,6 +4000,7 @@ def create_app(
         response: Response,
     ) -> ConversationDecisionResponse:
         thread, _project = require_thread_access(thread_id, request)
+        require_open_thread(thread)
         source_label = payload.source_label or "当前理解草案"
         source_message = app.state.store.add_conversation_message(
             thread_id=thread.thread_id,

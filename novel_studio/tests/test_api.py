@@ -494,6 +494,60 @@ def test_conversation_thread_flow() -> None:
     assert "克制型" in thread_after_adopt.json()["interview_state"]["adopted_highlights"][0]
 
 
+def test_interview_thread_can_restart_from_question_one() -> None:
+    client = make_client()
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "重开对话项目",
+            "default_user_brief": {"title": "长夜炉火", "genre": "东方玄幻"},
+            "default_target_chapters": 1,
+        },
+    ).json()
+
+    thread = client.post(
+        f"/api/projects/{project['project_id']}/conversation-threads",
+        json={"scope": "project_bootstrap"},
+    ).json()
+
+    client.post(
+        f"/api/conversation-threads/{thread['thread_id']}/messages",
+        json={"content": "我最想保住的是压抑后爆发的爽感。"},
+    )
+    client.post(
+        f"/api/conversation-threads/{thread['thread_id']}/messages",
+        json={"content": "主角做事一定要狠，但不能疯。"},
+    )
+    polluted = client.get(f"/api/conversation-threads/{thread['thread_id']}").json()
+    assert polluted["interview_state"]["completion_label"] == "2/4"
+
+    restarted = client.post(f"/api/conversation-threads/{thread['thread_id']}/restart")
+    assert restarted.status_code == 201, restarted.text
+    new_thread = restarted.json()
+
+    assert new_thread["thread_id"] != thread["thread_id"]
+    assert new_thread["scope"] == thread["scope"]
+    assert new_thread["status"] == "open"
+    assert new_thread["message_count"] == 2
+    assert new_thread["interview_state"]["completion_label"] == "0/4"
+    assert "吸引力" in new_thread["interview_state"]["next_prompt"]
+
+    archived = client.get(f"/api/conversation-threads/{thread['thread_id']}")
+    assert archived.status_code == 200
+    assert archived.json()["status"] == "archived"
+
+    old_reply = client.post(
+        f"/api/conversation-threads/{thread['thread_id']}/messages",
+        json={"content": "这句不应该再写进旧线程。"},
+    )
+    assert old_reply.status_code == 409
+    assert old_reply.json()["detail"] == "conversation_thread_not_open"
+
+    messages = client.get(f"/api/conversation-threads/{new_thread['thread_id']}/messages")
+    assert messages.status_code == 200
+    assert "重开本阶段" in messages.json()[1]["content"]
+
+
 def test_project_bootstrap_opening_uses_idea_seed() -> None:
     client = make_client()
     project = client.post(
