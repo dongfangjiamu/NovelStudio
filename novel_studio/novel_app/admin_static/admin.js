@@ -300,6 +300,43 @@ function reportConversationSuccess(message, thread = selectedThread()) {
   setStatus(message, "ready");
 }
 
+function renderStagePrimaryAction(thread, stageConfirmation) {
+  const recommendation = stageConfirmation?.action_recommendation;
+  if (!thread || !recommendation) return "";
+  const title = recommendation.title || "现在更适合先确认这版";
+  const reason = recommendation.reason || "先把这一阶段正式确认，后面的对话和运行才能稳定继承。";
+  const focusLine = recommendation.focus_topic
+    ? `<div class="meta">当前最值得先补：${escapeHtml(recommendation.focus_topic)}</div>`
+    : "";
+  const nextLine =
+    recommendation.mode === "apply_and_split"
+      ? "这是当前最推荐的动作。完成后，系统会同时写回阶段摘要，并拆出第一批可复用结论。"
+      : recommendation.mode === "apply_summary"
+        ? "先把这一阶段正式确认，再决定是否进入下一条讨论线。"
+        : "先把当前这一点说清，再回来确认阶段摘要。";
+  const button =
+    recommendation.mode === "apply_and_split"
+      ? `<button class="button primary large" type="button" data-stage-apply-and-split="${thread.thread_id}">${escapeHtml(recommendation.primary_label || "确认并拆出第一批结论")}</button>`
+      : recommendation.mode === "apply_summary"
+        ? `<button class="button primary large" type="button" data-apply-stage-summary="${thread.thread_id}">${escapeHtml(recommendation.primary_label || stageSummaryApplyLabel(thread.scope))}</button>`
+        : `<button class="button secondary large" type="button" data-stage-focus-input="true">${escapeHtml(recommendation.primary_label || "先补当前这一个")}</button>`;
+  return `
+    <section class="interview-primary-cta">
+      <div class="interview-primary-cta-head">
+        <span class="primary-cta-step">第 1 步</span>
+        <span class="status-chip status-approved">现在该点这里</span>
+      </div>
+      <h4>${escapeHtml(title)}</h4>
+      <div class="meta">${escapeHtml(reason)}</div>
+      ${focusLine}
+      <div class="primary-cta-note">${escapeHtml(nextLine)}</div>
+      <div class="actions">
+        ${button}
+      </div>
+    </section>
+  `;
+}
+
 function renderWorkspaceTab() {
   el.workspaceTabs.forEach((node) => {
     const active = node.dataset.workspaceTab === state.activeWorkspaceTab;
@@ -1361,7 +1398,8 @@ function renderInterviewSummary(thread) {
         <div class="interview-block accent-block">
           <strong>4 个核心问题已经答完</strong>
           <div class="meta">如果你现在没有更多补充，下一步通常不是继续逐条点“采纳为写作规则”，而是先确认这版阶段摘要。</div>
-          <div class="meta">优先动作：${escapeHtml(
+          <div class="meta">优先动作：请直接点下面这张“现在该点这里”的主卡片，再不要在单条采纳按钮里停留。</div>
+          <div class="meta">系统推荐：${escapeHtml(
             interview.stage_confirmation?.action_recommendation?.primary_label || "确认并拆出第一批结论"
           )}。这样系统才会把当前阶段结果正式写回项目，并给后续人物讨论、大纲讨论和开书继续继承。</div>
         </div>
@@ -1517,6 +1555,7 @@ function renderInterviewSummary(thread) {
       ${basis}
       ${restartBlock}
       ${closureHint}
+      ${renderStagePrimaryAction(thread, interview.stage_confirmation)}
       <div class="interview-grid">
         <div class="interview-block">
           <strong>已确认事项</strong>
