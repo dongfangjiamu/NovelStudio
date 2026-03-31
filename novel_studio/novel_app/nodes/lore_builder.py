@@ -9,7 +9,27 @@ from novel_app.utils.llm import invoke_structured
 
 def _stub_bible(state: NovelState) -> StoryBible:
     contract = state.get("creative_contract") or {}
+    brief = state.get("user_brief") or {}
     hook = ((contract.get("reader_promise") or {}).get("one_sentence_hook")) or "一段危险的秘密将撬动世界"
+    brief_cards = []
+    for index, item in enumerate(brief.get("character_cards") or []):
+        if not isinstance(item, dict):
+            continue
+        portrait = item.get("character_portrait") or {}
+        portrait_sections = {
+            section.get("key"): section.get("summary")
+            for section in (portrait.get("sections") or [])
+            if isinstance(section, dict)
+        }
+        brief_cards.append(
+            {
+                "character_id": item.get("character_id") or f"char_{index + 1}",
+                "role": item.get("story_role") or item.get("cast_type") or "supporting",
+                "desire": item.get("desire") or "暂未填写",
+                "fear": item.get("fear") or "暂未填写",
+                "voiceprint": item.get("voiceprint") or portrait_sections.get("voice_style") or item.get("summary") or "暂未填写",
+            }
+        )
     return StoryBible(
         premise=hook,
         world_rules=[
@@ -18,7 +38,8 @@ def _stub_bible(state: NovelState) -> StoryBible:
             "公开力量体系与隐藏真相之间始终保持张力。",
         ],
         factions=["青岚宗", "北荒散修盟", "黑炉会"],
-        character_cards=[
+        character_cards=brief_cards
+        or [
             {
                 "character_id": "mc",
                 "role": "protagonist",
@@ -47,7 +68,10 @@ def lore_builder(state: NovelState, runtime: Any = None) -> dict:
             "event_log": ["story_bible_reused"],
         }
 
-    payload = {"creative_contract": state.get("creative_contract", {})}
+    payload = {
+        "creative_contract": state.get("creative_contract", {}),
+        "user_brief": state.get("user_brief", {}),
+    }
     runtime_context = getattr(runtime, "context", None)
     bible = invoke_structured(
         prompt_name="lore_builder",

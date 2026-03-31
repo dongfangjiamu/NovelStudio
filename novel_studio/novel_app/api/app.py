@@ -39,6 +39,7 @@ from novel_app.api.schemas import (
     CurrentUserResponse,
     HealthResponse,
     ProjectCreateRequest,
+    ProjectBriefUpdateRequest,
     ProjectResponse,
     RunCreateRequest,
     RunResponse,
@@ -86,6 +87,459 @@ REVIEWER_NODE_TO_REPORTER = {
 }
 REVIEWER_REPORTER_TO_NODE = {value: key for key, value in REVIEWER_NODE_TO_REPORTER.items()}
 SESSION_COOKIE_NAME = "novelstudio_session"
+
+
+def normalize_character_cards(cards: object) -> list[dict[str, object]]:
+    normalized_cards: list[dict[str, object]] = []
+    for index, raw_item in enumerate(cards if isinstance(cards, list) else []):
+        if not isinstance(raw_item, dict):
+            continue
+        slot_label = str(raw_item.get("slot_label") or "").strip()
+        name = str(raw_item.get("name") or "").strip() or slot_label
+        story_role = str(raw_item.get("story_role") or raw_item.get("role_label") or "").strip()
+        cast_type = str(raw_item.get("cast_type") or "").strip() or "supporting"
+        desire = str(raw_item.get("desire") or "").strip()
+        fear = str(raw_item.get("fear") or "").strip()
+        voiceprint = str(raw_item.get("voiceprint") or "").strip()
+        relationship = str(raw_item.get("relationship") or "").strip()
+        action_mode = str(raw_item.get("action_mode") or "").strip()
+        growth_gap = str(raw_item.get("growth_gap") or "").strip()
+        mask_true_self = str(raw_item.get("mask_true_self") or "").strip()
+        summary = str(raw_item.get("summary") or "").strip()
+        discussion_summary = raw_item.get("discussion_summary") if isinstance(raw_item.get("discussion_summary"), dict) else None
+        character_portrait = raw_item.get("character_portrait") if isinstance(raw_item.get("character_portrait"), dict) else None
+        if not any((name, story_role, desire, fear, voiceprint, relationship, action_mode, growth_gap, mask_true_self, summary)) and not discussion_summary and not character_portrait:
+            continue
+
+        raw_character_id = str(raw_item.get("character_id") or name or slot_label).strip().lower()
+        compact_id = "".join(char if char.isascii() and (char.isalnum() or char == "_") else "_" for char in raw_character_id)
+        compact_id = "_".join(part for part in compact_id.split("_") if part)
+        if not compact_id:
+            compact_id = f"char_{index + 1}"
+
+        normalized_cards.append(
+            {
+                "character_id": compact_id,
+                "slot_label": slot_label,
+                "name": name,
+                "cast_type": cast_type,
+                "story_role": story_role,
+                "desire": desire,
+                "fear": fear,
+                "voiceprint": voiceprint,
+                "relationship": relationship,
+                "action_mode": action_mode,
+                "growth_gap": growth_gap,
+                "mask_true_self": mask_true_self,
+                "summary": summary,
+                "discussion_summary": discussion_summary,
+                "character_portrait": character_portrait,
+            }
+        )
+    return normalized_cards
+
+
+def normalize_project_brief(brief: dict[str, object] | None) -> dict[str, object]:
+    normalized = dict(brief or {})
+    normalized["character_cards"] = normalize_character_cards(normalized.get("character_cards"))
+    return normalized
+
+
+def compact_character_id(value: object, fallback: str) -> str:
+    raw_character_id = str(value or "").strip().lower()
+    compact_id = "".join(char if char.isascii() and (char.isalnum() or char == "_") else "_" for char in raw_character_id)
+    compact_id = "_".join(part for part in compact_id.split("_") if part)
+    return compact_id or fallback
+
+
+def character_card_display_label(card: dict[str, object] | None, fallback: str = "人物") -> str:
+    if not isinstance(card, dict):
+        return fallback
+    label = str(card.get("slot_label") or card.get("name") or "").strip()
+    return label or fallback
+
+
+def normalize_character_target(
+    raw_card: object,
+    *,
+    fallback_label: str = "主角",
+    fallback_index: int = 0,
+) -> dict[str, object]:
+    raw = raw_card if isinstance(raw_card, dict) else {}
+    slot_label = str(raw.get("slot_label") or raw.get("character_label") or raw.get("name") or raw.get("character_name") or "").strip() or fallback_label
+    name = str(raw.get("name") or raw.get("character_name") or "").strip() or slot_label
+    cast_type = str(raw.get("cast_type") or "").strip() or ("protagonist" if slot_label in {"主角", "男主", "女主"} else "supporting")
+    story_role = str(raw.get("story_role") or raw.get("role_label") or "").strip()
+    character_id = compact_character_id(raw.get("character_id") or name or slot_label, f"char_{fallback_index + 1}")
+    target = {
+        "character_id": character_id,
+        "slot_label": slot_label,
+        "name": name,
+        "cast_type": cast_type,
+        "story_role": story_role,
+        "desire": str(raw.get("desire") or "").strip(),
+        "fear": str(raw.get("fear") or "").strip(),
+        "voiceprint": str(raw.get("voiceprint") or "").strip(),
+        "relationship": str(raw.get("relationship") or "").strip(),
+        "action_mode": str(raw.get("action_mode") or "").strip(),
+        "growth_gap": str(raw.get("growth_gap") or "").strip(),
+        "mask_true_self": str(raw.get("mask_true_self") or "").strip(),
+        "summary": str(raw.get("summary") or "").strip(),
+    }
+    discussion_summary = raw.get("discussion_summary")
+    if isinstance(discussion_summary, dict) and discussion_summary:
+        target["discussion_summary"] = discussion_summary
+    character_portrait = raw.get("character_portrait")
+    if isinstance(character_portrait, dict) and character_portrait:
+        target["character_portrait"] = character_portrait
+    return target
+
+
+def find_matching_character_card(
+    cards: list[dict[str, object]],
+    *,
+    character_id: object = None,
+    slot_label: object = None,
+    name: object = None,
+) -> tuple[int | None, dict[str, object] | None]:
+    wanted_id = str(character_id or "").strip()
+    wanted_slot_label = str(slot_label or "").strip()
+    wanted_name = str(name or "").strip()
+    for index, item in enumerate(cards):
+        if wanted_id and str(item.get("character_id") or "").strip() == wanted_id:
+            return index, item
+    for index, item in enumerate(cards):
+        if wanted_slot_label and wanted_slot_label in {
+            str(item.get("slot_label") or "").strip(),
+            str(item.get("name") or "").strip(),
+        }:
+            return index, item
+    for index, item in enumerate(cards):
+        if wanted_name and wanted_name in {
+            str(item.get("name") or "").strip(),
+            str(item.get("slot_label") or "").strip(),
+        }:
+            return index, item
+    return None, None
+
+
+def character_summary_label_map(summary: dict[str, object] | None) -> dict[str, str]:
+    label_map: dict[str, str] = {}
+    if not isinstance(summary, dict):
+        return label_map
+    for bucket in ("confirmed_items", "items", "provisional_items"):
+        for raw_item in summary.get(bucket) or []:
+            if not isinstance(raw_item, dict):
+                continue
+            label = str(raw_item.get("label") or "").strip()
+            value = str(raw_item.get("summary") or "").strip()
+            if label and value and label not in label_map:
+                label_map[label] = value
+    return label_map
+
+
+def character_dimension_snapshot(card: dict[str, object] | None) -> dict[str, object]:
+    normalized_card = normalize_character_target(card or {})
+    summary_map = character_summary_label_map(normalized_card.get("discussion_summary"))
+    is_protagonist = str(normalized_card.get("cast_type") or "").strip() == "protagonist"
+    summary_text = str(normalized_card.get("summary") or "").strip()
+
+    dimensions = [
+        {
+            "key": "first_impression",
+            "label": "第一印象",
+            "done": bool(str(normalized_card.get("voiceprint") or "").strip() or summary_map.get("第一印象") or summary_map.get("主角第一印象")),
+            "reason": "先定住人物一出场给人的感觉，后续关系张力和人物边界才不会飘。",
+        },
+        {
+            "key": "desire",
+            "label": "核心欲望",
+            "done": bool(str(normalized_card.get("desire") or "").strip() or summary_map.get("核心欲望") or summary_map.get("真正想摆脱什么") or summary_map.get("主角真正想摆脱什么")),
+            "reason": "欲望决定人物为什么非得往前走，是后续行动和情绪的发动机。",
+        },
+        {
+            "key": "fear",
+            "label": "核心恐惧",
+            "done": bool(str(normalized_card.get("fear") or "").strip() or summary_map.get("核心恐惧")),
+            "reason": "恐惧决定人物会回避什么，也决定他在压力下会怎么失控或收缩。",
+        },
+        {
+            "key": "relationship",
+            "label": "关键关系张力",
+            "done": bool(str(normalized_card.get("relationship") or "").strip() or summary_map.get("关键关系张力")),
+            "reason": "人物不是孤立存在的，最有火花的一组关系会直接影响戏剧性。",
+        },
+        {
+            "key": "action_mode",
+            "label": "行动方式 / 决策模式",
+            "done": bool(str(normalized_card.get("action_mode") or "").strip() or summary_map.get("行动方式") or summary_map.get("行动方式 / 决策模式")),
+            "reason": "要说清人物在冲突里通常怎么做决定，后续写起来才不会忽软忽硬。",
+        },
+        {
+            "key": "boundary",
+            "label": "人物边界",
+            "done": bool(summary_map.get("人物边界") or summary_map.get("角色边界") or ("人物边界" in summary_text)),
+            "reason": "边界是防止人物越写越崩的最后护栏。",
+        },
+    ]
+    if is_protagonist:
+        dimensions.extend(
+            [
+                {
+                    "key": "growth_gap",
+                    "label": "成长缺口",
+                    "done": bool(str(normalized_card.get("growth_gap") or "").strip() or summary_map.get("成长缺口")),
+                    "reason": "主角要有当前做不到、但后续必须跨过去的缺口，成长线才有抓手。",
+                },
+                {
+                    "key": "mask_true_self",
+                    "label": "伪装与真实自我",
+                    "done": bool(str(normalized_card.get("mask_true_self") or "").strip() or summary_map.get("伪装与真实自我")),
+                    "reason": "主角表面呈现和真实自我之间的落差，是很多人物魅力和反转的来源。",
+                },
+            ]
+        )
+    completed = len([item for item in dimensions if item["done"]])
+    missing = [item for item in dimensions if not item["done"]]
+    focus = missing[0] if missing else None
+    return {
+        "required_count": len(dimensions),
+        "completed_count": completed,
+        "completion_label": f"{completed}/{len(dimensions)}",
+        "dimensions": dimensions,
+        "missing_dimensions": missing,
+        "focus_dimension": focus,
+        "ready_for_portrait": completed >= (5 if is_protagonist else 4),
+    }
+
+
+def build_character_portrait(card: dict[str, object] | None) -> dict[str, object]:
+    normalized_card = normalize_character_target(card or {})
+    summary_map = character_summary_label_map(normalized_card.get("discussion_summary"))
+    snapshot = character_dimension_snapshot(normalized_card)
+    label = character_card_display_label(normalized_card, "当前人物")
+    role = str(normalized_card.get("story_role") or normalized_card.get("cast_type") or "未明确").strip()
+    voiceprint = str(normalized_card.get("voiceprint") or summary_map.get("第一印象") or summary_map.get("主角第一印象") or "仍需继续讨论这个人物给人的第一感觉").strip()
+    desire = str(normalized_card.get("desire") or summary_map.get("核心欲望") or summary_map.get("真正想摆脱什么") or summary_map.get("主角真正想摆脱什么") or "仍需继续讨论这个人物真正想得到什么").strip()
+    fear = str(normalized_card.get("fear") or summary_map.get("核心恐惧") or "仍需继续讨论这个人物最怕失去什么").strip()
+    relationship = str(normalized_card.get("relationship") or summary_map.get("关键关系张力") or "仍需继续讨论这个人物最有火花的关系张力").strip()
+    action_mode = str(normalized_card.get("action_mode") or summary_map.get("行动方式") or summary_map.get("行动方式 / 决策模式") or "仍需继续讨论这个人物在压力下通常怎么做决定").strip()
+    boundary = str(summary_map.get("人物边界") or summary_map.get("角色边界") or normalized_card.get("summary") or "仍需继续讨论这个人物绝不能写崩的边界").strip()
+    growth_gap = str(normalized_card.get("growth_gap") or summary_map.get("成长缺口") or "").strip()
+    mask_true_self = str(normalized_card.get("mask_true_self") or summary_map.get("伪装与真实自我") or "").strip()
+    core_conflict_parts = [f"想要：{desire}", f"害怕：{fear}"]
+    if growth_gap:
+        core_conflict_parts.append(f"成长缺口：{growth_gap}")
+    if mask_true_self:
+        core_conflict_parts.append(f"伪装与真实自我：{mask_true_self}")
+    current_state = str(normalized_card.get("summary") or "").strip() or "当前状态还需要结合后续剧情阶段继续补充。"
+    sections = [
+        {"key": "positioning", "label": "人物定位", "summary": f"{label}当前定位为“{role}”，后续所有戏份都应围绕这个定位稳定展开。"},
+        {"key": "outer_presence", "label": "外在气质", "summary": voiceprint},
+        {"key": "inner_drive", "label": "内在驱动力", "summary": desire},
+        {"key": "core_conflict", "label": "核心矛盾", "summary": "；".join(part for part in core_conflict_parts if part)},
+        {"key": "relationship", "label": "关键关系张力", "summary": relationship},
+        {"key": "action_logic", "label": "行动逻辑", "summary": action_mode},
+        {"key": "emotional_trigger", "label": "情绪触发点", "summary": fear},
+        {"key": "boundary", "label": "绝不能写崩的边界", "summary": boundary},
+        {"key": "voice_style", "label": "典型说话方式", "summary": voiceprint},
+        {"key": "current_state", "label": "当前剧情阶段状态", "summary": current_state},
+    ]
+    if growth_gap:
+        sections.append({"key": "growth_gap", "label": "成长缺口", "summary": growth_gap})
+    if mask_true_self:
+        sections.append({"key": "mask_true_self", "label": "伪装与真实自我", "summary": mask_true_self})
+    return {
+        "title": f"{label}人物画像",
+        "character_id": normalized_card.get("character_id"),
+        "character_label": label,
+        "generated_from": {
+            "field_count": len(
+                [
+                    value
+                    for value in (
+                        normalized_card.get("story_role"),
+                        normalized_card.get("desire"),
+                        normalized_card.get("fear"),
+                        normalized_card.get("voiceprint"),
+                        normalized_card.get("relationship"),
+                        normalized_card.get("action_mode"),
+                        normalized_card.get("growth_gap"),
+                        normalized_card.get("mask_true_self"),
+                        normalized_card.get("summary"),
+                    )
+                    if str(value or "").strip()
+                ]
+            ),
+            "discussion_item_count": len(summary_map),
+        },
+        "completion_label": snapshot["completion_label"],
+        "readiness": (
+            "当前画像已经可以作为后续章卡、正文和审查的稳定人物基底。"
+            if snapshot["ready_for_portrait"]
+            else "当前画像仍偏草案，建议先把缺口补到推荐完成度，再作为稳定人物基底使用。"
+        ),
+        "sections": sections,
+        "focus_dimension": snapshot["focus_dimension"],
+    }
+
+
+def interview_summary_item_limit(
+    scope: str,
+    *,
+    topics: list[dict] | None = None,
+    target_character: dict[str, object] | None = None,
+) -> int:
+    if scope == "character_room":
+        if topics:
+            return max(1, len(topics))
+        cast_type = str((target_character or {}).get("cast_type") or "").strip()
+        return 8 if cast_type == "protagonist" else 6
+    return 4
+
+def merge_character_stage_summary_into_brief(
+    brief: dict[str, object] | None,
+    *,
+    stage_summary: dict[str, object],
+    target_character: dict[str, object] | None = None,
+    overwrite_existing: bool = False,
+) -> dict[str, object]:
+    normalized = normalize_project_brief(brief)
+    cards = [dict(item) for item in normalized.get("character_cards") or []]
+    requested_target = normalize_character_target(
+        target_character or stage_summary.get("target_character") or {},
+        fallback_label=str(stage_summary.get("character_label") or "主角"),
+    )
+    target_index, matched_card = find_matching_character_card(
+        cards,
+        character_id=requested_target.get("character_id"),
+        slot_label=requested_target.get("slot_label"),
+        name=requested_target.get("name"),
+    )
+    if matched_card is None and requested_target.get("cast_type") == "protagonist":
+        target_index, matched_card = next(
+            (
+                (index, item)
+                for index, item in enumerate(cards)
+                if str(item.get("cast_type") or "").strip() == "protagonist"
+            ),
+            (None, None),
+        )
+    protagonist_label = character_card_display_label(requested_target, "主角")
+    protagonist_target = normalize_character_target(requested_target, fallback_label=protagonist_label, fallback_index=0)
+    target_card = dict(matched_card or protagonist_target)
+    for field in ("slot_label", "name", "cast_type", "story_role"):
+        existing_value = str(target_card.get(field) or "").strip()
+        requested_value = str(protagonist_target.get(field) or "").strip()
+        if requested_value and (overwrite_existing or not existing_value):
+            target_card[field] = requested_value
+
+    label_map = character_summary_label_map(stage_summary)
+
+    def first_value(*labels: str) -> str:
+        for label in labels:
+            value = label_map.get(label, "")
+            if value:
+                return value
+        return ""
+
+    def assign(field: str, value: str) -> None:
+        if not value:
+            return
+        current = str(target_card.get(field) or "").strip()
+        if overwrite_existing or not current:
+            target_card[field] = value
+
+    def append_summary(prefix: str, value: str) -> None:
+        if not value:
+            return
+        current = str(target_card.get("summary") or "").strip()
+        addition = f"{prefix}：{value}"
+        if addition in current:
+            return
+        if not current:
+            target_card["summary"] = addition
+            return
+        if overwrite_existing:
+            summary_parts = [part.strip() for part in current.split("；") if part.strip() and not part.strip().startswith(f"{prefix}：")]
+            summary_parts.append(addition)
+            target_card["summary"] = "；".join(summary_parts)
+            return
+        target_card["summary"] = f"{current}；{addition}"
+
+    assign("voiceprint", first_value("第一印象", "主角第一印象"))
+    assign("desire", first_value("核心欲望", "真正想摆脱什么", "主角真正想摆脱什么"))
+    assign("fear", first_value("核心恐惧"))
+    assign("relationship", first_value("关键关系张力"))
+    assign("action_mode", first_value("行动方式", "行动方式 / 决策模式"))
+    assign("growth_gap", first_value("成长缺口"))
+    assign("mask_true_self", first_value("伪装与真实自我"))
+    append_summary("第一印象", first_value("第一印象", "主角第一印象"))
+    append_summary("人物边界", first_value("人物边界", "角色边界"))
+
+    merged_summary = {
+        **stage_summary,
+        "character_id": target_card.get("character_id"),
+        "character_label": character_card_display_label(target_card, protagonist_label),
+        "target_character": {
+            "character_id": target_card.get("character_id"),
+            "slot_label": target_card.get("slot_label"),
+            "name": target_card.get("name"),
+            "cast_type": target_card.get("cast_type"),
+            "story_role": target_card.get("story_role"),
+        },
+    }
+    target_card["discussion_summary"] = merged_summary
+
+    if target_index is None:
+        cards.append(target_card)
+    else:
+        cards[target_index] = target_card
+
+    portrait = build_character_portrait(target_card)
+    target_card["character_portrait"] = portrait
+    if target_index is None:
+        cards[-1] = target_card
+    else:
+        cards[target_index] = target_card
+    normalized["character_cards"] = normalize_character_cards(cards)
+    normalized["character_summary"] = merged_summary
+    return normalized
+
+
+def merge_character_summary_into_brief(
+    brief: dict[str, object] | None,
+    *,
+    overwrite_existing: bool = False,
+) -> dict[str, object]:
+    normalized = normalize_project_brief(brief)
+    summary = normalized.get("character_summary")
+    if not isinstance(summary, dict):
+        return normalized
+    return merge_character_stage_summary_into_brief(
+        normalized,
+        stage_summary=summary,
+        target_character=summary.get("target_character"),
+        overwrite_existing=overwrite_existing,
+    )
+
+
+def upsert_character_card(brief: dict[str, object] | None, card: dict[str, object]) -> dict[str, object]:
+    normalized = normalize_project_brief(brief)
+    cards = [dict(item) for item in normalized.get("character_cards") or []]
+    normalized_card = normalize_character_target(card)
+    target_index, _matched = find_matching_character_card(
+        cards,
+        character_id=normalized_card.get("character_id"),
+        slot_label=normalized_card.get("slot_label"),
+        name=normalized_card.get("name"),
+    )
+    if target_index is None:
+        cards.append(normalized_card)
+    else:
+        cards[target_index] = normalized_card
+    normalized["character_cards"] = normalize_character_cards(cards)
+    return normalized
 
 
 def run_requires_human_approval(result: dict[str, object]) -> bool:
@@ -1082,7 +1536,7 @@ def create_app(
                 brief["recovery_preferences"] = recovery_preferences
                 updated = app.state.store.update_project_brief(
                     project_id=project.project_id,
-                    default_user_brief=brief,
+                    default_user_brief=normalize_project_brief(brief),
                 )
                 project = updated or project
                 thread = ensure_strategy_thread(project=project)
@@ -1680,11 +2134,53 @@ def create_app(
             payload=payload,
         )
 
-    def conversation_title(*, scope: str, chapter_no: int | None) -> str:
+    def resolve_character_room_target(*, project, thread=None, requested_character=None) -> dict[str, object]:
+        cards = [dict(item) for item in normalize_character_cards((project.default_user_brief or {}).get("character_cards"))]
+        target_candidate = requested_character if isinstance(requested_character, dict) else None
+        if thread is not None and thread.scope == "character_room":
+            explicit_target = getattr(thread, "target_character", None)
+            if isinstance(explicit_target, dict) and explicit_target:
+                target_candidate = explicit_target
+            elif getattr(thread, "thread_id", ""):
+                for message in app.state.store.list_conversation_messages(thread.thread_id):
+                    payload = message.structured_payload or {}
+                    if isinstance(payload.get("target_character"), dict) and payload.get("target_character"):
+                        target_candidate = payload["target_character"]
+                        break
+        if target_candidate is not None:
+            requested_target = normalize_character_target(target_candidate)
+            index, matched = find_matching_character_card(
+                cards,
+                character_id=requested_target.get("character_id"),
+                slot_label=requested_target.get("slot_label"),
+                name=requested_target.get("name"),
+            )
+            if matched is not None:
+                merged = dict(matched)
+                for field in ("slot_label", "name", "cast_type", "story_role"):
+                    if str(requested_target.get(field) or "").strip() and not str(merged.get(field) or "").strip():
+                        merged[field] = requested_target[field]
+                return normalize_character_target(merged, fallback_label=character_card_display_label(merged), fallback_index=index or 0)
+            return requested_target
+        protagonist = next(
+            (
+                (index, item)
+                for index, item in enumerate(cards)
+                if str(item.get("cast_type") or "").strip() == "protagonist"
+            ),
+            None,
+        )
+        if protagonist is not None:
+            return normalize_character_target(protagonist[1], fallback_label=character_card_display_label(protagonist[1]), fallback_index=protagonist[0])
+        if cards:
+            return normalize_character_target(cards[0], fallback_label=character_card_display_label(cards[0]), fallback_index=0)
+        return normalize_character_target({}, fallback_label="主角", fallback_index=0)
+
+    def conversation_title(*, scope: str, chapter_no: int | None, target_character: dict[str, object] | None = None) -> str:
         if scope == "project_bootstrap":
             return "立项共创"
         if scope == "character_room":
-            return "人物讨论"
+            return f"人物讨论 · {character_card_display_label(target_character, '主角')}"
         if scope == "outline_room":
             return "大纲讨论"
         if scope == "chapter_planning":
@@ -1695,7 +2191,7 @@ def create_app(
             return f"第 {chapter_no or '?'} 章复盘"
         return "创作对话"
 
-    def interview_blueprint(scope: str) -> dict | None:
+    def interview_blueprint(scope: str, target_character: dict[str, object] | None = None) -> dict | None:
         if scope == "project_bootstrap":
             return {
                 "goal": "先接住模糊灵感，再把项目方向逐步问清楚，形成可执行的立项基础。",
@@ -1741,48 +2237,91 @@ def create_app(
                 "closing_prompt": "这几项已经足够形成第一版立项草案。下一步建议先把稳定结论采纳为人物设定、卷纲约束或长期规则，再继续细化。",
             }
         if scope == "character_room":
+            label = character_card_display_label(target_character, "当前人物")
+            topics = [
+                {
+                    "title": "第一印象",
+                    "prompt": f"这轮只讨论{label}。你更希望这个人物第一次出场时，给读者的第一印象是下面哪种？",
+                    "options": ["克制", "危险", "倔强", "聪明", "讨喜", "还没想清"],
+                    "extra_options": ["沉默但压迫感强", "看着冷其实很护短", "嘴上淡但下手果断", "不讨喜但很上头"],
+                    "rephrase_prompt": f"换个问法：{label}第一次出场时，你更希望读者先喜欢这个人物、先怕这个人物，还是先想看懂这个人物？",
+                    "support_prompt": f"你可以直接围绕{label}补一句感觉，比如“别太少年气”“要有压迫感但不能油”。",
+                    "answer_mode": "choice_or_short_text",
+                },
+                {
+                    "title": "核心欲望",
+                    "prompt": f"{label}眼下最想得到或最想争回来的东西是什么？最好说到足够具体，可以驱动这个人物持续行动。",
+                    "options": ["争回身份", "摆脱束缚", "保护某人", "证明自己", "我自己补充"],
+                    "extra_options": ["拿回主动权", "获得安全感", "赢得尊重", "查清真相"],
+                    "rephrase_prompt": f"换个问法：如果只给{label}一个非做不可的目标，这个人最不愿放手的会是什么？",
+                    "support_prompt": f"不要写大词，尽量说成{label}会真的去争、去抢、去守住的具体东西。",
+                    "answer_mode": "choice_or_short_text",
+                },
+                {
+                    "title": "核心恐惧",
+                    "prompt": f"{label}最怕失去什么，或最怕再次发生什么？",
+                    "options": ["再次被抛弃", "再次失败", "失去重要之人", "暴露真实自己", "我自己补充"],
+                    "extra_options": ["被看轻", "失去掌控", "沦为工具", "失去现在的身份位置"],
+                    "rephrase_prompt": f"换个问法：什么事一旦发生，{label}会立刻失衡，甚至做出和平时不同的决定？",
+                    "support_prompt": f"恐惧不是为了卖惨，而是为了确定{label}在压力里最容易被什么击中。",
+                    "answer_mode": "choice_or_short_text",
+                },
+                {
+                    "title": "关键关系张力",
+                    "prompt": f"{label}最关键的关系张力更像哪一种？",
+                    "options": ["师徒/前辈压迫", "宿敌对抗", "同伴互相拉扯", "亲密关系试探", "我自己描述"],
+                    "extra_options": ["旧恩旧怨", "利益绑定但互不信任", "强者压迫弱者反抗", "表面合作暗中试探"],
+                    "rephrase_prompt": f"换个问法：围绕{label}，这本书里最容易写出火花的两个人为什么一见面就不可能轻松？",
+                    "support_prompt": f"你也可以先说“我最想写的是{label}和某人之间那种既靠近又提防的感觉”。",
+                    "answer_mode": "choice_or_short_text",
+                },
+                {
+                    "title": "行动方式 / 决策模式",
+                    "prompt": f"{label}在冲突里通常怎么做决定？是先忍、先试探、先赌、先动手，还是别的方式？",
+                    "options": ["先观察再出手", "先忍后爆", "边试探边推进", "先赌一把", "我自己描述"],
+                    "extra_options": ["表面退让实则布局", "先保底线再争利益", "先护人再谈输赢", "先切断退路逼自己行动"],
+                    "rephrase_prompt": f"换个问法：当{label}被逼到必须选的时候，这个人更像是算清再动，还是被情绪点燃就动？",
+                    "support_prompt": f"这个问题决定{label}后面写出来会不会始终像同一个人。",
+                    "answer_mode": "choice_or_short_text",
+                },
+                {
+                    "title": "人物边界",
+                    "prompt": f"什么行为一旦出现，你会立刻觉得{label}写崩了？",
+                    "options": ["突然圣母", "突然莽撞", "突然油腻", "突然降智", "我自己描述"],
+                    "extra_options": ["突然恋爱脑", "突然软弱到失真", "突然嘴炮太多", "突然轻佻没分寸"],
+                    "rephrase_prompt": f"换个问法：读者后面看到哪种变化，会觉得“这已经不是开头那个{label}了”？",
+                    "support_prompt": f"如果不好概括，也可以直接说“不要把{label}写成……”。",
+                    "answer_mode": "choice_or_short_text",
+                },
+            ]
+            if str((target_character or {}).get("cast_type") or "").strip() == "protagonist":
+                topics.extend(
+                    [
+                        {
+                            "title": "成长缺口",
+                            "prompt": f"作为主角，{label}现在最明显的成长缺口是什么？后面必须跨过去的那道坎是什么？",
+                            "options": ["不敢信任别人", "只会硬扛不会协同", "判断太情绪化", "能力够但格局不够", "我自己描述"],
+                            "extra_options": ["总想独自承担", "太在意输赢", "太怕暴露软肋", "只会防守不会主动争取"],
+                            "rephrase_prompt": f"换个问法：如果{label}从头到尾都不改变，最容易卡死在哪个地方？",
+                            "support_prompt": f"成长缺口不是缺点清单，而是主角后面必须完成的一次内在升级。",
+                            "answer_mode": "choice_or_short_text",
+                        },
+                        {
+                            "title": "伪装与真实自我",
+                            "prompt": f"{label}平时给别人看的样子，和这个人物真正的自己之间，有没有明显落差？",
+                            "options": ["看着冷，其实很在意", "看着强，其实一直怕输", "看着无所谓，其实执念很重", "没有明显伪装", "我自己描述"],
+                            "extra_options": ["看着理智，其实很容易被触发", "看着温和，其实控制欲很强", "看着好相处，其实很难真正信人", "表面克制，内里很激烈"],
+                            "rephrase_prompt": f"换个问法：如果只有读者知道{label}的秘密，那读者最该先知道这层反差是什么？",
+                            "support_prompt": f"这会决定主角为什么耐看，也决定后续很多情绪反转有没有力量。",
+                            "answer_mode": "choice_or_short_text",
+                        },
+                    ]
+                )
             return {
-                "goal": "把人物感觉逐步收紧成稳定的人物设定，而不是一开始就逼出完整小传。",
+                "goal": f"把{label}的感觉逐步收紧成稳定的人物设定，而不是一开始就逼出完整小传。",
                 "decision_types": ["character_note"],
-                "topics": [
-                    {
-                        "title": "主角第一印象",
-                        "prompt": "先别急着同时定所有角色。当前最先要定的核心人物是谁，就先说谁。默认可以先聊男主；如果你更想先定女主，也可以直接说明。对这个人物来说，你更希望他的第一印象是下面哪种？",
-                        "options": ["克制", "危险", "倔强", "聪明", "讨喜", "还没想清"],
-                        "extra_options": ["沉默但压迫感强", "看着冷其实很护短", "嘴上淡但下手果断", "不讨喜但很上头"],
-                        "rephrase_prompt": "换个问法：你现在最先想定的那个人物第一次出场时，你更希望读者先喜欢他、先怕他，还是先想看懂他？如果是女主，就直接按女主来答。",
-                        "support_prompt": "你可以先补一句“我现在先定男主”或“我先定女主”，再说一种感觉，比如“别太少年气”“要有压迫感但不能油”。",
-                        "answer_mode": "choice_or_short_text",
-                    },
-                    {
-                        "title": "主角真正想摆脱什么",
-                        "prompt": "主角最想摆脱的是什么？可以是处境、关系、身份、命运，或别的东西。",
-                        "options": ["弱小处境", "被控制的人生", "错误身份", "失败命运", "我想自己补充"],
-                        "extra_options": ["羞辱与轻视", "负债或罪名", "家族/宗门束缚", "被当工具使用"],
-                        "rephrase_prompt": "换个问法：主角最受不了现在的哪一点？只要说最刺他的那件事就行。",
-                        "support_prompt": "如果你只知道他“不甘心”，也可以先围绕不甘心补一句最具体的来源。",
-                        "answer_mode": "choice_or_short_text",
-                    },
-                    {
-                        "title": "关键关系张力",
-                        "prompt": "最关键的关系张力更像哪一种？",
-                        "options": ["师徒/前辈压迫", "宿敌对抗", "同伴互相拉扯", "亲密关系试探", "我自己描述"],
-                        "extra_options": ["旧恩旧怨", "利益绑定但互不信任", "强者压迫弱者反抗", "表面合作暗中试探"],
-                        "rephrase_prompt": "换个问法：这本书里最容易写出火花的两个人，为什么一见面就不可能轻松？",
-                        "support_prompt": "你也可以先说“我最想写的是某两个人之间那种既靠近又提防的感觉”。",
-                        "answer_mode": "choice_or_short_text",
-                    },
-                    {
-                        "title": "角色边界",
-                        "prompt": "什么行为一旦出现，你会立刻觉得这个主角写崩了？",
-                        "options": ["突然圣母", "突然莽撞", "突然油腻", "突然降智", "我自己描述"],
-                        "extra_options": ["突然恋爱脑", "突然软弱到失真", "突然嘴炮太多", "突然轻佻没分寸"],
-                        "rephrase_prompt": "换个问法：读者后面看到哪种变化，会觉得“这已经不是开头那个主角了”？",
-                        "support_prompt": "如果不好概括，也可以直接说“不要把他写成……”。",
-                        "answer_mode": "choice_or_short_text",
-                    },
-                ],
-                "closing_prompt": "人物核心边界已经基本清楚。下一步建议把关键结论采纳为人物设定，进入后续写作。",
+                "topics": topics,
+                "closing_prompt": f"{label}的核心边界已经基本清楚。下一步建议把关键结论采纳为人物设定，进入后续写作。",
             }
         if scope == "outline_room":
             return {
@@ -1861,8 +2400,12 @@ def create_app(
 
     def interview_topic_keywords(scope: str, title: str) -> list[str]:
         topic_keywords = {
-            ("character_room", "主角真正想摆脱什么"): ["摆脱", "受不了", "最想", "脱离", "逃离", "控制", "束缚", "羞辱", "轻视", "处境", "身份", "命运", "工具", "不甘", "压迫", "弱小", "失败"],
+            ("character_room", "核心欲望"): ["想要", "最想", "争回", "得到", "守住", "目标", "不愿放手", "摆脱", "脱离", "命运", "主动权", "尊重", "真相"],
+            ("character_room", "核心恐惧"): ["最怕", "害怕", "恐惧", "失去", "再次", "暴露", "失败", "抛弃", "看轻", "掌控", "工具"],
             ("character_room", "关键关系张力"): ["关系", "张力", "师门", "师徒", "首席", "宿敌", "同伴", "互相", "防备", "需要", "试探", "对抗", "拉扯", "恩怨"],
+            ("character_room", "行动方式 / 决策模式"): ["先忍", "先观察", "先试探", "先赌", "先动手", "出手", "布局", "保底线", "做决定", "选择", "行动"],
+            ("character_room", "成长缺口"): ["缺口", "成长", "跨过去", "卡住", "不会", "不敢", "总是", "必须学会", "升级"],
+            ("character_room", "伪装与真实自我"): ["表面", "其实", "看着", "真实", "伪装", "反差", "内里", "秘密", "只有读者知道"],
         }
         return topic_keywords.get((scope, title), [])
 
@@ -1931,14 +2474,15 @@ def create_app(
                 last_helper = {"message": item, "helper_action": helper_action}
         return handled, last_helper
 
-    def build_interview_draft(*, project, answered_records: list[dict], topics: list[dict]) -> dict | None:
+    def build_interview_draft(*, project, scope: str, answered_records: list[dict], topics: list[dict], target_character: dict[str, object] | None = None) -> dict | None:
         if len(answered_records) < 2:
             return None
         brief = project.default_user_brief or {}
         title = brief.get("title") or project.name
         sections: list[dict[str, str]] = []
         sorted_records = sorted(answered_records, key=lambda item: item.get("topic_index", 0))
-        for record in sorted_records[: min(len(sorted_records), len(topics), 4)]:
+        summary_item_limit = interview_summary_item_limit(scope, topics=topics, target_character=target_character)
+        for record in sorted_records[: min(len(sorted_records), len(topics), summary_item_limit)]:
             if record["effect"] == "skipped":
                 continue
             topic_index = int(record.get("topic_index", 0) or 0)
@@ -1958,10 +2502,12 @@ def create_app(
         lead = f"《{title}》目前已经有一版可继续确认的方向草案。"
         if brief.get("idea_seed"):
             lead = f"基于你最初的灵感“{str(brief['idea_seed'])[:32]}...”，《{title}》已经有一版可继续确认的方向草案。"
+        if scope == "character_room":
+            lead = f"《{title}》里的{character_card_display_label(target_character, '当前人物')}已经有一版可继续确认的人物摘要草案。"
         return {
             "title": "当前理解草案",
             "lead": lead,
-            "sections": sections[:4],
+            "sections": sections[:summary_item_limit],
             "recommendation": "如果这版大致对，可以继续补缺口；如果明显不对，就用“换个问法”或直接指出系统理解偏了哪里。",
         }
 
@@ -1974,12 +2520,14 @@ def create_app(
         unresolved_topics: list[str],
         current_draft: dict | None,
         adopted: list[object],
+        target_character: dict[str, object] | None = None,
     ) -> dict | None:
         if current_draft is None:
             return None
         confirmed_items: list[dict[str, str]] = []
         sorted_records = sorted(answered_records, key=lambda item: item.get("topic_index", 0))
-        for record in sorted_records[: min(len(sorted_records), len(topics), 4)]:
+        summary_item_limit = interview_summary_item_limit(scope, topics=topics, target_character=target_character)
+        for record in sorted_records[: min(len(sorted_records), len(topics), summary_item_limit)]:
             if record["effect"] != "answered":
                 continue
             topic_index = int(record.get("topic_index", 0) or 0)
@@ -1997,7 +2545,7 @@ def create_app(
                 {
                     "scope": "character_room",
                     "label": "进入人物讨论",
-                    "reason": "把主角气质、关系张力和人物边界继续收紧成人物设定。",
+                    "reason": "先选中要处理的人物卡，再把这一张卡的气质、关系张力和人物边界继续收紧。",
                     "recommended": "character_note" not in adopted_types,
                 }
             )
@@ -2025,11 +2573,23 @@ def create_app(
             }
             stage_summary = project_summary
         elif scope == "character_room":
-            summary_items = provisional_items[:4]
+            summary_items = provisional_items[:summary_item_limit]
+            character_label = character_card_display_label(target_character, "当前人物")
             stage_summary = {
-                "title": "人物设定摘要",
+                "title": f"{character_label}人物摘要",
                 "items": summary_items,
-                "readiness": "还需要继续补 1 到 2 个点，才能形成更稳的人物设定。" if unresolved_topics else "这版已经足够作为人物设定摘要，适合写回项目设定。",
+                "character_id": target_character.get("character_id") if isinstance(target_character, dict) else None,
+                "character_label": character_label,
+                "target_character": {
+                    "character_id": target_character.get("character_id"),
+                    "slot_label": target_character.get("slot_label"),
+                    "name": target_character.get("name"),
+                    "cast_type": target_character.get("cast_type"),
+                    "story_role": target_character.get("story_role"),
+                }
+                if isinstance(target_character, dict)
+                else None,
+                "readiness": "还需要继续补 1 到 2 个点，才能形成更稳的人物摘要。" if unresolved_topics else "这版已经足够作为当前人物卡的人物摘要，适合写回项目设定。",
             }
         elif scope == "outline_room":
             summary_items = provisional_items[:4]
@@ -2102,9 +2662,9 @@ def create_app(
                 "focus_topic": None,
             }
         return {
-            "confirmed_items": confirmed_items[:4],
-            "provisional_items": provisional_items[:4],
-            "open_questions": unresolved_topics[:4],
+            "confirmed_items": confirmed_items[:summary_item_limit],
+            "provisional_items": provisional_items[:summary_item_limit],
+            "open_questions": unresolved_topics[:summary_item_limit],
             "next_steps": next_steps,
             "project_summary": project_summary,
             "stage_summary": stage_summary,
@@ -2157,18 +2717,25 @@ def create_app(
         if not stage_summary:
             return None
         brief = dict(project.default_user_brief or {})
+        target_character = resolve_character_room_target(project=project, thread=thread) if thread.scope == "character_room" else None
+        summary_item_limit = interview_summary_item_limit(thread.scope, target_character=target_character)
         merged_summary = {
             **stage_summary,
-            "confirmed_items": list(stage_confirmation.get("confirmed_items") or [])[:4],
-            "provisional_items": list(stage_confirmation.get("provisional_items") or [])[:4],
-            "open_questions": list(stage_confirmation.get("open_questions") or [])[:4],
+            "confirmed_items": list(stage_confirmation.get("confirmed_items") or [])[:summary_item_limit],
+            "provisional_items": list(stage_confirmation.get("provisional_items") or [])[:summary_item_limit],
+            "open_questions": list(stage_confirmation.get("open_questions") or [])[:summary_item_limit],
             "source_thread_id": thread.thread_id,
             "source_scope": thread.scope,
         }
         if interview_state.get("current_draft"):
             merged_summary["draft_recap"] = interview_state["current_draft"]
         if thread.scope == "character_room":
-            brief["character_summary"] = merged_summary
+            brief = merge_character_stage_summary_into_brief(
+                brief,
+                stage_summary=merged_summary,
+                target_character=target_character,
+                overwrite_existing=True,
+            )
         elif thread.scope == "outline_room":
             brief["outline_summary"] = merged_summary
         else:
@@ -2218,7 +2785,7 @@ def create_app(
             )
         return plan
 
-    def build_guided_room_context(*, scope: str, project) -> dict | None:
+    def build_guided_room_context(*, scope: str, project, thread=None, target_character: dict[str, object] | None = None) -> dict | None:
         if scope not in {"character_room", "outline_room"}:
             return None
         brief = dict(project.default_user_brief or {})
@@ -2227,22 +2794,59 @@ def create_app(
         intent_profile = dict(brief.get("intent_profile") or {})
         decisions = app.state.store.list_conversation_decisions(project_id=project.project_id)
         if scope == "character_room":
+            target = target_character if isinstance(target_character, dict) else resolve_character_room_target(project=project, thread=thread)
+            character_label = character_card_display_label(target, "当前人物")
             inherited = []
             if intent_profile.get("reader_pull"):
                 inherited.append({"label": "当前保住的吸引力", "summary": str(intent_profile["reader_pull"])[:160]})
             for item in summary_items:
                 if item.get("label") in {"原始灵感", "最想保住的吸引力", "主角行动方式"}:
                     inherited.append({"label": item.get("label"), "summary": item.get("summary")})
+            if str(target.get("voiceprint") or "").strip():
+                inherited.append({"label": f"{character_label}当前气质", "summary": str(target["voiceprint"])[:160]})
+            if str(target.get("desire") or "").strip():
+                inherited.append({"label": f"{character_label}当前欲望", "summary": str(target["desire"])[:160]})
+            if str(target.get("relationship") or "").strip():
+                inherited.append({"label": f"{character_label}当前关系", "summary": str(target["relationship"])[:160]})
+            if str(target.get("action_mode") or "").strip():
+                inherited.append({"label": f"{character_label}当前行动方式", "summary": str(target["action_mode"])[:160]})
+            if str(target.get("summary") or "").strip():
+                inherited.append({"label": f"{character_label}当前备注", "summary": str(target["summary"])[:160]})
             for decision in decisions:
                 if decision.decision_type == "character_note":
                     inherited.append({"label": "已采纳人物设定", "summary": decision.payload.get("note")})
-            missing = ["主角真正想摆脱什么", "关键关系张力", "角色边界"]
+            existing_map = character_summary_label_map(target.get("discussion_summary"))
+            missing = []
+            if not str(target.get("voiceprint") or "").strip() and not existing_map.get("第一印象"):
+                missing.append("第一印象")
+            if not str(target.get("desire") or "").strip() and not (existing_map.get("核心欲望") or existing_map.get("真正想摆脱什么")):
+                missing.append("核心欲望")
+            if not str(target.get("fear") or "").strip() and not existing_map.get("核心恐惧"):
+                missing.append("核心恐惧")
+            if not str(target.get("relationship") or "").strip() and not existing_map.get("关键关系张力"):
+                missing.append("关键关系张力")
+            if not str(target.get("action_mode") or "").strip() and not (existing_map.get("行动方式") or existing_map.get("行动方式 / 决策模式")):
+                missing.append("行动方式 / 决策模式")
+            if "人物边界" not in str(target.get("summary") or "") and not (existing_map.get("角色边界") or existing_map.get("人物边界")):
+                missing.append("人物边界")
+            if str(target.get("cast_type") or "").strip() == "protagonist":
+                if not str(target.get("growth_gap") or "").strip() and not existing_map.get("成长缺口"):
+                    missing.append("成长缺口")
+                if not str(target.get("mask_true_self") or "").strip() and not existing_map.get("伪装与真实自我"):
+                    missing.append("伪装与真实自我")
             return {
-                "title": "人物讨论承接说明",
-                "reason": "这一轮只收紧人物，不再重复从头立项。你现在主要要把主角气质、欲望和关系张力说清。",
+                "title": f"{character_label}人物讨论承接说明",
+                "reason": f"这一轮只收紧{character_label}，不再重复从头立项。你现在主要要把这个人物的气质、欲望、恐惧、关系张力和行动方式说清。",
                 "inherited_items": [item for item in inherited if str(item.get("summary") or "").strip()][:4],
-                "missing_items": missing,
-                "next_goal": "把人物感觉收紧成稳定的人物设定，便于后面写章卡和正文时保持同一个主角。",
+                "missing_items": missing or ["第一印象", "核心欲望", "核心恐惧", "关键关系张力", "行动方式 / 决策模式", "人物边界"],
+                "next_goal": f"把{character_label}的人物感觉收紧成稳定的人物设定，再进一步沉淀成人物画像，便于后面写章卡和正文时保持这个人物的一致性。",
+                "target_character": {
+                    "character_id": target.get("character_id"),
+                    "slot_label": target.get("slot_label"),
+                    "name": target.get("name"),
+                    "cast_type": target.get("cast_type"),
+                    "story_role": target.get("story_role"),
+                },
             }
         inherited = []
         if intent_profile.get("reader_pull"):
@@ -2265,10 +2869,14 @@ def create_app(
     def guided_room_focus_reason(scope: str, topic_title: str | None) -> str | None:
         if scope == "character_room":
             mapping = {
-                "主角第一印象": "先把主角一出场给人的感觉定住，后面的关系张力和人物边界才不会飘。",
-                "主角真正想摆脱什么": "先说清主角最受不了什么，后面人物动作和情绪落点才会更稳。",
+                "第一印象": "先把人物一出场给人的感觉定住，后面的关系张力和人物边界才不会飘。",
+                "核心欲望": "先说清这个人物非争不可的东西，后面所有动作才有真正的驱动力。",
+                "核心恐惧": "先说清这个人物最怕失去什么，后面情绪触发点和失控边界才会更稳。",
                 "关键关系张力": "先定住最有火花的一组关系，后面人物戏和冲突会更好写。",
-                "角色边界": "先划清不能写崩的边界，后面人物越写越长时才不容易走形。",
+                "行动方式 / 决策模式": "先定住人物在压力里通常怎么做决定，后面写起来才不会忽软忽硬。",
+                "人物边界": "先划清不能写崩的边界，后面人物越写越长时才不容易走形。",
+                "成长缺口": "先定住主角当前跨不过去的坎，成长线后面才有真实推进空间。",
+                "伪装与真实自我": "先说清人物表面和内里的落差，这个人才会更耐看，也更容易写出反差感。",
             }
             return mapping.get(str(topic_title or "").strip())
         mapping = {
@@ -2294,7 +2902,8 @@ def create_app(
         return topic["prompt"], list(topic.get("options") or [])
 
     def build_interview_state(*, thread, project) -> dict | None:
-        blueprint = interview_blueprint(thread.scope)
+        target_character = resolve_character_room_target(project=project, thread=thread) if thread.scope == "character_room" else None
+        blueprint = interview_blueprint(thread.scope, target_character=target_character)
         if blueprint is None:
             return None
         messages = app.state.store.list_conversation_messages(thread.thread_id)
@@ -2346,6 +2955,8 @@ def create_app(
             basis.append(f"原始灵感：{str(brief['idea_seed'])[:60]}")
         if brief.get("hook"):
             basis.append(f"当前钩子：{brief['hook']}")
+        if thread.scope == "character_room" and target_character is not None:
+            basis.append(f"当前人物：{character_card_display_label(target_character, '当前人物')}")
         answered_count = len(confirmed_topics)
         reflection_summary = (
             f"目前已确认 {answered_count} 项：{'、'.join(confirmed_topics)}。"
@@ -2354,7 +2965,13 @@ def create_app(
         )
         if skipped_topics:
             reflection_summary = f"{reflection_summary} 已跳过：{'、'.join(skipped_topics)}。"
-        current_draft = build_interview_draft(project=project, answered_records=handled_records, topics=topics)
+        current_draft = build_interview_draft(
+            project=project,
+            scope=thread.scope,
+            answered_records=handled_records,
+            topics=topics,
+            target_character=target_character,
+        )
         stage_confirmation = build_stage_confirmation(
             scope=thread.scope,
             project=project,
@@ -2363,6 +2980,7 @@ def create_app(
             unresolved_topics=unresolved_topics,
             current_draft=current_draft,
             adopted=adopted,
+            target_character=target_character,
         )
         return {
             "goal": blueprint["goal"],
@@ -2383,6 +3001,7 @@ def create_app(
             "current_draft": current_draft,
             "stage_confirmation": stage_confirmation,
             "last_helper_action": last_helper["helper_action"] if last_helper else None,
+            "target_character": target_character,
         }
 
     def latest_artifact_payloads(run_id: str) -> dict[str, dict]:
@@ -2396,7 +3015,8 @@ def create_app(
             project = app.state.store.get_project(thread.project_id)
             if not project:
                 return None
-            context = build_guided_room_context(scope=thread.scope, project=project) or {}
+            target_character = resolve_character_room_target(project=project, thread=thread) if thread.scope == "character_room" else None
+            context = build_guided_room_context(scope=thread.scope, project=project, thread=thread, target_character=target_character) or {}
             interview_state = build_interview_state(thread=thread, project=project) or {}
             priority_item = interview_state.get("next_topic_title")
             focus_reason = guided_room_focus_reason(thread.scope, priority_item)
@@ -2408,6 +3028,7 @@ def create_app(
                 "priority_reason": focus_reason,
                 "priority_prompt": interview_state.get("next_prompt"),
                 "priority_options": priority_options,
+                "target_character": context.get("target_character") or target_character,
             }
         if thread.scope not in {"chapter_planning", "rewrite_intervention"} or not thread.linked_run_id:
             return None
@@ -2568,7 +3189,7 @@ def create_app(
             "thread_title": thread.title if thread else None,
         }
 
-    def build_thread_opening(*, scope: str, project, run, chapter_no: int | None) -> tuple[str, str, dict]:
+    def build_thread_opening(*, scope: str, project, run, chapter_no: int | None, target_character: dict[str, object] | None = None) -> tuple[str, str, dict]:
         if scope == "project_bootstrap":
             thread_stub = SimpleNamespace(thread_id="", project_id=project.project_id, scope=scope)
             interview_state = build_interview_state(thread=thread_stub, project=project)
@@ -2586,13 +3207,15 @@ def create_app(
             return "assistant_question", content, {"interview_state": interview_state}
 
         if scope == "character_room":
-            thread_stub = SimpleNamespace(thread_id="", project_id=project.project_id, scope=scope)
+            resolved_target = target_character or resolve_character_room_target(project=project)
+            thread_stub = SimpleNamespace(thread_id="", project_id=project.project_id, scope=scope, target_character=resolved_target)
             interview_state = build_interview_state(thread=thread_stub, project=project)
-            room_context = build_guided_room_context(scope=scope, project=project) or {}
+            room_context = build_guided_room_context(scope=scope, project=project, thread=thread_stub, target_character=resolved_target) or {}
             brief = project.default_user_brief or {}
             title = brief.get("title") or project.name
+            character_label = character_card_display_label(resolved_target, "当前人物")
             content = (
-                f"这是《{title}》的人物讨论线程。\n\n"
+                f"这是《{title}》里“{character_label}”的人物讨论线程。\n\n"
                 f"当前承接：{room_context.get('reason') or '先承接前面已经确认的人物方向。'}\n"
                 f"已经继承：{'；'.join(item.get('summary', '') for item in room_context.get('inherited_items', [])[:2]) if room_context.get('inherited_items') else '还没有稳定继承项，可以边问边定。'}\n"
                 f"这一轮还要补：{'、'.join(room_context.get('missing_items') or [])}\n\n"
@@ -2601,7 +3224,7 @@ def create_app(
                 f"先回答第 1 问：{interview_state['next_prompt']}\n"
                 f"可直接选：{' / '.join(interview_state['next_options']) if interview_state['next_options'] else '也可以直接补一句。'}"
             )
-            return "assistant_question", content, {"interview_state": interview_state, "thread_context": room_context}
+            return "assistant_question", content, {"interview_state": interview_state, "thread_context": room_context, "target_character": resolved_target}
 
         if scope == "outline_room":
             thread_stub = SimpleNamespace(thread_id="", project_id=project.project_id, scope=scope)
@@ -2679,6 +3302,8 @@ def create_app(
             payload = {"interview_state": interview_state}
             return "assistant_question", content, payload
         if thread.scope == "character_room":
+            target_character = resolve_character_room_target(project=project, thread=thread)
+            character_label = character_card_display_label(target_character, "当前人物")
             interview_state = build_interview_state(thread=thread, project=project)
             helper_action = interview_state.get("last_helper_action")
             helper_line = ""
@@ -2691,7 +3316,7 @@ def create_app(
             elif helper_action == "clarify":
                 helper_line = "这句我先不急着算作已确认结论，因为它更像在补别的人物问题。我们先把当前这一个点说清。\n"
             content = (
-                f"已记录人物方向：{excerpt}\n\n"
+                f"已记录{character_label}的人物方向：{excerpt}\n\n"
                 f"{helper_line}"
                 f"当前采访进度：{interview_state['completion_label']}。\n"
                 f"已确认：{'、'.join(interview_state['confirmed_topics']) if interview_state['confirmed_topics'] else '暂未形成稳定结论'}。\n"
@@ -2700,7 +3325,7 @@ def create_app(
                 f"可直接选：{' / '.join(interview_state['next_options']) if interview_state['next_options'] else '也可以继续自由补充。'}\n"
                 f"仍待明确：{'、'.join(interview_state['unresolved_topics']) if interview_state['unresolved_topics'] else '已可以采纳为人物设定。'}"
             )
-            payload = {"interview_state": interview_state}
+            payload = {"interview_state": interview_state, "target_character": target_character}
             return "assistant_question", content, payload
         if thread.scope == "outline_room":
             interview_state = build_interview_state(thread=thread, project=project)
@@ -3173,10 +3798,11 @@ def create_app(
         writer_user = current_user_from_request(request)
         if writer_user is None and not getattr(request.state, "is_admin", False):
             raise HTTPException(status_code=401, detail="login_required")
+        normalized_brief = normalize_project_brief(payload.default_user_brief)
         project = app.state.store.create_project(
             name=payload.name,
             description=payload.description,
-            default_user_brief=payload.default_user_brief,
+            default_user_brief=normalized_brief,
             default_target_chapters=payload.default_target_chapters,
             owner_user_id=writer_user.user_id if writer_user else None,
             owner_pen_name=writer_user.pen_name if writer_user else None,
@@ -3203,6 +3829,37 @@ def create_app(
     async def get_project(project_id: str, request: Request) -> ProjectResponse:
         project = require_project_access(project_id, request)
         return ProjectResponse.model_validate(project.__dict__)
+
+    @app.put("/api/projects/{project_id}/brief", response_model=ProjectResponse)
+    async def update_project_brief(
+        project_id: str,
+        payload: ProjectBriefUpdateRequest,
+        request: Request,
+        response: Response,
+    ) -> ProjectResponse:
+        project = require_project_access(project_id, request)
+        updated = app.state.store.update_project_brief(
+            project_id=project.project_id,
+            default_user_brief=normalize_project_brief(payload.default_user_brief),
+        )
+        if updated is None:
+            raise HTTPException(status_code=404, detail="project_not_found")
+        audit(
+            request=request,
+            response=response,
+            status_code=200,
+            action="project.brief.update",
+            resource_type="project",
+            resource_id=updated.project_id,
+            project_id=updated.project_id,
+            run_id=None,
+            approval_id=None,
+            payload={
+                "brief_keys": sorted(updated.default_user_brief.keys()),
+                "character_card_count": len(updated.default_user_brief.get("character_cards") or []),
+            },
+        )
+        return ProjectResponse.model_validate(updated.__dict__)
 
     @app.post("/api/projects/{project_id}/runs", response_model=RunResponse, status_code=201)
     async def create_run(project_id: str, payload: RunCreateRequest, request: Request, response: Response) -> RunResponse:
@@ -3589,10 +4246,11 @@ def create_app(
             if not linked_run or linked_run.project_id != project_id:
                 raise HTTPException(status_code=404, detail="linked_run_not_found")
             chapter_no = chapter_no or infer_run_chapter(linked_run)
+        target_character = resolve_character_room_target(project=project, requested_character=payload.character_card) if payload.scope == "character_room" else None
         thread = app.state.store.create_conversation_thread(
             project_id=project_id,
             scope=payload.scope,
-            title=payload.title or conversation_title(scope=payload.scope, chapter_no=chapter_no),
+            title=payload.title or conversation_title(scope=payload.scope, chapter_no=chapter_no, target_character=target_character),
             linked_run_id=payload.linked_run_id,
             linked_chapter_no=chapter_no,
         )
@@ -3601,6 +4259,7 @@ def create_app(
             project=project,
             run=linked_run,
             chapter_no=thread.linked_chapter_no,
+            target_character=target_character,
         )
         app.state.store.add_conversation_message(
             thread_id=thread.thread_id,
@@ -3646,10 +4305,11 @@ def create_app(
             raise HTTPException(status_code=404, detail="conversation_thread_not_found")
 
         linked_run = app.state.store.get_run(thread.linked_run_id) if thread.linked_run_id else None
+        target_character = resolve_character_room_target(project=project, thread=thread) if thread.scope == "character_room" else None
         restarted = app.state.store.create_conversation_thread(
             project_id=thread.project_id,
             scope=thread.scope,
-            title=thread.title or conversation_title(scope=thread.scope, chapter_no=thread.linked_chapter_no),
+            title=thread.title or conversation_title(scope=thread.scope, chapter_no=thread.linked_chapter_no, target_character=target_character),
             linked_run_id=thread.linked_run_id,
             linked_chapter_no=thread.linked_chapter_no,
         )
@@ -3658,6 +4318,7 @@ def create_app(
             project=project,
             run=linked_run,
             chapter_no=restarted.linked_chapter_no,
+            target_character=target_character,
         )
         app.state.store.add_conversation_message(
             thread_id=restarted.thread_id,
@@ -3708,7 +4369,7 @@ def create_app(
             raise HTTPException(status_code=409, detail="project_summary_not_ready")
         updated_project = app.state.store.update_project_brief(
             project_id=project.project_id,
-            default_user_brief=updated_brief,
+            default_user_brief=normalize_project_brief(updated_brief),
         )
         if updated_project is None:
             raise HTTPException(status_code=404, detail="project_not_found")
@@ -3737,6 +4398,76 @@ def create_app(
         )
         return ProjectResponse.model_validate(updated_project.__dict__)
 
+    @app.post("/api/projects/{project_id}/character-cards/sync-from-summary", response_model=ProjectResponse)
+    async def sync_project_character_cards_from_summary(
+        project_id: str,
+        request: Request,
+        response: Response,
+    ) -> ProjectResponse:
+        project = require_project_access(project_id, request)
+        character_summary = (project.default_user_brief or {}).get("character_summary")
+        if not isinstance(character_summary, dict) or not character_summary:
+            raise HTTPException(status_code=409, detail="character_summary_not_ready")
+        updated_brief = merge_character_summary_into_brief(project.default_user_brief)
+        updated_project = app.state.store.update_project_brief(
+            project_id=project.project_id,
+            default_user_brief=updated_brief,
+        )
+        if updated_project is None:
+            raise HTTPException(status_code=404, detail="project_not_found")
+        audit(
+            request=request,
+            response=response,
+            status_code=200,
+            action="project.character_cards.sync_from_summary",
+            resource_type="project",
+            resource_id=updated_project.project_id,
+            project_id=updated_project.project_id,
+            run_id=None,
+            approval_id=None,
+            payload={"character_card_count": len(updated_project.default_user_brief.get("character_cards") or [])},
+        )
+        return ProjectResponse.model_validate(updated_project.__dict__)
+
+    @app.post("/api/projects/{project_id}/character-cards/{character_id}/portrait", response_model=ProjectResponse)
+    async def generate_character_card_portrait(
+        project_id: str,
+        character_id: str,
+        request: Request,
+        response: Response,
+    ) -> ProjectResponse:
+        project = require_project_access(project_id, request)
+        cards = [dict(item) for item in normalize_character_cards((project.default_user_brief or {}).get("character_cards"))]
+        target_index, target_card = find_matching_character_card(cards, character_id=character_id)
+        if target_card is None:
+            raise HTTPException(status_code=404, detail="character_card_not_found")
+        updated_card = dict(target_card)
+        updated_card["character_portrait"] = build_character_portrait(updated_card)
+        updated_brief = upsert_character_card(project.default_user_brief, updated_card)
+        updated_project = app.state.store.update_project_brief(
+            project_id=project.project_id,
+            default_user_brief=normalize_project_brief(updated_brief),
+        )
+        if updated_project is None:
+            raise HTTPException(status_code=404, detail="project_not_found")
+        audit(
+            request=request,
+            response=response,
+            status_code=200,
+            action="project.character_portrait.generate",
+            resource_type="project",
+            resource_id=updated_project.project_id,
+            project_id=updated_project.project_id,
+            run_id=None,
+            approval_id=None,
+            payload={
+                "character_id": character_id,
+                "character_label": character_card_display_label(updated_card),
+                "character_index": target_index,
+            },
+        )
+        return ProjectResponse.model_validate(updated_project.__dict__)
+
     @app.post("/api/conversation-threads/{thread_id}/apply-stage-summary", response_model=ProjectResponse)
     async def apply_conversation_stage_summary(
         thread_id: str,
@@ -3757,12 +4488,17 @@ def create_app(
             updated_brief = build_scope_stage_brief(project=project, thread=thread, interview_state=interview_state)
             source = "stage_summary_apply"
             action = "stage_summary.apply"
-            success_message = "已把这版阶段摘要写回项目设定。现在项目页会显示这条线的最新确认结果。"
+            character_label = character_card_display_label(resolve_character_room_target(project=project, thread=thread), "当前人物") if thread.scope == "character_room" else None
+            success_message = (
+                f"已把这版{character_label}人物摘要写回对应人物卡，并更新了这张卡的人物画像基础。"
+                if thread.scope == "character_room"
+                else "已把这版阶段摘要写回项目设定。现在项目页会显示这条线的最新确认结果。"
+            )
         if updated_brief is None:
             raise HTTPException(status_code=409, detail="stage_summary_not_ready")
         updated_project = app.state.store.update_project_brief(
             project_id=project.project_id,
-            default_user_brief=updated_brief,
+            default_user_brief=normalize_project_brief(updated_brief),
         )
         if updated_project is None:
             raise HTTPException(status_code=404, detail="project_not_found")

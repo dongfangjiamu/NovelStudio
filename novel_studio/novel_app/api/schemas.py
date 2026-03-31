@@ -120,6 +120,10 @@ class ProjectCreateRequest(BaseModel):
     default_target_chapters: int = Field(default=1, ge=1, le=100)
 
 
+class ProjectBriefUpdateRequest(BaseModel):
+    default_user_brief: dict[str, Any] = Field(default_factory=dict)
+
+
 class ProjectResponse(BaseModel):
     project_id: str
     name: str
@@ -249,6 +253,7 @@ class ConversationThreadCreateRequest(BaseModel):
     title: str | None = Field(default=None, max_length=255)
     linked_run_id: str | None = Field(default=None, min_length=1, max_length=32)
     linked_chapter_no: int | None = Field(default=None, ge=1)
+    character_card: dict[str, Any] | None = None
 
 
 class ConversationThreadResponse(BaseModel):

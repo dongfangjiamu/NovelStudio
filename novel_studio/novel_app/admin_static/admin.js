@@ -14,6 +14,14 @@ const state = {
   strategySuggestions: null,
   currentUser: null,
   conversationFeedback: null,
+  projectCreationMode: false,
+  projectCreationPath: "idea",
+  projectSetupSection: null,
+  projectCreationCharacterCards: [],
+  projectCreationCharacterCardIndex: 0,
+  projectCharacterCardsDraftProjectId: null,
+  projectCharacterCardsDraft: [],
+  projectCharacterCardsDraftIndex: 0,
   launchPlan: {
     chapterFocus: "先把悬念抛出来",
     launchNote: "",
@@ -39,6 +47,12 @@ const el = {
   registerButton: document.getElementById("register-button"),
   logoutButton: document.getElementById("logout-button"),
   authGuard: document.getElementById("auth-guard"),
+  sidebarProjectPanel: document.getElementById("sidebar-project-panel"),
+  sidebarProjectTip: document.getElementById("sidebar-project-tip"),
+  sidebarCurrentProject: document.getElementById("sidebar-current-project"),
+  sidebarProjectArchive: document.getElementById("sidebar-project-archive"),
+  sidebarProjectArchiveSummary: document.getElementById("sidebar-project-archive-summary"),
+  showProjectCreator: document.getElementById("show-project-creator"),
   refreshProjects: document.getElementById("refresh-projects"),
   refreshAudit: document.getElementById("refresh-audit"),
   projectsList: document.getElementById("projects-list"),
@@ -51,8 +65,18 @@ const el = {
   createRunQuick: document.getElementById("create-run-quick"),
   ideaCaptureForm: document.getElementById("idea-capture-form"),
   projectForm: document.getElementById("project-form"),
+  projectCreateSection: document.getElementById("project-create-section"),
+  projectCreatorPaths: document.getElementById("project-creator-paths"),
+  projectCreatorIdeaPath: document.getElementById("project-creator-idea-path"),
+  projectCreatorFullPath: document.getElementById("project-creator-full-path"),
+  projectCreatorNote: document.getElementById("project-creator-note"),
+  ideaCreateCard: document.getElementById("idea-create-card"),
+  fullCreateCard: document.getElementById("full-create-card"),
+  projectFormCharacterCards: document.getElementById("project-form-character-cards"),
+  projectFormAddCharacter: document.getElementById("project-form-add-character"),
   projectBriefSummary: document.getElementById("project-brief-summary"),
   projectLaunchReadiness: document.getElementById("project-launch-readiness"),
+  projectCharacterCards: document.getElementById("project-character-cards"),
   projectTitle: document.getElementById("project-title"),
   projectMeta: document.getElementById("project-meta"),
   summaryGoal: document.getElementById("summary-goal"),
@@ -65,9 +89,12 @@ const el = {
   learningPanel: document.getElementById("learning-panel"),
   metricsCaption: document.getElementById("metrics-caption"),
   businessMetrics: document.getElementById("business-metrics"),
+  dashboardMetricsPanel: document.getElementById("dashboard-metrics-panel"),
   businessMetricSections: document.getElementById("business-metric-sections"),
   strategyCaption: document.getElementById("strategy-caption"),
   strategySuggestions: document.getElementById("strategy-suggestions"),
+  dashboardStrategyPanel: document.getElementById("dashboard-strategy-panel"),
+  dashboardRunBrief: document.getElementById("dashboard-run-brief"),
   conversationCaption: document.getElementById("conversation-caption"),
   conversationCreateBootstrap: document.getElementById("conversation-create-bootstrap"),
   conversationCreateCharacters: document.getElementById("conversation-create-characters"),
@@ -75,20 +102,29 @@ const el = {
   conversationCreatePlanning: document.getElementById("conversation-create-planning"),
   conversationCreateRewrite: document.getElementById("conversation-create-rewrite"),
   conversationCreateRetro: document.getElementById("conversation-create-retro"),
+  conversationSceneGuide: document.getElementById("conversation-scene-guide"),
+  conversationSceneTitle: document.getElementById("conversation-scene-title"),
+  conversationSceneNote: document.getElementById("conversation-scene-note"),
+  conversationSceneGrid: document.getElementById("conversation-scene-grid"),
+  conversationLayout: document.getElementById("conversation-layout"),
+  conversationSidebar: document.getElementById("conversation-sidebar"),
   conversationThreadList: document.getElementById("conversation-thread-list"),
   conversationDecisionList: document.getElementById("conversation-decision-list"),
   conversationThreadCaption: document.getElementById("conversation-thread-caption"),
   conversationActionCopy: document.getElementById("conversation-action-copy"),
+  conversationActionBar: document.getElementById("conversation-action-bar"),
   conversationExecute: document.getElementById("conversation-execute"),
   conversationFeedback: document.getElementById("conversation-feedback"),
   conversationInterviewSummary: document.getElementById("conversation-interview-summary"),
   conversationThreadContext: document.getElementById("conversation-thread-context"),
   conversationMessageList: document.getElementById("conversation-message-list"),
   conversationForm: document.getElementById("conversation-form"),
+  conversationFormLabel: document.getElementById("conversation-form-label"),
   conversationInput: document.getElementById("conversation-input"),
   conversationSend: document.getElementById("conversation-send"),
   selectedRunLabel: document.getElementById("selected-run-label"),
   statusPill: document.getElementById("status-pill"),
+  heroTitle: document.getElementById("hero-title"),
   heroNote: document.getElementById("hero-note"),
   overviewStage: document.getElementById("overview-stage"),
   overviewChapter: document.getElementById("overview-chapter"),
@@ -96,6 +132,7 @@ const el = {
   overviewAction: document.getElementById("overview-action"),
   actionTitle: document.getElementById("action-title"),
   actionBody: document.getElementById("action-body"),
+  workspaceNav: document.querySelector(".workspace-tabs"),
   workspaceTabs: Array.from(document.querySelectorAll("[data-workspace-tab]")),
   workspacePages: Array.from(document.querySelectorAll("[data-workspace-page]")),
 };
@@ -234,6 +271,191 @@ const WORKSPACE_TAB_NOTES = {
   audit: "这里只看系统记录和排障信息，日常创作时可以不打开。",
 };
 
+const WORKSPACE_MODE_COPY = {
+  auth: {
+    title: "先登录进入你的创作空间",
+    note: "登录后，你只会看到自己的作品。系统会在进入后直接收敛到你当前最该做的一步。",
+  },
+  project_create: {
+    title: "先创建一个项目",
+    note: "先选一种开局方式。第一次使用时，优先从灵感开始，不要一上来就把完整设定全填完。",
+  },
+  project_setup: {
+    title: "先把开书地基补齐",
+    note: "现在先回答当前这一个问题。系统会继续追问并逐步收敛，暂时不用切到别的工作区。",
+  },
+  project_work: {
+    title: "先看建议，再决定下一步",
+    note: "系统会尽量直接告诉你：现在在做什么、为什么停住了、下一步该点哪里。",
+  },
+};
+
+const CHARACTER_CAST_TYPES = [
+  { value: "protagonist", label: "主角" },
+  { value: "supporting", label: "配角" },
+  { value: "antagonist", label: "反派/对位" },
+  { value: "mentor", label: "导师/引路人" },
+];
+
+const DEFAULT_CHARACTER_SLOT_LABELS = ["男主", "女主", "男配1", "女配1", "男配2", "女配2"];
+
+function inferCharacterCastType(slotLabel = "") {
+  const label = String(slotLabel || "").trim();
+  if (["男主", "女主", "主角"].includes(label)) return "protagonist";
+  if (label.includes("反派")) return "antagonist";
+  if (label.includes("导师")) return "mentor";
+  return "supporting";
+}
+
+function defaultCharacterSlotLabel(index) {
+  return DEFAULT_CHARACTER_SLOT_LABELS[index] || `自定义人物${index - DEFAULT_CHARACTER_SLOT_LABELS.length + 1}`;
+}
+
+function createEmptyCharacterCard(overrides = {}) {
+  return {
+    character_id: "",
+    slot_label: "",
+    name: "",
+    cast_type: "supporting",
+    story_role: "",
+    desire: "",
+    fear: "",
+    voiceprint: "",
+    relationship: "",
+    action_mode: "",
+    growth_gap: "",
+    mask_true_self: "",
+    summary: "",
+    discussion_summary: null,
+    character_portrait: null,
+    ...overrides,
+  };
+}
+
+function cloneCharacterCards(cards = []) {
+  return cards.map((item) => createEmptyCharacterCard(item || {}));
+}
+
+function createDefaultCharacterCards() {
+  return DEFAULT_CHARACTER_SLOT_LABELS.map((label) =>
+    createEmptyCharacterCard({
+      slot_label: label,
+      cast_type: inferCharacterCastType(label),
+    })
+  );
+}
+
+function createCharacterCardWithDefaultLabel(index) {
+  const slotLabel = defaultCharacterSlotLabel(index);
+  return createEmptyCharacterCard({
+    slot_label: slotLabel,
+    cast_type: inferCharacterCastType(slotLabel),
+  });
+}
+
+function compactCharacterId(value, fallbackIndex) {
+  const compact = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return compact || `char_${fallbackIndex + 1}`;
+}
+
+function normalizeCharacterCards(cards = [], { requireName = false } = {}) {
+  const normalized = [];
+  cards.forEach((item, index) => {
+    const draft = createEmptyCharacterCard(item || {});
+    const slotLabel = String(draft.slot_label || "").trim();
+    const discussionSummary = draft.discussion_summary && typeof draft.discussion_summary === "object" ? draft.discussion_summary : null;
+    const meaningful = [
+      draft.name,
+      draft.story_role,
+      draft.desire,
+      draft.fear,
+      draft.voiceprint,
+      draft.relationship,
+      draft.action_mode,
+      draft.growth_gap,
+      draft.mask_true_self,
+      draft.summary,
+    ].some((value) => String(value || "").trim()) || Boolean(discussionSummary);
+    if (!meaningful) return;
+    const name = String(draft.name || "").trim() || slotLabel;
+    if (requireName && !name) {
+      throw new Error(`第 ${index + 1} 张人物卡至少需要一个人物标签或角色名。`);
+    }
+    normalized.push({
+      character_id: compactCharacterId(draft.character_id || name || slotLabel, index),
+      slot_label: slotLabel,
+      name,
+      cast_type: CHARACTER_CAST_TYPES.some((option) => option.value === draft.cast_type) ? draft.cast_type : "supporting",
+      story_role: String(draft.story_role || "").trim(),
+      desire: String(draft.desire || "").trim(),
+      fear: String(draft.fear || "").trim(),
+      voiceprint: String(draft.voiceprint || "").trim(),
+      relationship: String(draft.relationship || "").trim(),
+      action_mode: String(draft.action_mode || "").trim(),
+      growth_gap: String(draft.growth_gap || "").trim(),
+      mask_true_self: String(draft.mask_true_self || "").trim(),
+      summary: String(draft.summary || "").trim(),
+      discussion_summary: discussionSummary,
+      character_portrait: draft.character_portrait && typeof draft.character_portrait === "object" ? draft.character_portrait : null,
+    });
+  });
+  return normalized;
+}
+
+function clampCharacterCardIndex(cards, index = 0) {
+  if (!Array.isArray(cards) || !cards.length) return 0;
+  return Math.max(0, Math.min(index, cards.length - 1));
+}
+
+function characterCardStateKey(scope) {
+  return scope === "create" ? "projectCreationCharacterCardIndex" : "projectCharacterCardsDraftIndex";
+}
+
+function characterCardListForScope(scope) {
+  return scope === "create" ? state.projectCreationCharacterCards : state.projectCharacterCardsDraft;
+}
+
+function currentCharacterCardIndex(scope, cards = characterCardListForScope(scope)) {
+  return clampCharacterCardIndex(cards, state[characterCardStateKey(scope)] || 0);
+}
+
+function setCurrentCharacterCardIndex(scope, index, cards = characterCardListForScope(scope)) {
+  state[characterCardStateKey(scope)] = clampCharacterCardIndex(cards, index);
+}
+
+function characterCardTabLabel(card, index) {
+  return String(card?.slot_label || card?.name || "").trim() || defaultCharacterSlotLabel(index);
+}
+
+function normalizeCharacterCardTarget(card = {}, index = 0) {
+  const draft = createEmptyCharacterCard(card || {});
+  const fallbackLabel = String(draft.slot_label || "").trim() || defaultCharacterSlotLabel(index);
+  const name = String(draft.name || "").trim() || fallbackLabel;
+  return {
+    character_id: compactCharacterId(draft.character_id || name || fallbackLabel, index),
+    slot_label: fallbackLabel,
+    name,
+    cast_type: CHARACTER_CAST_TYPES.some((option) => option.value === draft.cast_type) ? draft.cast_type : inferCharacterCastType(fallbackLabel),
+    story_role: String(draft.story_role || "").trim(),
+    desire: String(draft.desire || "").trim(),
+    fear: String(draft.fear || "").trim(),
+    voiceprint: String(draft.voiceprint || "").trim(),
+    relationship: String(draft.relationship || "").trim(),
+    action_mode: String(draft.action_mode || "").trim(),
+    growth_gap: String(draft.growth_gap || "").trim(),
+    mask_true_self: String(draft.mask_true_self || "").trim(),
+    summary: String(draft.summary || "").trim(),
+    discussion_summary: draft.discussion_summary && typeof draft.discussion_summary === "object" ? draft.discussion_summary : null,
+    character_portrait: draft.character_portrait && typeof draft.character_portrait === "object" ? draft.character_portrait : null,
+  };
+}
+
+state.projectCreationCharacterCards = createDefaultCharacterCards();
+
 function setStatus(text, kind = "ready") {
   el.statusPill.textContent = text;
   el.statusPill.style.color = kind === "error" ? "#9b1c1c" : kind === "warn" ? "#8d5b00" : "#1f6b44";
@@ -287,8 +509,8 @@ function conversationPostAdoptionHint(thread) {
       .map((item) => item.label || conversationScopeLabel(item.scope))
       .join(" / ")}。`;
   }
-  if (interview?.completion_label === "4/4") {
-    return "4 个核心问题已经答完。下一步通常不是继续单条采纳，而是先确认这版阶段摘要，再进入人物讨论或大纲讨论。";
+  if (interview?.completion_count === interview?.total_topics && interview?.total_topics) {
+    return `${interview.total_topics} 个核心问题已经答完。下一步通常不是继续单条采纳，而是先确认这版阶段摘要，再进入后续讨论。`;
   }
   return "已采纳这条结论。你可以继续补充、继续采纳，或直接进入下一步。";
 }
@@ -338,18 +560,35 @@ function renderStagePrimaryAction(thread, stageConfirmation) {
 }
 
 function renderWorkspaceTab() {
+  const visibleTabs = visibleWorkspaceTabs();
+  ensureVisibleWorkspaceTab();
+  if (el.workspaceNav) {
+    el.workspaceNav.hidden = visibleTabs.length <= 1;
+  }
   el.workspaceTabs.forEach((node) => {
+    const visible = visibleTabs.includes(node.dataset.workspaceTab);
+    node.hidden = !visible;
     const active = node.dataset.workspaceTab === state.activeWorkspaceTab;
     node.classList.toggle("active", active);
     node.setAttribute("aria-selected", active ? "true" : "false");
   });
   el.workspacePages.forEach((node) => {
-    const active = node.dataset.workspacePage === state.activeWorkspaceTab;
+    const visible = visibleTabs.includes(node.dataset.workspacePage);
+    const active = visible && node.dataset.workspacePage === state.activeWorkspaceTab;
     node.classList.toggle("active", active);
-    node.hidden = !active;
+    node.hidden = !active || !visible;
   });
+  const mode = currentWorkspaceMode();
+  const modeCopy = WORKSPACE_MODE_COPY[mode] || WORKSPACE_MODE_COPY.project_work;
+  if (el.heroTitle) {
+    el.heroTitle.textContent = modeCopy.title;
+  }
   if (el.heroNote) {
-    el.heroNote.textContent = WORKSPACE_TAB_NOTES[state.activeWorkspaceTab] || WORKSPACE_TAB_NOTES.dashboard;
+    el.heroNote.textContent = mode === "auth" || mode === "project_create"
+      ? modeCopy.note
+      : visibleTabs.length
+      ? WORKSPACE_TAB_NOTES[state.activeWorkspaceTab] || modeCopy.note
+      : modeCopy.note;
   }
 }
 
@@ -367,6 +606,14 @@ function isAuthenticated() {
 function resetWorkspaceState() {
   state.projects = [];
   state.selectedProjectId = null;
+  state.projectCreationMode = false;
+  state.projectCreationPath = "idea";
+  state.projectSetupSection = null;
+  state.projectCreationCharacterCards = createDefaultCharacterCards();
+  state.projectCreationCharacterCardIndex = 0;
+  state.projectCharacterCardsDraftProjectId = null;
+  state.projectCharacterCardsDraft = [];
+  state.projectCharacterCardsDraftIndex = 0;
   state.selectedRunId = null;
   state.selectedThreadId = null;
   state.artifactRunId = null;
@@ -385,13 +632,689 @@ function resetWorkspaceState() {
   };
 }
 
+function hasSelectedProject() {
+  return Boolean(selectedProject());
+}
+
+function isSetupConversationScope(thread = selectedThread()) {
+  return Boolean(thread && ["project_bootstrap", "character_room", "outline_room"].includes(thread.scope));
+}
+
+function isProjectSetupStage(project = selectedProject(), snapshot = state.projectSnapshot) {
+  if (!project) return false;
+  const hasChapters = Boolean((snapshot.chapters || []).length);
+  const hasRuns = Boolean((snapshot.runs || []).length);
+  return !hasChapters && !hasRuns && !openingReadiness(project).ready;
+}
+
+function currentWorkspaceMode() {
+  if (!isAuthenticated()) return "auth";
+  if (!hasSelectedProject()) return "project_create";
+  if (isProjectSetupStage()) return "project_setup";
+  return "project_work";
+}
+
+function visibleWorkspaceTabs() {
+  const mode = currentWorkspaceMode();
+  const approvals = state.projectSnapshot.approvals || [];
+  const runs = state.projectSnapshot.runs || [];
+  if (mode === "auth") return [];
+  if (mode === "project_create") return ["project"];
+  if (mode === "project_setup") return ["project", "conversation"];
+  return [
+    "dashboard",
+    "project",
+    "runs",
+    ...(approvals.length ? ["approvals"] : []),
+    "conversation",
+    ...(runs.length ? ["artifacts"] : []),
+  ];
+}
+
+function preferredWorkspaceTab() {
+  const mode = currentWorkspaceMode();
+  if (mode === "project_create" || mode === "project_setup") return "project";
+  return "dashboard";
+}
+
+function ensureVisibleWorkspaceTab() {
+  const visible = visibleWorkspaceTabs();
+  if (visible.includes(state.activeWorkspaceTab)) return;
+  state.activeWorkspaceTab = preferredWorkspaceTab();
+}
+
+function renderProjectPageLayout(project = selectedProject()) {
+  const createOnly = !project;
+  if (el.projectCreateSection) {
+    el.projectCreateSection.hidden = !createOnly;
+  }
+  if (el.projectCreatorPaths) {
+    el.projectCreatorPaths.hidden = !createOnly;
+  }
+  if (el.projectBriefSummary) {
+    el.projectBriefSummary.hidden = createOnly;
+  }
+  const setupSection = currentProjectSetupSection(project);
+  if (el.projectLaunchReadiness) {
+    el.projectLaunchReadiness.hidden = createOnly || setupSection !== "launch_readiness";
+  }
+  if (el.projectCharacterCards) {
+    el.projectCharacterCards.hidden = createOnly || setupSection !== "character_room";
+  }
+  if (!createOnly) return;
+  const ideaPath = state.projectCreationPath !== "full";
+  if (el.ideaCreateCard) {
+    el.ideaCreateCard.hidden = !ideaPath;
+  }
+  if (el.fullCreateCard) {
+    el.fullCreateCard.hidden = ideaPath;
+  }
+  if (el.projectCreatorIdeaPath) {
+    el.projectCreatorIdeaPath.classList.toggle("primary", ideaPath);
+    el.projectCreatorIdeaPath.classList.toggle("secondary", !ideaPath);
+  }
+  if (el.projectCreatorFullPath) {
+    el.projectCreatorFullPath.classList.toggle("primary", !ideaPath);
+    el.projectCreatorFullPath.classList.toggle("ghost", ideaPath);
+  }
+  if (el.projectCreatorNote) {
+    el.projectCreatorNote.textContent = ideaPath
+      ? "第一次使用时，通常先从灵感开始就够了。系统会用追问帮你逐步收紧方向。"
+      : "只有当你已经能直接写出题材、钩子和边界时，才建议走完整设定。";
+  }
+}
+
+function setProjectCreationPath(path) {
+  state.projectCreationPath = path === "full" ? "full" : "idea";
+  renderProjectPageLayout();
+}
+
+function currentProjectSetupSection(project = selectedProject()) {
+  if (!project) return null;
+  const stages = projectSetupStages(project);
+  const available = stages.map((item) => item.key);
+  if (available.includes(state.projectSetupSection)) {
+    return state.projectSetupSection;
+  }
+  return stages.find((item) => item.active)?.key || "project_bootstrap";
+}
+
+function setProjectSetupSection(section, project = selectedProject()) {
+  const stages = project ? projectSetupStages(project) : [];
+  const available = stages.map((item) => item.key);
+  state.projectSetupSection = available.includes(section) ? section : (available[0] || null);
+  renderProjectState();
+}
+
+function syncProjectCharacterCardsDraft(project = selectedProject(), force = false) {
+  if (!project) {
+    state.projectCharacterCardsDraftProjectId = null;
+    state.projectCharacterCardsDraft = [];
+    state.projectCharacterCardsDraftIndex = 0;
+    return;
+  }
+  if (!force && state.projectCharacterCardsDraftProjectId === project.project_id) {
+    return;
+  }
+  state.projectCharacterCardsDraftProjectId = project.project_id;
+  state.projectCharacterCardsDraft = cloneCharacterCards(project.default_user_brief?.character_cards || []);
+  if (!state.projectCharacterCardsDraft.length) {
+    state.projectCharacterCardsDraft = createDefaultCharacterCards();
+  }
+  state.projectCharacterCardsDraftIndex = 0;
+}
+
+function currentProjectCharacterCard(project = selectedProject()) {
+  if (!project) return null;
+  syncProjectCharacterCardsDraft(project);
+  const cards = state.projectCharacterCardsDraft.length ? state.projectCharacterCardsDraft : createDefaultCharacterCards();
+  const index = currentCharacterCardIndex("project", cards);
+  const card = createEmptyCharacterCard(cards[index] || createCharacterCardWithDefaultLabel(index));
+  return {
+    index,
+    card,
+    target: normalizeCharacterCardTarget(card, index),
+  };
+}
+
+function threadTargetCharacter(thread) {
+  return thread?.thread_context?.target_character || thread?.interview_state?.target_character || null;
+}
+
+function latestCharacterThreadForTarget(target, { status = "open" } = {}) {
+  if (!target?.character_id) return null;
+  return (state.projectSnapshot.conversationThreads || [])
+    .filter((item) => item.scope === "character_room" && (!status || item.status === status) && threadTargetCharacter(item)?.character_id === target.character_id)
+    .sort((left, right) => String(right.updated_at || "").localeCompare(String(left.updated_at || "")))[0] || null;
+}
+
+function currentProjectCharacterSummarySource(project = selectedProject()) {
+  const active = currentProjectCharacterCard(project);
+  if (!active) return null;
+  const activeThread = latestCharacterThreadForTarget(active.target);
+  const draftSummary = activeThread?.interview_state?.stage_confirmation?.stage_summary;
+  if (draftSummary) {
+    return {
+      summary: draftSummary,
+      status: "draft",
+      threadId: activeThread.thread_id,
+      target: active.target,
+    };
+  }
+  const appliedSummary = active.card?.discussion_summary;
+  if (appliedSummary && typeof appliedSummary === "object") {
+    return {
+      summary: appliedSummary,
+      status: "applied",
+      threadId: appliedSummary.source_thread_id || null,
+      target: active.target,
+    };
+  }
+  return null;
+}
+
+function anyCharacterSummarySource(project = selectedProject()) {
+  if (!project) return null;
+  const cards = Array.isArray(project.default_user_brief?.character_cards) ? project.default_user_brief.character_cards : [];
+  const cardIndex = cards.findIndex((item) => item?.discussion_summary && typeof item.discussion_summary === "object");
+  if (cardIndex >= 0) {
+    return {
+      summary: cards[cardIndex].discussion_summary,
+      status: "applied",
+      threadId: cards[cardIndex].discussion_summary.source_thread_id || null,
+      target: normalizeCharacterCardTarget(cards[cardIndex], cardIndex),
+    };
+  }
+  const legacy = project.default_user_brief?.character_summary;
+  if (legacy) {
+    return {
+      summary: legacy,
+      status: "applied",
+      threadId: legacy.source_thread_id || null,
+      target: legacy.target_character || null,
+    };
+  }
+  return null;
+}
+
+function characterSummaryLabelMap(summary = null) {
+  const labelMap = {};
+  if (!summary || typeof summary !== "object") return labelMap;
+  ["confirmed_items", "items", "provisional_items"].forEach((bucket) => {
+    const items = Array.isArray(summary[bucket]) ? summary[bucket] : [];
+    items.forEach((item) => {
+      const label = String(item?.label || "").trim();
+      const value = String(item?.summary || "").trim();
+      if (label && value && !labelMap[label]) {
+        labelMap[label] = value;
+      }
+    });
+  });
+  return labelMap;
+}
+
+function characterProgressSnapshot(card = {}) {
+  const normalized = normalizeCharacterCardTarget(card);
+  const summaryMap = characterSummaryLabelMap(normalized.discussion_summary);
+  const summaryText = String(normalized.summary || "").trim();
+  const isProtagonist = normalized.cast_type === "protagonist";
+  const dimensions = [
+    {
+      key: "first_impression",
+      label: "第一印象",
+      done: Boolean(normalized.voiceprint || summaryMap["第一印象"] || summaryMap["主角第一印象"]),
+      reason: "先定住人物一出场的感觉，后面气质和边界才不容易飘。",
+    },
+    {
+      key: "desire",
+      label: "核心欲望",
+      done: Boolean(normalized.desire || summaryMap["核心欲望"] || summaryMap["真正想摆脱什么"] || summaryMap["主角真正想摆脱什么"]),
+      reason: "欲望决定这个人物为什么会不断行动。",
+    },
+    {
+      key: "fear",
+      label: "核心恐惧",
+      done: Boolean(normalized.fear || summaryMap["核心恐惧"]),
+      reason: "恐惧决定人物在压力里最容易被什么击中。",
+    },
+    {
+      key: "relationship",
+      label: "关键关系张力",
+      done: Boolean(normalized.relationship || summaryMap["关键关系张力"]),
+      reason: "人物真正有戏，通常靠一组有火花的关系支撑。",
+    },
+    {
+      key: "action_mode",
+      label: "行动方式 / 决策模式",
+      done: Boolean(normalized.action_mode || summaryMap["行动方式"] || summaryMap["行动方式 / 决策模式"]),
+      reason: "要说清人物通常如何做决定，写起来才像同一个人。",
+    },
+    {
+      key: "boundary",
+      label: "人物边界",
+      done: Boolean(summaryMap["人物边界"] || summaryMap["角色边界"] || summaryText.includes("人物边界")),
+      reason: "边界是防止人物越写越崩的护栏。",
+    },
+  ];
+  if (isProtagonist) {
+    dimensions.push(
+      {
+        key: "growth_gap",
+        label: "成长缺口",
+        done: Boolean(normalized.growth_gap || summaryMap["成长缺口"]),
+        reason: "主角要有必须跨过去的缺口，成长线才有抓手。",
+      },
+      {
+        key: "mask_true_self",
+        label: "伪装与真实自我",
+        done: Boolean(normalized.mask_true_self || summaryMap["伪装与真实自我"]),
+        reason: "表面与内里的落差，是主角耐看和反差感的重要来源。",
+      }
+    );
+  }
+  const completed = dimensions.filter((item) => item.done).length;
+  return {
+    requiredCount: dimensions.length,
+    completedCount: completed,
+    completionLabel: `${completed}/${dimensions.length}`,
+    readyForPortrait: completed >= (isProtagonist ? 5 : 4),
+    dimensions,
+    missingDimensions: dimensions.filter((item) => !item.done),
+    focusDimension: dimensions.find((item) => !item.done) || null,
+  };
+}
+
+function characterPortrait(card = {}) {
+  return card?.character_portrait && typeof card.character_portrait === "object" ? card.character_portrait : null;
+}
+
+function renderCharacterPortraitSections(portrait) {
+  if (!portrait?.sections?.length) {
+    return `<div class="meta">当前还没有生成人物画像。建议先补齐关键讨论，再用“生成人物画像”沉淀为稳定写作基底。</div>`;
+  }
+  return `
+    <div class="character-portrait-sections">
+      ${portrait.sections
+        .map(
+          (section) => `
+            <div class="interview-block">
+              <strong>${escapeHtml(section.label || "")}</strong>
+              <div class="meta">${escapeHtml(section.summary || "")}</div>
+            </div>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderCharacterCardEditor(cards, scope) {
+  const list = cards.length ? cards : createDefaultCharacterCards();
+  const activeIndex = currentCharacterCardIndex(scope, list);
+  const card = createEmptyCharacterCard(list[activeIndex] || createCharacterCardWithDefaultLabel(activeIndex));
+  return `
+    <div class="character-card-shell">
+      <div class="character-card-tabs" role="tablist" aria-label="人物卡选项">
+        ${list
+          .map(
+            (item, index) => `
+              <button
+                class="character-card-tab ${index === activeIndex ? "active" : ""}"
+                type="button"
+                role="tab"
+                aria-selected="${index === activeIndex ? "true" : "false"}"
+                data-character-action="select"
+                data-character-scope="${scope}"
+                data-character-index="${index}"
+              >
+                <span>${escapeHtml(characterCardTabLabel(item, index))}</span>
+                <small>${escapeHtml(String(item.name || "").trim() || "未命名")}</small>
+              </button>
+            `
+          )
+          .join("")}
+      </div>
+      <article class="character-card-item character-card-editor-panel">
+        <div class="character-card-head">
+          <div>
+            <h4>${escapeHtml(characterCardTabLabel(card, activeIndex))}</h4>
+            <div class="meta">先选上方人物卡，再只编辑当前这一张。</div>
+          </div>
+          <button class="button ghost" type="button" data-character-action="remove" data-character-scope="${scope}" data-character-index="${activeIndex}" ${
+            list.length <= 1 ? "disabled" : ""
+          }>删除当前卡</button>
+        </div>
+        <div class="character-card-grid">
+          <label>
+            <span>人物卡标签</span>
+            <input type="text" data-character-scope="${scope}" data-character-index="${activeIndex}" data-character-field="slot_label" value="${escapeAttribute(card.slot_label || "")}" placeholder="例如：男主、女主、男配3" />
+          </label>
+          <label>
+            <span>角色名</span>
+            <input type="text" data-character-scope="${scope}" data-character-index="${activeIndex}" data-character-field="name" value="${escapeAttribute(card.name || "")}" placeholder="例如：楚焰" />
+          </label>
+          <label>
+            <span>主次定位</span>
+            <select data-character-scope="${scope}" data-character-index="${activeIndex}" data-character-field="cast_type">
+              ${CHARACTER_CAST_TYPES.map((option) => `<option value="${option.value}" ${card.cast_type === option.value ? "selected" : ""}>${option.label}</option>`).join("")}
+            </select>
+          </label>
+          <label>
+            <span>剧情职责</span>
+            <input type="text" data-character-scope="${scope}" data-character-index="${activeIndex}" data-character-field="story_role" value="${escapeAttribute(card.story_role || "")}" placeholder="例如：主角、宿敌、导师、关键盟友" />
+          </label>
+          <label>
+            <span>与主角关系</span>
+            <input type="text" data-character-scope="${scope}" data-character-index="${activeIndex}" data-character-field="relationship" value="${escapeAttribute(card.relationship || "")}" placeholder="例如：敌对试探、互利同盟、师徒拉扯" />
+          </label>
+          <label>
+            <span>核心欲望</span>
+            <textarea rows="3" data-character-scope="${scope}" data-character-index="${activeIndex}" data-character-field="desire" placeholder="这个人物最想得到什么">${escapeHtml(card.desire || "")}</textarea>
+          </label>
+          <label>
+            <span>主要恐惧</span>
+            <textarea rows="3" data-character-scope="${scope}" data-character-index="${activeIndex}" data-character-field="fear" placeholder="这个人物最怕失去什么">${escapeHtml(card.fear || "")}</textarea>
+          </label>
+          <label>
+            <span>声音与气质</span>
+            <textarea rows="3" data-character-scope="${scope}" data-character-index="${activeIndex}" data-character-field="voiceprint" placeholder="说话方式、气质、外在感受">${escapeHtml(card.voiceprint || "")}</textarea>
+          </label>
+          <label>
+            <span>行动方式 / 决策模式</span>
+            <textarea rows="3" data-character-scope="${scope}" data-character-index="${activeIndex}" data-character-field="action_mode" placeholder="例如：先观察再出手，表面退让实则布局">${escapeHtml(card.action_mode || "")}</textarea>
+          </label>
+          <label>
+            <span>补充备注</span>
+            <textarea rows="3" data-character-scope="${scope}" data-character-index="${activeIndex}" data-character-field="summary" placeholder="边界、反差、秘密、人物亮点">${escapeHtml(card.summary || "")}</textarea>
+          </label>
+        </div>
+        ${
+          card.cast_type === "protagonist"
+            ? `
+              <details class="advanced-box" open>
+                <summary>主角补充维度</summary>
+                <div class="character-card-grid">
+                  <label>
+                    <span>成长缺口</span>
+                    <textarea rows="3" data-character-scope="${scope}" data-character-index="${activeIndex}" data-character-field="growth_gap" placeholder="例如：只会独自硬扛，不会真正信任同伴">${escapeHtml(card.growth_gap || "")}</textarea>
+                  </label>
+                  <label>
+                    <span>伪装与真实自我</span>
+                    <textarea rows="3" data-character-scope="${scope}" data-character-index="${activeIndex}" data-character-field="mask_true_self" placeholder="例如：看着冷静疏离，其实极度害怕再次被抛下">${escapeHtml(card.mask_true_self || "")}</textarea>
+                  </label>
+                </div>
+              </details>
+            `
+            : ""
+        }
+      </article>
+    </div>
+  `;
+}
+
+function renderProjectFormCharacterCards() {
+  if (!el.projectFormCharacterCards) return;
+  el.projectFormCharacterCards.innerHTML = renderCharacterCardEditor(state.projectCreationCharacterCards, "create");
+}
+
+function renderProjectCharacterCards(project = selectedProject()) {
+  if (!el.projectCharacterCards) return;
+  if (!project || currentProjectSetupSection(project) !== "character_room") {
+    el.projectCharacterCards.hidden = true;
+    if (!project) {
+      el.projectCharacterCards.innerHTML = "";
+    }
+    return;
+  }
+  syncProjectCharacterCardsDraft(project);
+  const cards = state.projectCharacterCardsDraft;
+  const populatedCount = normalizeCharacterCards(cards).length;
+  const activeCharacter = currentProjectCharacterCard(project);
+  const activeSummarySource = currentProjectCharacterSummarySource(project);
+  const activeThread = activeCharacter ? latestCharacterThreadForTarget(activeCharacter.target) : null;
+  const activeSummaryItems = activeSummarySource?.summary?.items || [];
+  const activeProgress = characterProgressSnapshot(activeCharacter?.card || {});
+  const activePortrait = characterPortrait(activeCharacter?.card || {});
+  const hasCharacterSummary = Boolean(anyCharacterSummarySource(project));
+  const activeCharacterLabel = characterCardTabLabel(activeCharacter?.card, activeCharacter?.index || 0);
+  el.projectCharacterCards.hidden = false;
+  el.projectCharacterCards.innerHTML = `
+    <div class="panel-head">
+      <div>
+        <h3>人物卡</h3>
+        <div class="muted">先进入人物设定，再选中一张人物卡，只围绕这一张卡填写与讨论。人物摘要也会按当前人物卡分别沉淀。</div>
+      </div>
+      <div class="actions">
+        ${
+          hasCharacterSummary
+            ? `<button class="button ghost" type="button" data-character-action="sync-summary" data-character-scope="project">从人物摘要补全</button>`
+            : ""
+        }
+        <button class="button ghost" type="button" data-character-action="add" data-character-scope="project">添加人物卡</button>
+        <button class="button primary" type="button" data-character-action="save" data-character-scope="project">保存人物卡</button>
+      </div>
+    </div>
+    <div class="meta">当前已配置 ${populatedCount} 张人物卡。建议至少明确主角、关键配角和主要对位者。${
+      hasCharacterSummary ? "如果某张人物卡已经确认过人物摘要，可以先点“从人物摘要补全”同步已有结论。" : ""
+    }</div>
+    <div class="character-workbench">
+      <section class="summary-card accent character-guide-panel">
+        <div class="panel-head">
+          <div>
+            <div class="summary-label">当前人物设定进度</div>
+            <div class="summary-value">${escapeHtml(activeCharacterLabel)} · ${escapeHtml(activeProgress.completionLabel)}</div>
+            <div class="meta">系统会先告诉你这张卡还缺什么，再引导你围绕最关键的点去讨论，最后把字段和讨论内容沉淀成人物画像。</div>
+          </div>
+          <div class="actions">
+            <button class="button primary" type="button" data-character-action="discuss" data-character-scope="project">${
+              activeThread ? `继续讨论${escapeHtml(activeCharacterLabel)}` : `讨论${escapeHtml(activeCharacterLabel)}`
+            }</button>
+            ${
+              activeSummarySource?.status === "draft" && activeSummarySource.threadId
+                ? `<button class="button secondary" type="button" data-apply-stage-summary="${escapeHtml(activeSummarySource.threadId)}">确认这版人物摘要</button>`
+                : ""
+            }
+          </div>
+        </div>
+        <div class="character-progress-bar" aria-hidden="true">
+          <span style="width:${Math.max(8, Math.round((activeProgress.completedCount / Math.max(1, activeProgress.requiredCount)) * 100))}%"></span>
+        </div>
+        <div class="character-progress-meta">
+          <span class="character-progress-pill">${escapeHtml(activeProgress.completedCount)} 项已收束</span>
+          <span class="character-progress-pill muted">${escapeHtml(activeProgress.requiredCount - activeProgress.completedCount)} 项待补齐</span>
+          <span class="character-progress-pill ${activeProgress.readyForPortrait ? "good" : "warn"}">${
+            activeProgress.readyForPortrait ? "已达到画像生成建议深度" : "建议先补到推荐深度"
+          }</span>
+        </div>
+        <div class="character-guide-grid">
+          <div class="interview-block">
+            <strong>系统建议先补这一项</strong>
+            ${
+              activeProgress.focusDimension
+                ? `<div class="meta"><strong>${escapeHtml(activeProgress.focusDimension.label)}</strong></div><div class="meta">${escapeHtml(activeProgress.focusDimension.reason)}</div>`
+                : `<div class="meta">当前这张卡的核心维度已经基本收束，可以直接生成或重生人物画像。</div>`
+            }
+          </div>
+          <div class="interview-block">
+            <strong>推荐讨论程度</strong>
+            <div class="meta">基础人物至少讨论到 6 个维度；主角建议讨论到 8 个维度，尤其要补齐成长缺口和伪装与真实自我。</div>
+          </div>
+        </div>
+        <div class="character-dimension-list">
+          ${activeProgress.dimensions
+            .map(
+              (item) => `
+                <div class="character-dimension-item ${item.done ? "done" : "pending"}">
+                  <span class="criteria-badge">${item.done ? "已收束" : "待补齐"}</span>
+                  <div>
+                    <strong>${escapeHtml(item.label)}</strong>
+                    <div class="meta">${escapeHtml(item.reason)}</div>
+                  </div>
+                </div>
+              `
+            )
+            .join("")}
+        </div>
+        ${
+          activeSummaryItems.length
+            ? `
+              <div class="interview-block">
+                <strong>已确认的人物讨论结论</strong>
+                <ul class="interview-list">${activeSummaryItems
+                  .slice(0, 6)
+                  .map((item) => `<li><strong>${escapeHtml(item.label || "")}</strong>：${escapeHtml(item.summary || "")}</li>`)
+                  .join("")}</ul>
+              </div>
+            `
+            : `
+              <div class="interview-block">
+                <strong>当前讨论状态</strong>
+                <div class="meta">${
+                  activeSummarySource?.status === "applied"
+                    ? "这张人物卡已经有已确认摘要，但你仍可以继续补充后再重新生成画像。"
+                    : "这张人物卡还没有形成稳定讨论摘要。建议先进入讨论，把关键维度说清。"
+                }</div>
+              </div>
+            `
+        }
+      </section>
+      <section class="summary-card character-portrait-panel">
+        <div class="panel-head">
+          <div>
+            <div class="summary-label">人物画像</div>
+            <div class="summary-value">${escapeHtml(activePortrait?.title || `${activeCharacterLabel}人物画像`)}</div>
+            <div class="meta">${escapeHtml(activePortrait?.readiness || "这里会把人物字段和讨论结论融合成可直接继承到章卡、正文和审查的人物画像。")}</div>
+          </div>
+          <div class="actions">
+            <button class="button ${activeProgress.readyForPortrait ? "primary" : "secondary"}" type="button" data-character-action="generate-portrait">${
+              activePortrait ? "基于最新内容重生画像" : "生成人物画像"
+            }</button>
+          </div>
+        </div>
+        ${
+          activePortrait?.focus_dimension?.label
+            ? `<div class="meta">如果还想更稳，建议继续补：${escapeHtml(activePortrait.focus_dimension.label)}。</div>`
+            : ""
+        }
+        ${renderCharacterPortraitSections(activePortrait)}
+      </section>
+    </div>
+    ${renderCharacterCardEditor(cards, "project")}
+  `;
+  el.projectCharacterCards.querySelectorAll("[data-character-action='add']").forEach((node) => {
+    node.addEventListener("click", () => {
+      state.projectCharacterCardsDraft.push(createCharacterCardWithDefaultLabel(state.projectCharacterCardsDraft.length));
+      state.projectCharacterCardsDraftIndex = state.projectCharacterCardsDraft.length - 1;
+      renderProjectCharacterCards(project);
+    });
+  });
+  el.projectCharacterCards.querySelectorAll("[data-character-action='select']").forEach((node) => {
+    node.addEventListener("click", () => {
+      setCurrentCharacterCardIndex("project", Number(node.dataset.characterIndex || 0), state.projectCharacterCardsDraft);
+      renderProjectCharacterCards(project);
+    });
+  });
+  el.projectCharacterCards.querySelectorAll("[data-character-action='remove']").forEach((node) => {
+    node.addEventListener("click", () => {
+      const index = Number(node.dataset.characterIndex || -1);
+      if (index < 0) return;
+      state.projectCharacterCardsDraft.splice(index, 1);
+      if (!state.projectCharacterCardsDraft.length) {
+        state.projectCharacterCardsDraft = createDefaultCharacterCards();
+      }
+      setCurrentCharacterCardIndex("project", Math.max(0, index - 1), state.projectCharacterCardsDraft);
+      renderProjectCharacterCards(project);
+    });
+  });
+  el.projectCharacterCards.querySelectorAll("[data-character-action='save']").forEach((node) => {
+    node.addEventListener("click", () => {
+      saveProjectCharacterCards().catch((error) => setStatus(String(error.message || error), "error"));
+    });
+  });
+  el.projectCharacterCards.querySelectorAll("[data-character-action='discuss']").forEach((node) => {
+    node.addEventListener("click", () => {
+      openOrCreateConversationScope("character_room").catch((error) => setStatus(String(error.message || error), "error"));
+    });
+  });
+  el.projectCharacterCards.querySelectorAll("[data-character-action='generate-portrait']").forEach((node) => {
+    node.addEventListener("click", () => {
+      generateProjectCharacterPortrait().catch((error) => setStatus(String(error.message || error), "error"));
+    });
+  });
+  el.projectCharacterCards.querySelectorAll("[data-character-action='sync-summary']").forEach((node) => {
+    node.addEventListener("click", () => {
+      syncProjectCharacterCardsFromSummary().catch((error) => setStatus(String(error.message || error), "error"));
+    });
+  });
+  el.projectCharacterCards.querySelectorAll("[data-apply-stage-summary]").forEach((node) => {
+    node.addEventListener("click", () => {
+      applyStageSummary(node.dataset.applyStageSummary).catch((error) => setStatus(String(error.message || error), "error"));
+    });
+  });
+}
+
+function visibleConversationScopes() {
+  const mode = currentWorkspaceMode();
+  if (mode === "project_setup") {
+    return ["project_bootstrap", "character_room", "outline_room"];
+  }
+  if (mode === "project_work") {
+    return CONVERSATION_SCENE_CONFIG.map((item) => item.scope);
+  }
+  return [];
+}
+
+function renderConversationSceneGuide(hasConversationContent) {
+  if (!el.conversationSceneGuide || !el.conversationSceneTitle || !el.conversationSceneNote) return;
+  if (!state.selectedProjectId) {
+    el.conversationSceneGuide.hidden = true;
+    return;
+  }
+  el.conversationSceneGuide.hidden = false;
+  if (currentWorkspaceMode() === "project_setup") {
+    el.conversationSceneTitle.textContent = hasConversationContent ? "继续补齐开书前最关键的问题" : "先选你现在要补齐的开书问题";
+    el.conversationSceneNote.textContent = hasConversationContent
+      ? "上方可以继续开新讨论；下方只保留当前最值得继续的一条线程，避免同时分心处理多件事。"
+      : "通常先从“立项共创”开始，再进入人物讨论和大纲讨论。先把方向问清，比直接开写更省返工。";
+    return;
+  }
+  el.conversationSceneTitle.textContent = hasConversationContent ? "按需要补开新的协作线程" : "先选你现在卡住的那一环";
+  el.conversationSceneNote.textContent = hasConversationContent
+    ? "如果当前线程已经够用，就先把它做完；只有在目标变化时，再补开新的讨论场景。"
+    : "章卡讨论适合开写前定目标，修稿会诊适合不过稿或卡住时集中排障，章节复盘适合一章完成后沉淀经验。";
+}
+
+function shouldShowConversationSceneChooser(thread = selectedThread()) {
+  if (!state.selectedProjectId) return false;
+  if (currentWorkspaceMode() !== "project_setup") return true;
+  if (!thread) return true;
+  return Boolean(interviewState(thread)?.stage_confirmation);
+}
+
+function renderConversationSceneButtons() {
+  const focusRun = pickFocusRun(state.projectSnapshot.runs || []);
+  const visibleScopes = new Set(visibleConversationScopes());
+  CONVERSATION_SCENE_CONFIG.forEach(({ scope, element }) => {
+    const node = el[element];
+    if (!node) return;
+    const visible = visibleScopes.has(scope);
+    node.hidden = !visible;
+    node.disabled = !visible || !state.selectedProjectId || (scopeNeedsRunContext(scope) && !focusRun);
+  });
+}
+
 function updateAuthUi() {
   const loggedIn = isAuthenticated();
+  const mode = currentWorkspaceMode();
   document.body.classList.toggle("logged-in", loggedIn);
   document.body.classList.toggle("logged-out", !loggedIn);
+  document.body.dataset.workspaceMode = mode;
   if (el.authCurrentUser) el.authCurrentUser.hidden = !loggedIn;
   if (el.authForm) el.authForm.hidden = loggedIn;
   if (el.authGuard) el.authGuard.hidden = loggedIn;
+  if (el.sidebarProjectPanel) {
+    el.sidebarProjectPanel.hidden = !loggedIn;
+  }
   if (el.currentUserPenName) {
     el.currentUserPenName.textContent = loggedIn ? state.currentUser.pen_name : "未登录";
   }
@@ -405,6 +1328,8 @@ function updateAuthUi() {
   } else {
     setAuthFeedback("第一次使用时，先注册笔名，再登录进入你的创作空间。");
   }
+  ensureVisibleWorkspaceTab();
+  renderWorkspaceTab();
   if (!loggedIn) {
     renderProjects();
     renderProjectState();
@@ -459,6 +1384,8 @@ function formatApiDetail(detail) {
   if (value === "registration_limit_reached") return "当前可注册作家名额已满。";
   if (value === "invalid_credentials") return "笔名或密码不正确。";
   if (value === "login_required") return "请先登录。";
+  if (value === "character_card_not_found") return "没有找到这张人物卡，请先保存当前人物卡后再试。";
+  if (value === "character_summary_not_ready") return "当前还没有可同步的人物摘要。请先完成当前人物讨论并确认摘要。";
   if (value === "conversation_thread_not_open") return "这条线程已经关闭，不能继续作答。请使用“重开本阶段”或切回最新线程。";
   if (value === "interview_restart_not_supported") return "当前线程不支持重开本阶段。";
   return value || "请求失败，请稍后重试。";
@@ -543,6 +1470,18 @@ function selectedProject() {
   return state.projects.find((item) => item.project_id === state.selectedProjectId) || null;
 }
 
+function scopeEntryActionLabel(scope) {
+  if (scope === "character_room") return "查看人物设定页";
+  return `进入${conversationScopeLabel(scope)}`;
+}
+
+function openCharacterSetupPage(project = selectedProject()) {
+  if (!project) return;
+  setWorkspaceTab("project");
+  setProjectSetupSection("character_room", project);
+  setStatus("已切到人物设定页。先选择人物卡，再进入该人物的专属讨论。", "ready");
+}
+
 function renderScopeSummary(label, source, openScope) {
   if (!source) {
     return `
@@ -550,7 +1489,7 @@ function renderScopeSummary(label, source, openScope) {
         <div class="summary-label">${label}</div>
         <div class="meta">这条线还没有形成阶段摘要。</div>
         <div class="actions">
-          <button class="button ghost" type="button" data-project-summary-open="${openScope}">进入${conversationScopeLabel(openScope)}</button>
+          <button class="button ghost" type="button" data-project-summary-open="${openScope}">${scopeEntryActionLabel(openScope)}</button>
         </div>
       </div>
     `;
@@ -571,7 +1510,7 @@ function renderScopeSummary(label, source, openScope) {
             ? `<button class="button secondary" type="button" data-apply-stage-summary="${escapeHtml(source.threadId || "")}">${escapeHtml(stageSummaryApplyLabel(openScope))}</button>`
             : ""
         }
-        <button class="button ghost" type="button" data-project-summary-open="${openScope}">进入${conversationScopeLabel(openScope)}</button>
+        <button class="button ghost" type="button" data-project-summary-open="${openScope}">${scopeEntryActionLabel(openScope)}</button>
       </div>
     </div>
   `;
@@ -918,7 +1857,7 @@ function conversationScopeLabel(value) {
 
 function stageSummaryApplyLabel(scope) {
   if (scope === "project_bootstrap") return "确认这版项目方向";
-  if (scope === "character_room") return "确认这版人物设定摘要";
+  if (scope === "character_room") return "确认这版人物摘要";
   if (scope === "outline_room") return "确认这版第一卷方向摘要";
   return "确认这版阶段摘要";
 }
@@ -1293,11 +2232,14 @@ function interviewDraftActions(thread, section) {
 
 async function openOrCreateConversationScope(scope) {
   if (!state.selectedProjectId) return;
-  const existing = (state.projectSnapshot.conversationThreads || []).find((item) => item.scope === scope && item.status === "open");
+  const target = scope === "character_room" ? currentProjectCharacterCard()?.target : null;
+  const existing = scope === "character_room"
+    ? latestCharacterThreadForTarget(target)
+    : (state.projectSnapshot.conversationThreads || []).find((item) => item.scope === scope && item.status === "open");
   if (existing) {
     state.selectedThreadId = existing.thread_id;
     await loadConversationMessages(existing.thread_id, { activateTab: true });
-    setStatus(`已进入${conversationScopeLabel(scope)}线程`, "ready");
+    setStatus(scope === "character_room" ? `已进入${characterCardTabLabel(target, 0)}的人物讨论。` : `已进入${conversationScopeLabel(scope)}线程`, "ready");
     return;
   }
   await createConversationThread(scope);
@@ -1309,6 +2251,7 @@ function renderInterviewSummary(thread) {
     el.conversationInterviewSummary.innerHTML = "";
     return;
   }
+  const setupFocusMode = currentWorkspaceMode() === "project_setup" && isSetupConversationScope(thread);
   const confirmed = interview.confirmed_topics?.length
     ? `<ul class="interview-list">${interview.confirmed_topics.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
     : `<div class="meta">还没有稳定确认项，先从当前下一问开始回答。</div>`;
@@ -1393,10 +2336,10 @@ function renderInterviewSummary(thread) {
         </div>
       `;
   const closureHint =
-    interview.completion_label === "4/4"
+    interview.completion_count === interview.total_topics && interview.total_topics
       ? `
         <div class="interview-block accent-block">
-          <strong>4 个核心问题已经答完</strong>
+          <strong>${escapeHtml(String(interview.total_topics || 0))} 个核心问题已经答完</strong>
           <div class="meta">如果你现在没有更多补充，下一步通常不是继续逐条点“采纳为写作规则”，而是先确认这版阶段摘要。</div>
           <div class="meta">优先动作：请直接点下面这张“现在该点这里”的主卡片，再不要在单条采纳按钮里停留。</div>
           <div class="meta">系统推荐：${escapeHtml(
@@ -1544,45 +2487,84 @@ function renderInterviewSummary(thread) {
       </section>
   `
     : "";
-  el.conversationInterviewSummary.innerHTML = `
-    <section class="interview-card">
-      <div class="card-head">
-        <h4>共创采访进度</h4>
-        <span class="status-chip status-approved">已确认 ${interview.completion_label}</span>
-      </div>
-      <div class="meta">${escapeHtml(interview.goal || "")}</div>
-      <div class="meta">${escapeHtml(interview.reflection_summary || "")}</div>
-      ${basis}
-      ${restartBlock}
-      ${closureHint}
-      ${renderStagePrimaryAction(thread, interview.stage_confirmation)}
-      <div class="interview-grid">
-        <div class="interview-block">
-          <strong>已确认事项</strong>
-          ${confirmed}
-          ${skipped}
+  el.conversationInterviewSummary.innerHTML = setupFocusMode
+    ? `
+      <section class="interview-focus-card">
+        <div class="card-head">
+          <div>
+            <div class="section-caption">现在先做这一件事</div>
+            <h4>回答当前问题</h4>
+          </div>
+          <span class="status-chip status-approved">已确认 ${interview.completion_label}</span>
         </div>
-        <div class="interview-block">
-          <strong>未决问题</strong>
-          ${unresolved}
+        <div class="interview-focus-prompt">${escapeHtml(interview.next_prompt || "继续补充你认为最关键的信息。")}</div>
+        <div class="meta">${escapeHtml(interview.goal || "")}</div>
+        <div class="meta">${escapeHtml(interview.reflection_summary || "")}</div>
+        ${basis}
+        ${optionButtons}
+        <div class="interview-focus-meta">
+          <span class="interview-focus-pill">已采纳 ${interview.adopted_count || 0} 条</span>
+          <span class="interview-focus-pill muted">回答后系统会继续追问，不需要一次说完整本书。</span>
         </div>
-      </div>
-      <div class="interview-grid">
-        <div class="interview-block">
-          <strong>系统下一问</strong>
-          <div class="meta">${escapeHtml(interview.next_prompt || "继续补充你认为最关键的信息。")}</div>
-          ${optionButtons}
+      </section>
+      <section class="interview-card interview-support-card">
+        ${renderStagePrimaryAction(thread, interview.stage_confirmation)}
+        ${closureHint}
+        <div class="interview-grid compact-grid">
+          <div class="interview-block">
+            <strong>已确认事项</strong>
+            ${confirmed}
+            ${skipped}
+          </div>
+          <div class="interview-block">
+            <strong>未决问题</strong>
+            ${unresolved}
+          </div>
         </div>
-        <div class="interview-block">
-          <strong>当前已采纳</strong>
-          <div class="meta">已采纳 ${interview.adopted_count || 0} 条</div>
-          ${adopted}
+        ${restartBlock}
+        ${stageConfirmation}
+        ${currentDraft}
+      </section>
+    `
+    : `
+      <section class="interview-card">
+        <div class="card-head">
+          <h4>共创采访进度</h4>
+          <span class="status-chip status-approved">已确认 ${interview.completion_label}</span>
         </div>
-      </div>
-      ${stageConfirmation}
-      ${currentDraft}
-    </section>
-  `;
+        <div class="meta">${escapeHtml(interview.goal || "")}</div>
+        <div class="meta">${escapeHtml(interview.reflection_summary || "")}</div>
+        ${basis}
+        ${restartBlock}
+        ${closureHint}
+        ${renderStagePrimaryAction(thread, interview.stage_confirmation)}
+        <div class="interview-grid">
+          <div class="interview-block">
+            <strong>已确认事项</strong>
+            ${confirmed}
+            ${skipped}
+          </div>
+          <div class="interview-block">
+            <strong>未决问题</strong>
+            ${unresolved}
+          </div>
+        </div>
+        <div class="interview-grid">
+          <div class="interview-block">
+            <strong>系统下一问</strong>
+            <div class="meta">${escapeHtml(interview.next_prompt || "继续补充你认为最关键的信息。")}</div>
+            ${optionButtons}
+          </div>
+          <div class="interview-block">
+            <strong>当前已采纳</strong>
+            <div class="meta">已采纳 ${interview.adopted_count || 0} 条</div>
+            ${adopted}
+          </div>
+        </div>
+        ${stageConfirmation}
+        ${currentDraft}
+      </section>
+    `;
   el.conversationInterviewSummary.querySelectorAll("[data-interview-option]").forEach((node) => {
     node.addEventListener("click", () => {
       const choice = interview.next_options?.[Number(node.dataset.interviewOption)] || "";
@@ -1713,7 +2695,10 @@ function projectSummarySource(project) {
 
 function scopedSummarySource(project, scope) {
   if (!project) return null;
-  const key = scope === "character_room" ? "character_summary" : scope === "outline_room" ? "outline_summary" : null;
+  if (scope === "character_room") {
+    return currentProjectCharacterSummarySource(project) || anyCharacterSummarySource(project);
+  }
+  const key = scope === "outline_room" ? "outline_summary" : null;
   if (!key) return null;
   const applied = project.default_user_brief?.[key];
   if (applied) {
@@ -1746,7 +2731,7 @@ function openingReadiness(project) {
     };
   }
   const projectStage = projectSummarySource(project);
-  const characterStage = scopedSummarySource(project, "character_room");
+  const characterStage = anyCharacterSummarySource(project) || scopedSummarySource(project, "character_room");
   const outlineStage = scopedSummarySource(project, "outline_room");
   const items = [
     {
@@ -1759,7 +2744,7 @@ function openingReadiness(project) {
       scope: "character_room",
       label: "人物设定",
       done: characterStage?.status === "applied",
-      summary: characterStage?.summary?.readiness || "先把主角气质、欲望和边界收紧成人物设定摘要。",
+      summary: characterStage?.summary?.readiness || "先至少把一张核心人物卡的气质、欲望和边界收紧成人物摘要。",
     },
     {
       scope: "outline_room",
@@ -1855,7 +2840,7 @@ function projectSetupStages(project) {
       key: "character_room",
       label: "人物设定",
       done: characterStage?.status === "applied",
-      summary: characterStage?.summary?.readiness || "先把主角气质、欲望和边界收紧成人物设定摘要。",
+      summary: characterStage?.summary?.readiness || "先至少把一张核心人物卡的气质、欲望和边界收紧成人物摘要。",
     },
     {
       key: "outline_room",
@@ -1951,7 +2936,7 @@ function projectStageCompletionCriteria(project, stageKey) {
   if (stageKey === "character_room") {
     return [
       {
-        label: "主角欲望、边界或角色气质，已经有可确认的说法",
+        label: "当前人物卡的欲望、边界或角色气质，已经有可确认的说法",
         done: items.length >= 2 || confirmedItems.length >= 1 || source?.status === "applied",
       },
       {
@@ -2095,6 +3080,57 @@ function renderProjectLaunchReadiness(project) {
   const launchCopy = readiness.ready
     ? "三层开书信息已经齐了。现在可以直接开始正式首章创作。"
     : `当前已完成 ${readiness.completed}/${readiness.total} 项。建议先补齐缺口，再开始正式首章；如果只是想低成本试方向，可以继续用“快速试写”。`;
+  if (currentWorkspaceMode() === "project_setup") {
+    const missingLabels = readiness.items.filter((item) => !item.done).map((item) => item.label);
+    el.projectLaunchReadiness.innerHTML = `
+      <div class="panel-head">
+        <div>
+          <h3>正式开书提示</h3>
+          <div class="muted">${
+            readiness.ready
+              ? "三层摘要已经齐了，可以从这里直接进入正式首章。"
+              : `现在先别急着正式开书。还差 ${escapeHtml(missingLabels.join("、")) || "部分开书信息"}。`
+          }</div>
+        </div>
+        <div class="actions">
+          <button class="button ${readiness.ready ? "primary" : "ghost"}" type="button" data-launch-start="true" ${readiness.ready ? "" : "disabled"}>以正式模式开始首章</button>
+          <button class="button ghost" type="button" data-launch-quick="true">只做快速试写</button>
+        </div>
+      </div>
+      <div class="launch-teaser">
+        <div class="summary-card ${readiness.ready ? "good" : "warn"}">
+          <div class="summary-label">当前状态</div>
+          <div class="summary-value">${readiness.ready ? "已具备正式开书条件" : `已完成 ${readiness.completed}/${readiness.total} 项`}</div>
+          <div class="meta">${escapeHtml(launchCopy)}</div>
+        </div>
+      </div>
+    `;
+    el.projectLaunchReadiness.querySelectorAll("[data-launch-start]").forEach((node) => {
+      node.addEventListener("click", async () => {
+        try {
+          setWorkspaceTab("dashboard");
+          await createRun({
+            quickMode: false,
+            chapterFocus: state.launchPlan.chapterFocus,
+            launchNote: state.launchPlan.launchNote,
+          });
+        } catch (error) {
+          setStatus(String(error.message || error), "error");
+        }
+      });
+    });
+    el.projectLaunchReadiness.querySelectorAll("[data-launch-quick]").forEach((node) => {
+      node.addEventListener("click", async () => {
+        try {
+          setWorkspaceTab("dashboard");
+          await createRun({ quickMode: true });
+        } catch (error) {
+          setStatus(String(error.message || error), "error");
+        }
+      });
+    });
+    return;
+  }
   el.projectLaunchReadiness.innerHTML = `
     <div class="panel-head">
       <div>
@@ -2145,7 +3181,12 @@ function renderProjectLaunchReadiness(project) {
   el.projectLaunchReadiness.querySelectorAll("[data-launch-open-scope]").forEach((node) => {
     node.addEventListener("click", async () => {
       try {
-        await openOrCreateConversationScope(node.dataset.launchOpenScope);
+        const scope = node.dataset.launchOpenScope;
+        if (scope === "character_room") {
+          openCharacterSetupPage(project);
+          return;
+        }
+        await openOrCreateConversationScope(scope);
       } catch (error) {
         setStatus(String(error.message || error), "error");
       }
@@ -2202,13 +3243,22 @@ function renderProjectBriefSummary(project) {
     return;
   }
   const setupStages = projectSetupStages(project);
-  const setupSummary = setupStages.find((item) => item.active) || setupStages[setupStages.length - 1];
+  const currentStage = setupStages.find((item) => item.active) || setupStages[setupStages.length - 1];
+  const setupSummary = setupStages.find((item) => item.key === currentProjectSetupSection(project)) || currentStage;
   const setupDiagnosis = projectSetupDiagnosis(project);
   const setupCriteria = projectStageCompletionCriteria(project, setupSummary.key);
+  const setupMode = currentWorkspaceMode() === "project_setup";
+  const activeSource =
+    setupSummary.key === "project_bootstrap"
+      ? projectSummarySource(project)
+      : setupSummary.key === "character_room" || setupSummary.key === "outline_room"
+        ? scopedSummarySource(project, setupSummary.key)
+        : null;
+  const activeHighlights = activeSource?.summary?.items?.slice(0, 3) || [];
   const setupTimeline = `
     <section class="project-setup-strip">
       <div class="summary-card accent">
-        <div class="summary-label">当前开书进度</div>
+        <div class="summary-label">当前查看步骤</div>
         <div class="summary-value">${escapeHtml(setupSummary.label)} · ${setupSummary.done ? "已就绪" : "正在补齐"}</div>
         <div class="meta">${escapeHtml(setupSummary.summary || "")}</div>
       </div>
@@ -2216,11 +3266,11 @@ function renderProjectBriefSummary(project) {
         ${setupStages
           .map(
             (item) => `
-              <button class="project-setup-step ${item.done ? "done" : item.active ? "active" : "pending"}" type="button" data-project-stage-open="${item.key}">
-                <span class="step-index">${item.done ? "已" : item.active ? "今" : "待"}</span>
+              <button class="project-setup-step ${item.done ? "done" : setupSummary.key === item.key ? "active" : "pending"}" type="button" data-project-stage-view="${item.key}">
+                <span class="step-index">${item.done ? "已" : setupSummary.key === item.key ? "看" : "待"}</span>
                 <span class="step-copy">
                   <strong>${escapeHtml(item.label)}</strong>
-                  <span>${escapeHtml(item.done ? "已就绪" : item.active ? "当前重点" : "待推进")}</span>
+                  <span>${escapeHtml(item.done ? "已就绪" : setupSummary.key === item.key ? "当前页面" : "待推进")}</span>
                 </span>
               </button>
             `
@@ -2245,8 +3295,8 @@ function renderProjectBriefSummary(project) {
           <div class="summary-label">现在去做什么</div>
           <div class="summary-value">${escapeHtml(setupDiagnosis.nextStep || "")}</div>
           <div class="actions">
-            <button class="button ghost" type="button" data-project-stage-open="${escapeHtml(setupSummary.key)}">${
-              setupSummary.key === "launch_readiness" ? "去开书确认页" : `进入${escapeHtml(setupSummary.label)}`
+            <button class="button ghost" type="button" data-project-stage-view="${escapeHtml(currentStage.key)}">${
+              currentStage.key === "launch_readiness" ? "查看开书确认" : `查看${escapeHtml(currentStage.label)}`
             }</button>
           </div>
         </div>
@@ -2268,6 +3318,89 @@ function renderProjectBriefSummary(project) {
       </div>
     </section>
   `;
+  if (setupMode) {
+    const summaryStatus = activeSource?.status === "applied" ? "这一步摘要已写回" : activeSource?.status === "draft" ? "这一步已有待确认摘要" : "这一步还在收口";
+    const criteriaHtml = setupCriteria
+      .map(
+        (item) => `
+          <li class="criteria-item ${item.done ? "done" : "pending"}">
+            <span class="criteria-badge">${item.done ? "已达成" : "待补齐"}</span>
+            <span>${escapeHtml(item.label)}</span>
+          </li>
+        `
+      )
+      .join("");
+    const highlightHtml = activeHighlights.length
+      ? `<ul class="interview-list">${activeHighlights
+          .map((item) => `<li><strong>${escapeHtml(item.label || "")}</strong>：${escapeHtml(item.summary || "")}</li>`)
+          .join("")}</ul>`
+      : `<div class="meta">当前还没有稳定摘要，先进入对应讨论，把这一步说出第一版可确认表达。</div>`;
+    el.projectBriefSummary.innerHTML = `
+      <div class="panel-head">
+        <div>
+          <h3>当前项目摘要</h3>
+          <div class="muted">先选择你现在要处理的设定步骤。进入“人物设定”后，人物卡才会出现在下方。</div>
+        </div>
+        <div class="actions">
+          ${
+            setupSummary.key !== "launch_readiness"
+              ? `<button class="button primary" type="button" data-project-summary-open="${escapeHtml(setupSummary.key)}">${
+                  setupSummary.key === "character_room" ? "查看人物设定页" : `进入${escapeHtml(setupSummary.label)}讨论`
+                }</button>`
+              : `<button class="button primary" type="button" data-project-stage-view="launch_readiness">查看开书确认</button>`
+          }
+        </div>
+      </div>
+      <section class="setup-focus-shell">
+        <div class="summary-card accent setup-focus-main">
+          <div class="summary-label">当前页面</div>
+          <div class="summary-value">${escapeHtml(setupSummary.label)}</div>
+          <div class="meta">${escapeHtml(setupDiagnosis.blocker || "")}</div>
+          <div class="meta">${escapeHtml(setupDiagnosis.nextStep || "")}</div>
+          <div class="setup-focus-actions">
+            ${
+              setupSummary.key !== "launch_readiness"
+                ? `<button class="button primary" type="button" data-project-summary-open="${escapeHtml(setupSummary.key)}">${
+                    setupSummary.key === "character_room" ? "查看人物设定页" : "进入这一步讨论"
+                  }</button>`
+                : `<button class="button primary" type="button" data-project-stage-view="launch_readiness">查看开书确认</button>`
+            }
+            ${
+              setupSummary.key !== "launch_readiness"
+                ? `<button class="button ghost" type="button" data-project-stage-view="${escapeHtml(currentStage.key)}">切回当前重点</button>`
+                : ""
+            }
+          </div>
+        </div>
+        <div class="setup-stage-rail">
+          ${setupStages
+            .map(
+              (item) => `
+                <button class="project-setup-step ${item.done ? "done" : setupSummary.key === item.key ? "active" : "pending"}" type="button" data-project-stage-view="${item.key}">
+                  <span class="step-index">${item.done ? "已" : setupSummary.key === item.key ? "看" : "待"}</span>
+                  <span class="step-copy">
+                    <strong>${escapeHtml(item.label)}</strong>
+                    <span>${escapeHtml(item.done ? "已就绪" : setupSummary.key === item.key ? "当前页面" : "后续再做")}</span>
+                  </span>
+                </button>
+              `
+            )
+            .join("")}
+        </div>
+        <div class="setup-focus-grid">
+          <div class="summary-card">
+            <div class="summary-label">这一段现在是什么状态</div>
+            <div class="summary-value">${escapeHtml(summaryStatus)}</div>
+            ${highlightHtml}
+          </div>
+          <div class="summary-card">
+            <div class="summary-label">进入下一段前，最好先满足</div>
+            <ul class="interview-list">${criteriaHtml}</ul>
+          </div>
+        </div>
+      </section>
+    `;
+  } else {
   const summarySource = projectSummarySource(project);
   const characterSource = scopedSummarySource(project, "character_room");
   const outlineSource = scopedSummarySource(project, "outline_room");
@@ -2308,7 +3441,7 @@ function renderProjectBriefSummary(project) {
               : ""
           }
           <button class="button ghost" type="button" data-project-summary-open="project_bootstrap">继续立项共创</button>
-          <button class="button ghost" type="button" data-project-summary-open="character_room">进入人物讨论</button>
+          <button class="button ghost" type="button" data-project-summary-open="character_room">查看人物设定页</button>
           <button class="button ghost" type="button" data-project-summary-open="outline_room">进入大纲讨论</button>
         </div>
       </div>
@@ -2327,33 +3460,31 @@ function renderProjectBriefSummary(project) {
               : `<div class="meta">意图画像会在立项共创确认后写回这里。</div>`
           }
         </div>
-        ${renderScopeSummary("人物设定摘要", characterSource, "character_room")}
+        ${renderScopeSummary("人物摘要（按人物卡）", characterSource, "character_room")}
         ${renderScopeSummary("第一卷方向摘要", outlineSource, "outline_room")}
       </div>
     `;
   }
+  }
   el.projectBriefSummary.querySelectorAll("[data-project-summary-open]").forEach((node) => {
     node.addEventListener("click", async () => {
       try {
-        await openOrCreateConversationScope(node.dataset.projectSummaryOpen);
+        const scope = node.dataset.projectSummaryOpen;
+        if (scope === "character_room") {
+          openCharacterSetupPage(project);
+          return;
+        }
+        await openOrCreateConversationScope(scope);
       } catch (error) {
         setStatus(String(error.message || error), "error");
       }
     });
   });
-  el.projectBriefSummary.querySelectorAll("[data-project-stage-open]").forEach((node) => {
-    node.addEventListener("click", async () => {
-      try {
-        const key = node.dataset.projectStageOpen;
-        if (key === "launch_readiness") {
-          el.projectLaunchReadiness?.scrollIntoView({ behavior: "smooth", block: "start" });
-          setStatus("已定位到开书确认页。", "ready");
-          return;
-        }
-        await openOrCreateConversationScope(key);
-      } catch (error) {
-        setStatus(String(error.message || error), "error");
-      }
+  el.projectBriefSummary.querySelectorAll("[data-project-stage-view]").forEach((node) => {
+    node.addEventListener("click", () => {
+      const key = node.dataset.projectStageView;
+      setProjectSetupSection(key, project);
+      setStatus(key === "character_room" ? "已切到人物设定页。现在先选择人物卡，再填写该人物设定。" : `已切到${node.textContent.trim()}。`, "ready");
     });
   });
   el.projectBriefSummary.querySelectorAll("[data-project-summary-apply]").forEach((node) => {
@@ -2671,6 +3802,10 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;");
 }
 
+function escapeAttribute(value) {
+  return escapeHtml(value).replaceAll('"', "&quot;");
+}
+
 function summarizeArtifact(item) {
   const payload = item.payload || {};
   const guidanceBullets = artifactGuidanceBullets(item.artifact_type);
@@ -2928,6 +4063,16 @@ function parseListField(value) {
     .split(/\n|,/)
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function updateCharacterCardDraftValue(scope, index, field, value) {
+  if (!field) return;
+  const targetCards = scope === "create" ? state.projectCreationCharacterCards : state.projectCharacterCardsDraft;
+  if (!Array.isArray(targetCards) || index < 0 || index >= targetCards.length) return;
+  targetCards[index] = {
+    ...createEmptyCharacterCard(targetCards[index]),
+    [field]: value,
+  };
 }
 
 function artifactPayload(items, artifactType) {
@@ -3904,8 +5049,13 @@ function renderFocusRun(summary) {
 function renderProjectState() {
   const project = selectedProject();
   const snapshot = state.projectSnapshot;
+  const mode = currentWorkspaceMode();
+  renderWorkspaceTab();
+  renderProjectPageLayout(project);
+  renderProjectFormCharacterCards();
   renderProjectBriefSummary(project);
   renderProjectLaunchReadiness(project);
+  renderProjectCharacterCards(project);
   renderChapters(snapshot.chapters || []);
   const focusRunId = pickFocusRun(snapshot.runs || [])?.run_id || null;
   const summary = deriveSummary(project, snapshot);
@@ -3918,27 +5068,101 @@ function renderProjectState() {
   renderBusinessMetrics(state.businessMetrics);
   renderStrategySuggestions(state.strategySuggestions);
   renderConversationPanel();
+  if (el.dashboardMetricsPanel) {
+    el.dashboardMetricsPanel.hidden = mode !== "project_work";
+  }
+  if (el.dashboardStrategyPanel) {
+    el.dashboardStrategyPanel.hidden = mode !== "project_work";
+  }
+  if (el.dashboardRunBrief) {
+    el.dashboardRunBrief.hidden = mode !== "project_work";
+  }
 }
 
 function renderProjects() {
+  const mode = currentWorkspaceMode();
+  if (el.sidebarProjectTip) {
+    el.sidebarProjectTip.textContent = mode === "project_setup"
+      ? "先只盯当前这个项目，把开书前这一步补齐。其他项目收在下方，避免分心。"
+      : mode === "project_work"
+        ? "先只推进当前项目的一步。需要切换时，再展开下方项目列表。"
+        : "先选中你今天要继续推进的那个项目。";
+  }
   if (!isAuthenticated()) {
+    if (el.sidebarCurrentProject) {
+      el.sidebarCurrentProject.innerHTML = `<div class="empty">登录后，这里会突出显示你当前正在推进的项目。</div>`;
+    }
+    if (el.sidebarProjectArchiveSummary) {
+      el.sidebarProjectArchiveSummary.textContent = "查看全部项目";
+    }
     el.projectsList.innerHTML = `<div class="empty">登录后才会显示你的项目。</div>`;
+    if (el.sidebarProjectArchive) {
+      el.sidebarProjectArchive.open = false;
+    }
     return;
   }
   if (!state.projects.length) {
-    el.projectsList.innerHTML = `<div class="empty">还没有项目</div>`;
+    if (el.sidebarCurrentProject) {
+      el.sidebarCurrentProject.innerHTML = `<div class="empty">还没有项目。先点“新建”，再用右侧的一种开局方式开始。</div>`;
+    }
+    if (el.sidebarProjectArchiveSummary) {
+      el.sidebarProjectArchiveSummary.textContent = "没有历史项目";
+    }
+    el.projectsList.innerHTML = `<div class="empty">还没有项目。先在右侧选一种开局方式，创建第一个项目。</div>`;
+    if (el.sidebarProjectArchive) {
+      el.sidebarProjectArchive.open = false;
+    }
     return;
   }
-  el.projectsList.innerHTML = state.projects
-    .map((project) => {
-      const active = project.project_id === state.selectedProjectId ? "active" : "";
-      return `<button class="card ${active}" data-project-id="${project.project_id}">
-        <h4>${project.name}</h4>
-        <div class="meta">${formatTimestamp(project.created_at)} · ${project.project_id}</div>
-      </button>`;
-    })
-    .join("");
-  el.projectsList.querySelectorAll("[data-project-id]").forEach((node) => {
+  const selected = selectedProject();
+  const projectCards = (projects, activeId = null) =>
+    projects
+      .map((project) => {
+        const active = project.project_id === activeId ? "active" : "";
+        return `<button class="card ${active}" data-project-id="${project.project_id}">
+          <h4>${project.name}</h4>
+          <div class="meta">${formatTimestamp(project.created_at)} · ${project.project_id}</div>
+        </button>`;
+      })
+      .join("");
+  if (el.sidebarCurrentProject) {
+    if (!selected) {
+      el.sidebarCurrentProject.innerHTML = `<div class="empty">你正在新建项目。若要继续旧项目，可从下方展开项目列表切换。</div>`;
+    } else {
+      const readiness = openingReadiness(selected);
+      const stageCopy = mode === "project_setup"
+        ? `开书确认 ${readiness.completed}/${readiness.total}`
+        : mode === "project_work"
+          ? "当前已进入写作推进阶段"
+          : "当前项目";
+      const focusCopy = mode === "project_setup"
+        ? "先只完成当前开书步骤，再进入正式章节生成。"
+        : "先在右侧按系统给出的下一步推进，不要同时处理多块内容。";
+      el.sidebarCurrentProject.innerHTML = `
+        <button class="card active sidebar-current-card" data-project-id="${selected.project_id}">
+          <div class="card-head">
+            <h4>${selected.name}</h4>
+            <span class="priority-chip high">当前项目</span>
+          </div>
+          <div class="meta">${stageCopy}</div>
+          <div class="card-caption">${focusCopy}</div>
+        </button>
+      `;
+    }
+  }
+  const otherProjects = state.projects.filter((project) => project.project_id !== state.selectedProjectId);
+  if (el.sidebarProjectArchiveSummary) {
+    el.sidebarProjectArchiveSummary.textContent = otherProjects.length
+      ? `切换到其他项目（${otherProjects.length}）`
+      : "没有其他项目";
+  }
+  el.projectsList.innerHTML = otherProjects.length
+    ? projectCards(otherProjects)
+    : `<div class="empty">当前只有这一个项目，不需要切换。</div>`;
+  if (el.sidebarProjectArchive) {
+    el.sidebarProjectArchive.open = !selected || mode === "project_create";
+  }
+  document.querySelectorAll("#sidebar-current-project [data-project-id], #projects-list [data-project-id]").forEach((node) => {
     node.addEventListener("click", () => selectProject(node.dataset.projectId));
   });
 }
@@ -4402,12 +5626,7 @@ function renderArtifacts(items) {
 }
 
 function renderConversationThreads(items) {
-  const focusRun = pickFocusRun(state.projectSnapshot.runs || []);
-  CONVERSATION_SCENE_CONFIG.forEach(({ scope, element }) => {
-    const node = el[element];
-    if (!node) return;
-    node.disabled = !state.selectedProjectId || (scopeNeedsRunContext(scope) && !focusRun);
-  });
+  renderConversationSceneButtons();
   if (!items.length) {
     el.conversationThreadList.innerHTML = `<div class="empty">还没有创作对话。你可以直接按上面的创作场景开一个线程。</div>`;
     return;
@@ -4468,6 +5687,9 @@ function renderConversationThreads(items) {
 function messageAdoptActions(thread, item) {
   if (!thread) return [];
   if (!["user", "assistant"].includes(item.role)) return [];
+  if (currentWorkspaceMode() === "project_setup" && isSetupConversationScope(thread)) {
+    return [];
+  }
   if (thread.scope === "project_bootstrap") {
     return [{ label: "采纳为写作规则", decisionType: "writer_playbook_rule" }];
   }
@@ -4495,8 +5717,10 @@ function renderConversationMessages(items) {
     el.conversationMessageList.innerHTML = `<div class="empty">当前线程还没有消息。</div>`;
     return;
   }
-  el.conversationMessageList.innerHTML = items
-    .map((item) => {
+  const compactSetupHistory = currentWorkspaceMode() === "project_setup" && isSetupConversationScope(thread) && items.length > 2;
+  const visibleItems = compactSetupHistory ? items.slice(-2) : items;
+  const earlierItems = compactSetupHistory ? items.slice(0, -2) : [];
+  const renderMessage = (item) => {
       const actions = messageAdoptActions(thread, item);
       return `
       <article class="conversation-message ${item.role}">
@@ -4511,8 +5735,22 @@ function renderConversationMessages(items) {
         }
       </article>
     `;
-    })
-    .join("");
+    };
+  el.conversationMessageList.innerHTML = `
+    ${
+      earlierItems.length
+        ? `
+          <details class="conversation-message-history">
+            <summary>查看更早对话（${earlierItems.length}）</summary>
+            <div class="stack compact conversation-message-history-body">
+              ${earlierItems.map((item) => renderMessage(item)).join("")}
+            </div>
+          </details>
+        `
+        : ""
+    }
+    ${visibleItems.map((item) => renderMessage(item)).join("")}
+  `;
   el.conversationMessageList.querySelectorAll("[data-action='adopt-message']").forEach((node) => {
     node.addEventListener("click", () => adoptConversationMessage(node.dataset.id, node.dataset.decisionType));
   });
@@ -4586,7 +5824,7 @@ function renderConversationDecisions(items) {
     {
       key: "characters",
       title: "人物",
-      description: "主角气质、角色边界、人物关系张力等长期影响角色塑造的结论。",
+      description: "当前人物卡的气质、边界、关系张力等会长期影响角色塑造的结论。",
       createLabel: "新建人物设定",
       createType: "character_note",
     },
@@ -4718,6 +5956,7 @@ function renderConversationPanel() {
   renderConversationThreads(threads);
   renderConversationDecisions(state.projectSnapshot.conversationDecisions || []);
   const thread = selectedThread();
+  const setupFocusMode = currentWorkspaceMode() === "project_setup" && isSetupConversationScope(thread);
   const actionPlan = deriveConversationAction();
   el.conversationThreadCaption.textContent = thread
     ? `${thread.title} · ${conversationScopeLabel(thread.scope)}`
@@ -4737,10 +5976,43 @@ function renderConversationPanel() {
   } else {
     clearConversationFeedback();
   }
-  el.conversationInput.placeholder = conversationInputPlaceholder(thread);
   renderInterviewSummary(thread);
   renderThreadContext(thread);
   renderConversationMessages(state.conversationMessages || []);
+  const hasConversationContent = Boolean(threads.length || (state.projectSnapshot.conversationDecisions || []).length || thread);
+  renderConversationSceneGuide(hasConversationContent);
+  const showSceneChooser = shouldShowConversationSceneChooser(thread);
+  if (el.conversationSceneGuide) {
+    el.conversationSceneGuide.hidden = !showSceneChooser;
+  }
+  if (el.conversationSceneGrid) {
+    el.conversationSceneGrid.hidden = !showSceneChooser;
+  }
+  if (el.conversationLayout) {
+    el.conversationLayout.hidden = !hasConversationContent;
+  }
+  if (el.conversationSceneGrid) {
+    el.conversationSceneGrid.classList.toggle("primary-only", !hasConversationContent);
+  }
+  if (el.conversationSidebar) {
+    el.conversationSidebar.hidden = setupFocusMode;
+  }
+  if (el.conversationActionBar) {
+    el.conversationActionBar.hidden = setupFocusMode;
+  }
+  if (el.conversationFormLabel) {
+    el.conversationFormLabel.textContent = setupFocusMode
+      ? "先回答当前这一个问题；不需要一次想清所有设定。"
+      : "告诉系统你想保留什么、调整什么、或者想继续追问什么";
+  }
+  el.conversationInput.rows = setupFocusMode ? 5 : 4;
+  if (setupFocusMode) {
+    el.conversationInput.placeholder = "例如：我最想保住的是悬念感，因为我希望读者一直想知道废炉里的声音到底是什么。";
+    el.conversationSend.textContent = "发送回答";
+  } else {
+    el.conversationInput.placeholder = conversationInputPlaceholder(thread);
+    el.conversationSend.textContent = "发送并沉淀";
+  }
   el.conversationSend.disabled = !thread || thread.status !== "open";
   if (!thread && !state.conversationMessages.length) {
     el.conversationInterviewSummary.innerHTML = "";
@@ -4792,6 +6064,12 @@ async function openConversationThread(threadId) {
 function conversationThreadBody(scope) {
   const focusRun = pickFocusRun(state.projectSnapshot.runs || []);
   const body = { scope };
+  if (scope === "character_room") {
+    const activeCharacter = currentProjectCharacterCard();
+    if (activeCharacter?.target) {
+      body.character_card = activeCharacter.target;
+    }
+  }
   if (scopeNeedsRunContext(scope) && focusRun) {
     body.linked_run_id = focusRun.run_id;
     body.linked_chapter_no = chapterForRun(focusRun);
@@ -4812,7 +6090,8 @@ async function createConversationThread(scope) {
   state.selectedThreadId = thread.thread_id;
   await loadConversationMessages(thread.thread_id, { activateTab: true });
   clearConversationFeedback();
-  setStatus(`已创建${conversationScopeLabel(scope)}线程`, "ready");
+  const target = scope === "character_room" ? body.character_card : null;
+  setStatus(scope === "character_room" ? `已创建${characterCardTabLabel(target, 0)}的人物讨论线程。` : `已创建${conversationScopeLabel(scope)}线程`, "ready");
 }
 
 async function restartConversationThread(threadId) {
@@ -4980,6 +6259,7 @@ async function createConversationDecisionFromDraft({ threadId, decisionType, con
 
 async function applyStageSummary(threadId) {
   if (!threadId) return;
+  const thread = (state.projectSnapshot.conversationThreads || []).find((item) => item.thread_id === threadId) || null;
   await api(`/api/conversation-threads/${threadId}/apply-stage-summary`, {
     method: "POST",
   });
@@ -4991,7 +6271,12 @@ async function applyStageSummary(threadId) {
     await loadConversationMessages(state.selectedThreadId, { activateTab: false });
   }
   setWorkspaceTab("project");
-  setStatus("已把这版阶段摘要写回项目设定", "ready");
+  setStatus(
+    thread?.scope === "character_room"
+      ? "已确认这版人物摘要，并同步更新当前人物卡"
+      : "已把这版阶段摘要写回项目设定",
+    "ready"
+  );
 }
 
 async function applyAndSplitStageSummary(threadId) {
@@ -5128,7 +6413,7 @@ async function loadProjects() {
   setStatus("正在加载项目…");
   state.projects = (await api("/api/projects")).sort((left, right) => right.created_at.localeCompare(left.created_at));
   renderProjects();
-  if (!state.selectedProjectId && state.projects.length) {
+  if (!state.selectedProjectId && state.projects.length && !state.projectCreationMode) {
     await selectProject(state.projects[0].project_id);
     return;
   }
@@ -5148,12 +6433,15 @@ async function selectProject(projectId) {
     updateAuthUi();
     return;
   }
+  state.projectCreationMode = false;
   state.selectedProjectId = projectId;
+  state.projectSetupSection = null;
   state.decisionDrafts = [];
   renderProjects();
   const project = state.projects.find((item) => item.project_id === projectId);
   el.projectTitle.textContent = project?.name || "未选择项目";
-  el.projectMeta.textContent = project ? `${project.project_id}` : "选择左侧项目后查看详情";
+  el.projectMeta.textContent = project ? `创建于 ${formatTimestamp(project.created_at)} · ${project.project_id}` : "选择左侧项目后查看详情";
+  syncProjectCharacterCardsDraft(project, true);
   if (!project) {
     renderProjectState();
     return;
@@ -5384,6 +6672,7 @@ async function createProject(event) {
           hook: String(formData.get("brief_hook") || "").trim(),
           must_have: parseListField(formData.get("brief_must_have")),
           must_not_have: parseListField(formData.get("brief_must_not_have")),
+          character_cards: normalizeCharacterCards(state.projectCreationCharacterCards, { requireName: true }),
         };
     const project = await api("/api/projects", {
       method: "POST",
@@ -5394,7 +6683,12 @@ async function createProject(event) {
         default_user_brief: defaultUserBrief,
       }),
     });
+    state.projectCreationPath = "idea";
+    state.projectCreationMode = false;
+    state.projectCreationCharacterCards = createDefaultCharacterCards();
+    state.projectCreationCharacterCardIndex = 0;
     form.reset();
+    renderProjectFormCharacterCards();
     await loadProjects();
     await selectProject(project.project_id);
     await loadAudit();
@@ -5403,6 +6697,82 @@ async function createProject(event) {
   } catch (error) {
     setStatus(String(error.message || error), "error");
   }
+}
+
+async function saveProjectCharacterCards() {
+  if (!state.selectedProjectId) return;
+  const project = selectedProject();
+  if (!project) return;
+  const updated = await api(`/api/projects/${state.selectedProjectId}/brief`, {
+    method: "PUT",
+    body: JSON.stringify({
+      default_user_brief: {
+        ...(project.default_user_brief || {}),
+        character_cards: normalizeCharacterCards(state.projectCharacterCardsDraft, { requireName: true }),
+      },
+    }),
+  });
+  state.projects = state.projects.map((item) => (item.project_id === updated.project_id ? updated : item));
+  syncProjectCharacterCardsDraft(updated, true);
+  renderProjects();
+  renderProjectState();
+  setStatus(`已保存 ${updated.default_user_brief?.character_cards?.length || 0} 张人物卡。`, "ready");
+}
+
+async function syncProjectCharacterCardsFromSummary() {
+  if (!state.selectedProjectId) return;
+  const updated = await api(`/api/projects/${state.selectedProjectId}/character-cards/sync-from-summary`, {
+    method: "POST",
+  });
+  state.projects = state.projects.map((item) => (item.project_id === updated.project_id ? updated : item));
+  syncProjectCharacterCardsDraft(updated, true);
+  renderProjects();
+  renderProjectState();
+  setStatus(`已根据已确认的人物摘要同步 ${updated.default_user_brief?.character_cards?.length || 0} 张人物卡。`, "ready");
+}
+
+async function generateProjectCharacterPortrait() {
+  if (!state.selectedProjectId) return;
+  const activeCharacter = currentProjectCharacterCard();
+  if (!activeCharacter?.target?.character_id) {
+    throw new Error("请先选中一张人物卡，并至少填写人物标签或角色名。");
+  }
+  await saveProjectCharacterCards();
+  const updated = await api(`/api/projects/${state.selectedProjectId}/character-cards/${activeCharacter.target.character_id}/portrait`, {
+    method: "POST",
+  });
+  state.projects = state.projects.map((item) => (item.project_id === updated.project_id ? updated : item));
+  syncProjectCharacterCardsDraft(updated, true);
+  setCurrentCharacterCardIndex("project", activeCharacter.index, state.projectCharacterCardsDraft);
+  renderProjects();
+  renderProjectState();
+  setStatus(`已生成人物画像：${characterCardTabLabel(activeCharacter.card, activeCharacter.index)}。`, "ready");
+}
+
+function showProjectCreator() {
+  state.projectCreationMode = true;
+  state.projectCreationPath = "idea";
+  state.projectSetupSection = null;
+  state.projectCreationCharacterCards = createDefaultCharacterCards();
+  state.projectCreationCharacterCardIndex = 0;
+  state.selectedProjectId = null;
+  state.selectedRunId = null;
+  state.selectedThreadId = null;
+  state.conversationMessages = [];
+  state.projectSnapshot = {
+    chapters: [],
+    runs: [],
+    approvals: [],
+    conversationThreads: [],
+    conversationDecisions: [],
+  };
+  state.businessMetrics = null;
+  state.strategySuggestions = null;
+  renderProjects();
+  renderProjectState();
+  renderProjectFormCharacterCards();
+  setWorkspaceTab("project");
+  setStatus("现在先创建一个新项目。", "ready");
 }
 
 async function createRun({ quickMode = false, chapterFocus = null, launchNote = null } = {}) {
@@ -5422,8 +6792,14 @@ async function createRun({ quickMode = false, chapterFocus = null, launchNote = 
     });
     state.selectedRunId = payload.run_id;
     await selectProject(state.selectedProjectId);
+    if (currentWorkspaceMode() === "project_work" && state.activeWorkspaceTab !== "dashboard") {
+      setWorkspaceTab("dashboard");
+    }
     const completedRun = await waitForRunCompletion(payload.run_id);
     await selectProject(state.selectedProjectId);
+    if (currentWorkspaceMode() === "project_work" && state.activeWorkspaceTab !== "dashboard") {
+      setWorkspaceTab("dashboard");
+    }
     await loadAudit();
     if (completedRun) {
       setStatus(quickMode ? "快速试写已完成" : "正式首章已启动并完成当前运行");
@@ -5556,14 +6932,91 @@ async function boot() {
     if (!isAuthenticated()) setAuthFeedback("第一次使用时，先注册笔名，再登录进入你的创作空间。");
   });
   el.refreshProjects.addEventListener("click", () => loadProjects().catch((error) => setStatus(error.message, "error")));
+  if (el.showProjectCreator) {
+    el.showProjectCreator.addEventListener("click", showProjectCreator);
+  }
+  if (el.projectCreatorIdeaPath) {
+    el.projectCreatorIdeaPath.addEventListener("click", () => setProjectCreationPath("idea"));
+  }
+  if (el.projectCreatorFullPath) {
+    el.projectCreatorFullPath.addEventListener("click", () => setProjectCreationPath("full"));
+  }
   el.refreshAudit.addEventListener("click", () => loadAudit().catch((error) => setStatus(error.message, "error")));
   el.ideaCaptureForm.addEventListener("submit", createIdeaProject);
   el.projectForm.addEventListener("submit", createProject);
+  if (el.projectFormCharacterCards) {
+    el.projectFormCharacterCards.addEventListener("input", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      const { characterScope, characterIndex, characterField } = target.dataset;
+      if (characterScope !== "create" || !characterField) return;
+      updateCharacterCardDraftValue("create", Number(characterIndex || -1), characterField, target.value);
+    });
+    el.projectFormCharacterCards.addEventListener("change", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      const { characterScope, characterIndex, characterField } = target.dataset;
+      if (characterScope !== "create" || !characterField) return;
+      updateCharacterCardDraftValue("create", Number(characterIndex || -1), characterField, target.value);
+      if (["slot_label", "name", "cast_type"].includes(characterField)) {
+        renderProjectFormCharacterCards();
+      }
+    });
+    el.projectFormCharacterCards.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      if (target.dataset.characterScope !== "create") return;
+      if (target.dataset.characterAction === "select") {
+        setCurrentCharacterCardIndex("create", Number(target.dataset.characterIndex || 0), state.projectCreationCharacterCards);
+        renderProjectFormCharacterCards();
+        return;
+      }
+      if (target.dataset.characterAction !== "remove") return;
+      const index = Number(target.dataset.characterIndex || -1);
+      if (index < 0) return;
+      state.projectCreationCharacterCards.splice(index, 1);
+      if (!state.projectCreationCharacterCards.length) {
+        state.projectCreationCharacterCards = createDefaultCharacterCards();
+      }
+      setCurrentCharacterCardIndex("create", Math.max(0, index - 1), state.projectCreationCharacterCards);
+      renderProjectFormCharacterCards();
+    });
+  }
+  if (el.projectFormAddCharacter) {
+    el.projectFormAddCharacter.addEventListener("click", () => {
+      state.projectCreationCharacterCards.push(createCharacterCardWithDefaultLabel(state.projectCreationCharacterCards.length));
+      state.projectCreationCharacterCardIndex = state.projectCreationCharacterCards.length - 1;
+      renderProjectFormCharacterCards();
+    });
+  }
+  if (el.projectCharacterCards) {
+    el.projectCharacterCards.addEventListener("input", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      const { characterScope, characterIndex, characterField } = target.dataset;
+      if (characterScope !== "project" || !characterField) return;
+      updateCharacterCardDraftValue("project", Number(characterIndex || -1), characterField, target.value);
+    });
+    el.projectCharacterCards.addEventListener("change", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      const { characterScope, characterIndex, characterField } = target.dataset;
+      if (characterScope !== "project" || !characterField) return;
+      updateCharacterCardDraftValue("project", Number(characterIndex || -1), characterField, target.value);
+      if (["slot_label", "name", "cast_type"].includes(characterField)) {
+        renderProjectCharacterCards(selectedProject());
+      }
+    });
+  }
   el.createRun.addEventListener("click", () => createRun({ quickMode: false }));
   el.createRunQuick.addEventListener("click", () => createRun({ quickMode: true }));
   el.conversationExecute.addEventListener("click", () => executeConversationAction().catch((error) => reportConversationError(error)));
   el.conversationCreateBootstrap.addEventListener("click", () => createConversationThread("project_bootstrap").catch((error) => reportConversationError(error)));
-  el.conversationCreateCharacters.addEventListener("click", () => createConversationThread("character_room").catch((error) => reportConversationError(error)));
+  el.conversationCreateCharacters.addEventListener("click", () => {
+    const project = selectedProject();
+    if (!project) return;
+    openCharacterSetupPage(project);
+  });
   el.conversationCreateOutline.addEventListener("click", () => createConversationThread("outline_room").catch((error) => reportConversationError(error)));
   el.conversationCreatePlanning.addEventListener("click", () => createConversationThread("chapter_planning").catch((error) => reportConversationError(error)));
   el.conversationCreateRewrite.addEventListener("click", () => createConversationThread("rewrite_intervention").catch((error) => reportConversationError(error)));

@@ -66,6 +66,111 @@ def test_healthz() -> None:
     assert response.json()["database"]["backend"] == "inmemory"
 
 
+def test_project_brief_supports_multiple_character_cards() -> None:
+    client = make_client()
+
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "人物卡项目",
+            "default_user_brief": {"title": "长夜炉火", "genre": "东方玄幻"},
+            "default_target_chapters": 1,
+        },
+    ).json()
+
+    updated = client.put(
+        f"/api/projects/{project['project_id']}/brief",
+        json={
+            "default_user_brief": {
+                **project["default_user_brief"],
+                "character_cards": [
+                    {
+                        "character_id": "chu_yan",
+                        "slot_label": "男主",
+                        "name": "楚焰",
+                        "cast_type": "protagonist",
+                        "story_role": "主角",
+                        "desire": "活下去并翻盘",
+                        "fear": "被彻底逐出牌桌",
+                        "voiceprint": "克制、锋利、先观察后出手",
+                        "relationship": "主角本人",
+                        "summary": "外冷内烈，被压着也不认输。",
+                    },
+                    {
+                        "character_id": "han_qiu",
+                        "slot_label": "导师",
+                        "name": "韩秋",
+                        "cast_type": "mentor",
+                        "story_role": "暧昧导师",
+                        "desire": "借主角撬开旧案",
+                        "fear": "自己的真实身份暴露",
+                        "voiceprint": "话里有钩，冷静克制",
+                        "relationship": "利用与试探并存",
+                        "summary": "既像看守，又像半个引路人。",
+                    },
+                ],
+            }
+        },
+    )
+
+    assert updated.status_code == 200
+    payload = updated.json()
+    assert len(payload["default_user_brief"]["character_cards"]) == 2
+    assert payload["default_user_brief"]["character_cards"][0]["slot_label"] == "男主"
+    assert payload["default_user_brief"]["character_cards"][0]["name"] == "楚焰"
+    assert payload["default_user_brief"]["character_cards"][1]["cast_type"] == "mentor"
+
+    run = client.post(
+        f"/api/projects/{project['project_id']}/runs",
+        json={"operator_id": "tester"},
+    )
+    assert run.status_code == 201
+    assert len(run.json()["request"]["user_brief"]["character_cards"]) == 2
+
+    completed = wait_for_run(client, run.json()["run_id"])
+    bible_cards = completed["result"]["story_bible"]["character_cards"]
+    assert len(bible_cards) == 2
+    assert bible_cards[0]["character_id"] == "chu_yan"
+    assert bible_cards[0]["role"] == "主角"
+    assert bible_cards[1]["character_id"] == "han_qiu"
+
+
+def test_character_summary_can_sync_into_character_cards() -> None:
+    client = make_client()
+
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "人物摘要同步项目",
+            "default_user_brief": {
+                "title": "测试项目",
+                "character_summary": {
+                    "items": [
+                        {"label": "主角第一印象", "summary": "冷硬克制，危险感很强"},
+                        {"label": "主角真正想摆脱什么", "summary": "摆脱被当成工具和弃子的命运"},
+                        {"label": "关键关系张力", "summary": "与关键对位者彼此试探又互相需要"},
+                        {"label": "角色边界", "summary": "不能突然圣母，也不能软弱失真"},
+                    ]
+                },
+            },
+            "default_target_chapters": 1,
+        },
+    ).json()
+
+    synced = client.post(f"/api/projects/{project['project_id']}/character-cards/sync-from-summary")
+
+    assert synced.status_code == 200
+    payload = synced.json()
+    cards = payload["default_user_brief"]["character_cards"]
+    assert len(cards) == 1
+    assert cards[0]["cast_type"] == "protagonist"
+    assert cards[0]["slot_label"] == "主角"
+    assert cards[0]["name"] == "主角"
+    assert cards[0]["desire"] == "摆脱被当成工具和弃子的命运"
+    assert cards[0]["relationship"] == "与关键对位者彼此试探又互相需要"
+    assert "角色边界" in cards[0]["summary"]
+
+
 def test_business_metrics_exposes_system_and_project_views() -> None:
     client = make_client()
 
@@ -589,7 +694,7 @@ def test_conversation_scene_scopes_seed_targeted_opening_messages() -> None:
 
     character_thread = client.post(
         f"/api/projects/{project['project_id']}/conversation-threads",
-        json={"scope": "character_room"},
+        json={"scope": "character_room", "character_card": {"slot_label": "女主", "name": "苏离"}},
     )
     outline_thread = client.post(
         f"/api/projects/{project['project_id']}/conversation-threads",
@@ -598,18 +703,17 @@ def test_conversation_scene_scopes_seed_targeted_opening_messages() -> None:
 
     assert character_thread.status_code == 201
     assert outline_thread.status_code == 201
-    assert character_thread.json()["title"] == "人物讨论"
+    assert character_thread.json()["title"] == "人物讨论 · 女主"
     assert outline_thread.json()["title"] == "大纲讨论"
-    assert character_thread.json()["interview_state"]["goal"].startswith("把人物感觉逐步收紧")
+    assert character_thread.json()["interview_state"]["goal"].startswith("把女主的感觉逐步收紧")
     assert outline_thread.json()["interview_state"]["goal"].startswith("把第一卷怎么往前推逐步聊清楚")
 
     character_messages = client.get(f"/api/conversation-threads/{character_thread.json()['thread_id']}/messages")
     outline_messages = client.get(f"/api/conversation-threads/{outline_thread.json()['thread_id']}/messages")
 
-    assert "人物讨论线程" in character_messages.json()[0]["content"]
+    assert "“女主”的人物讨论线程" in character_messages.json()[0]["content"]
     assert "先回答第 1 问" in character_messages.json()[0]["content"]
-    assert "默认可以先聊男主" in character_messages.json()[0]["content"]
-    assert "如果你更想先定女主" in character_messages.json()[0]["content"]
+    assert "这轮只讨论女主" in character_messages.json()[0]["content"]
     assert "大纲讨论线程" in outline_messages.json()[0]["content"]
     assert "第一卷最主要靠什么把读者往下带" in outline_messages.json()[0]["content"]
 
@@ -690,8 +794,8 @@ def test_off_topic_interview_answer_does_not_silently_advance_stage() -> None:
 
     refreshed = client.get(f"/api/conversation-threads/{thread['thread_id']}")
     assert refreshed.status_code == 200
-    assert refreshed.json()["interview_state"]["completion_label"] == "1/4"
-    assert refreshed.json()["interview_state"]["next_topic_title"] == "主角真正想摆脱什么"
+    assert refreshed.json()["interview_state"]["completion_label"] == "1/8"
+    assert refreshed.json()["interview_state"]["next_topic_title"] == "核心欲望"
     assert refreshed.json()["interview_state"]["last_helper_action"] == "clarify"
 
 
@@ -887,7 +991,7 @@ def test_character_and_outline_rooms_expose_carry_over_context() -> None:
 
     character_thread = client.post(
         f"/api/projects/{project['project_id']}/conversation-threads",
-        json={"scope": "character_room"},
+        json={"scope": "character_room", "character_card": {"slot_label": "女主", "name": "苏离"}},
     ).json()
     outline_thread = client.post(
         f"/api/projects/{project['project_id']}/conversation-threads",
@@ -897,12 +1001,13 @@ def test_character_and_outline_rooms_expose_carry_over_context() -> None:
     character_context = character_thread["thread_context"]
     outline_context = outline_thread["thread_context"]
 
-    assert character_context["title"] == "人物讨论承接说明"
+    assert character_context["title"] == "女主人物讨论承接说明"
     assert any("克制但危险" in item["summary"] for item in character_context["inherited_items"])
     assert "关键关系张力" in character_context["missing_items"]
-    assert character_context["priority_item"] == "主角第一印象"
-    assert "先把主角一出场给人的感觉定住" in character_context["priority_reason"]
+    assert character_context["priority_item"] == "第一印象"
+    assert "先把人物一出场给人的感觉定住" in character_context["priority_reason"]
     assert character_context["priority_options"][0] == "克制"
+    assert character_context["target_character"]["slot_label"] == "女主"
 
     assert outline_context["title"] == "大纲讨论承接说明"
     assert any("阴谋和压迫感推进" in item["summary"] for item in outline_context["inherited_items"])
@@ -912,13 +1017,20 @@ def test_character_and_outline_rooms_expose_carry_over_context() -> None:
     assert outline_context["priority_options"][0] == "一层层升级"
 
 
-def test_character_and_outline_stage_summaries_can_be_applied_to_project_brief() -> None:
+def test_character_stage_summary_is_written_back_to_selected_character_card_only() -> None:
     client = make_client()
     project = client.post(
         "/api/projects",
         json={
             "name": "阶段摘要写回项目",
-            "default_user_brief": {"title": "长夜炉火", "idea_seed": "一个被逐出山门的人，靠炉火中的古老声音翻盘。"},
+            "default_user_brief": {
+                "title": "长夜炉火",
+                "idea_seed": "一个被逐出山门的人，靠炉火中的古老声音翻盘。",
+                "character_cards": [
+                    {"slot_label": "男主", "name": "楚焰", "cast_type": "protagonist", "voiceprint": "冷硬克制"},
+                    {"slot_label": "女主", "name": "苏离", "cast_type": "supporting"},
+                ],
+            },
             "default_target_chapters": 1,
         },
     ).json()
@@ -941,19 +1053,121 @@ def test_character_and_outline_stage_summaries_can_be_applied_to_project_brief()
 
     character_thread = client.post(
         f"/api/projects/{project['project_id']}/conversation-threads",
-        json={"scope": "character_room"},
+        json={"scope": "character_room", "character_card": {"slot_label": "女主", "name": "苏离", "cast_type": "supporting"}},
     ).json()
     client.post(
         f"/api/conversation-threads/{character_thread['thread_id']}/messages",
-        json={"content": "他真正想摆脱的是被宗门轻易决定命运的处境。"},
+        json={"content": "她第一次出场时要显得冷静、疏离，但让人很想继续看懂她。"},
     )
     client.post(
         f"/api/conversation-threads/{character_thread['thread_id']}/messages",
-        json={"content": "最关键的关系张力，是他和旧师门首席之间既互相防备又互相需要。"},
+        json={"content": "她真正想摆脱的是被家族拿去交换利益的命运。"},
+    )
+    client.post(
+        f"/api/conversation-threads/{character_thread['thread_id']}/messages",
+        json={"content": "最关键的关系张力，是她和男主之间彼此利用又慢慢卸下防备。"},
     )
     applied_character = client.post(f"/api/conversation-threads/{character_thread['thread_id']}/apply-stage-summary")
     assert applied_character.status_code == 200
-    assert applied_character.json()["default_user_brief"]["character_summary"]["title"] == "人物设定摘要"
+    brief = applied_character.json()["default_user_brief"]
+    assert brief["character_summary"]["title"] == "女主人物摘要"
+
+    cards = brief["character_cards"]
+    female_card = next(item for item in cards if item["slot_label"] == "女主")
+    male_card = next(item for item in cards if item["slot_label"] == "男主")
+
+    assert female_card["desire"] == "她真正想摆脱的是被家族拿去交换利益的命运。"
+    assert female_card["relationship"] == "最关键的关系张力，是她和男主之间彼此利用又慢慢卸下防备。"
+    assert female_card["discussion_summary"]["title"] == "女主人物摘要"
+    assert female_card["discussion_summary"]["target_character"]["slot_label"] == "女主"
+    assert female_card["character_portrait"]["title"] == "女主人物画像"
+    assert any(section["label"] == "关键关系张力" for section in female_card["character_portrait"]["sections"])
+    assert male_card["voiceprint"] == "冷硬克制"
+    assert male_card.get("discussion_summary") is None
+
+
+def test_protagonist_character_summary_keeps_all_discussion_dimensions() -> None:
+    client = make_client()
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "主角人物摘要保留项目",
+            "default_user_brief": {
+                "title": "长夜炉火",
+                "character_cards": [
+                    {"slot_label": "男主", "name": "楚焰", "cast_type": "protagonist"},
+                ],
+            },
+            "default_target_chapters": 1,
+        },
+    ).json()
+
+    thread = client.post(
+        f"/api/projects/{project['project_id']}/conversation-threads",
+        json={"scope": "character_room", "character_card": {"slot_label": "男主", "name": "楚焰", "cast_type": "protagonist"}},
+    ).json()
+
+    for content in [
+        "他第一次出场要让人觉得克制、危险、像一直在压着火。",
+        "他最想争回来的是自己的身份和主动权。",
+        "他最怕再次失去唯一还愿意站在他这边的人。",
+        "他和旧师门首席之间最有火花，既互相防备又互相需要。",
+        "他遇事习惯先观察再落子，确认有把握才突然动手。",
+        "绝不能把他写成突然圣母或轻易放下戒心的人。",
+        "他的成长缺口是只会独自硬扛，不会真正信任同伴。",
+        "他表面冷硬克制，真实内里其实极怕再次被抛下。",
+    ]:
+        response = client.post(
+            f"/api/conversation-threads/{thread['thread_id']}/messages",
+            json={"content": content},
+        )
+        assert response.status_code == 201, response.text
+
+    applied = client.post(f"/api/conversation-threads/{thread['thread_id']}/apply-stage-summary")
+    assert applied.status_code == 200
+
+    card = applied.json()["default_user_brief"]["character_cards"][0]
+    summary = card["discussion_summary"]
+    assert len(summary["items"]) == 8
+    assert [item["label"] for item in summary["items"]] == [
+        "第一印象",
+        "核心欲望",
+        "核心恐惧",
+        "关键关系张力",
+        "行动方式 / 决策模式",
+        "人物边界",
+        "成长缺口",
+        "伪装与真实自我",
+    ]
+    assert card["character_portrait"]["completion_label"] == "8/8"
+
+
+def test_outline_stage_summary_can_be_applied_to_project_brief() -> None:
+    client = make_client()
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "大纲摘要写回项目",
+            "default_user_brief": {"title": "长夜炉火", "idea_seed": "一个被逐出山门的人，靠炉火中的古老声音翻盘。"},
+            "default_target_chapters": 1,
+        },
+    ).json()
+
+    bootstrap = client.post(
+        f"/api/projects/{project['project_id']}/conversation-threads",
+        json={"scope": "project_bootstrap"},
+    ).json()
+    for content in [
+        "我最想保住的是压迫中翻盘和悬念感。",
+        "主角要是那种克制但危险的人，平时忍着，关键时刻会立刻动手。",
+        "我希望前期更偏阴谋和压迫感推进，而不是纯升级刷图。",
+    ]:
+        client.post(
+            f"/api/conversation-threads/{bootstrap['thread_id']}/messages",
+            json={"content": content},
+        )
+    client.post(f"/api/conversation-threads/{bootstrap['thread_id']}/apply-stage-summary")
+    client.post(f"/api/conversation-threads/{bootstrap['thread_id']}/split-stage-summary")
 
     outline_thread = client.post(
         f"/api/projects/{project['project_id']}/conversation-threads",
@@ -972,6 +1186,51 @@ def test_character_and_outline_stage_summaries_can_be_applied_to_project_brief()
     brief = applied_outline.json()["default_user_brief"]
     assert brief["outline_summary"]["title"] == "第一卷方向摘要"
     assert brief["outline_summary"]["source_scope"] == "outline_room"
+
+
+def test_character_portrait_can_be_generated_from_fields_and_discussion() -> None:
+    client = make_client()
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "人物画像项目",
+            "default_user_brief": {
+                "title": "长夜炉火",
+                "character_cards": [
+                    {
+                        "character_id": "su_li",
+                        "slot_label": "女主",
+                        "name": "苏离",
+                        "cast_type": "supporting",
+                        "story_role": "关键对位者",
+                        "voiceprint": "冷静、疏离、判断很快",
+                        "desire": "拿回自己的人生主导权",
+                        "fear": "再次被家族当成交换筹码",
+                        "relationship": "和男主彼此利用又慢慢卸下防备",
+                        "action_mode": "先观察再落子，绝不轻易暴露底牌",
+                        "discussion_summary": {
+                            "title": "女主人物摘要",
+                            "items": [
+                                {"label": "第一印象", "summary": "她第一次出场时要显得冷静、疏离，但让人想继续看懂她。"},
+                                {"label": "人物边界", "summary": "不能把她写成突然失去判断力的依附型人物。"},
+                            ],
+                        },
+                    }
+                ],
+            },
+            "default_target_chapters": 1,
+        },
+    ).json()
+
+    generated = client.post(f"/api/projects/{project['project_id']}/character-cards/su_li/portrait")
+
+    assert generated.status_code == 200
+    card = generated.json()["default_user_brief"]["character_cards"][0]
+    portrait = card["character_portrait"]
+    assert portrait["title"] == "女主人物画像"
+    assert portrait["completion_label"] == "6/6"
+    assert any(section["label"] == "人物定位" for section in portrait["sections"])
+    assert any("主导权" in section["summary"] for section in portrait["sections"])
 
 
 def test_draft_recap_section_can_be_adopted_directly() -> None:

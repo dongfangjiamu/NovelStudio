@@ -43,13 +43,20 @@
           </form>
         </section>
 
-        <section class="panel">
+        <section id="sidebar-project-panel" class="panel">
           <div class="panel-head">
             <h2>项目</h2>
-            <button id="refresh-projects" class="button ghost">刷新</button>
+            <div class="action-row">
+              <button id="show-project-creator" class="button ghost">新建</button>
+              <button id="refresh-projects" class="button ghost">刷新</button>
+            </div>
           </div>
-          <div class="muted panel-tip">默认按最新创建时间排序。先选中你要继续写的项目。</div>
-          <div id="projects-list" class="stack"></div>
+          <div id="sidebar-project-tip" class="muted panel-tip">默认按最新创建时间排序。先选中你今天要继续推进的那个项目。</div>
+          <div id="sidebar-current-project" class="stack compact"></div>
+          <details id="sidebar-project-archive" class="sidebar-project-archive">
+            <summary id="sidebar-project-archive-summary">查看全部项目</summary>
+            <div id="projects-list" class="stack compact"></div>
+          </details>
         </section>
       </aside>
 
@@ -57,7 +64,7 @@
         <section class="hero">
           <div class="hero-copy">
             <div class="eyebrow">Creator Workflow</div>
-            <h2>先看建议，再决定下一步</h2>
+            <h2 id="hero-title">先看建议，再决定下一步</h2>
             <p id="hero-note" class="hero-note">系统会尽量直接告诉你：现在在做什么、为什么停住了、下一步该点哪里。</p>
           </div>
           <div id="status-pill" class="pill">Ready</div>
@@ -85,57 +92,20 @@
                 <h2 id="project-title">未选择项目</h2>
                 <div id="project-meta" class="muted">选择左侧项目后查看详情</div>
               </div>
-              <div class="action-row">
-                <button id="create-run-quick" class="button secondary" disabled>快速试写</button>
-                <button id="create-run" class="button primary" disabled>生成章节</button>
-              </div>
             </div>
-            <section id="overview-strip" class="overview-strip">
-              <article class="overview-card">
-                <div class="summary-label">项目阶段</div>
-                <div id="overview-stage" class="overview-value">等待选择项目</div>
-              </article>
-              <article class="overview-card">
-                <div class="summary-label">最新章节</div>
-                <div id="overview-chapter" class="overview-value">尚未开始</div>
-              </article>
-              <article class="overview-card">
-                <div class="summary-label">当前阻塞</div>
-                <div id="overview-blocker" class="overview-value">暂无</div>
-              </article>
-              <article class="overview-card accent">
-                <div class="summary-label">推荐操作</div>
-                <div id="overview-action" class="overview-value">先选择一个项目。</div>
-              </article>
-            </section>
-            <section id="action-banner" class="action-banner">
-              <div>
-                <div class="action-kicker">现在最值得做的一件事</div>
-                <h3 id="action-title">先选择项目</h3>
-                <p id="action-body" class="action-body">当前页面会尽量只推荐一个动作，避免你同时处理多件事。</p>
-              </div>
-            </section>
-            <section class="panel compact-panel">
-              <div class="panel-head">
+            <section id="dashboard-run-brief" class="dashboard-run-brief">
+              <section id="action-banner" class="action-banner">
                 <div>
-                  <h3>业务飞轮指标</h3>
-                  <div id="metrics-caption" class="muted">系统会把最值得盯的业务指标翻译成人话。</div>
+                  <div class="action-kicker">现在最值得做的一件事</div>
+                  <h3 id="action-title">先选择项目</h3>
+                  <p id="action-body" class="action-body">当前页面会尽量只推荐一个动作，避免你同时处理多件事。</p>
                 </div>
-              </div>
-              <div id="business-metrics" class="summary-grid"></div>
-              <div id="business-metric-sections" class="stack business-metric-sections"></div>
-            </section>
-            <section class="panel compact-panel">
-              <div class="panel-head">
-                <div>
-                  <h3>当前进化建议</h3>
-                  <div id="strategy-caption" class="muted">系统会根据最近的运行结果，先告诉你最值得试的改法。</div>
+                <div class="action-row action-banner-actions">
+                  <button id="create-run-quick" class="button secondary" disabled>快速试写</button>
+                  <button id="create-run" class="button primary" disabled>生成章节</button>
                 </div>
-              </div>
-              <div id="strategy-suggestions" class="stack strategy-suggestion-list"></div>
-            </section>
-            <section class="run-brief">
-              <div class="summary-grid">
+              </section>
+              <div class="summary-grid dashboard-primary-summary">
                 <article class="summary-card">
                   <div class="summary-label">当前目标</div>
                   <div id="summary-goal" class="summary-value">先选择项目或创建一个新项目。</div>
@@ -160,6 +130,52 @@
                 </div>
                 <div id="focus-run" class="stack compact"></div>
               </div>
+            </section>
+            <details class="dashboard-details">
+              <summary>查看项目当前状态</summary>
+              <section id="overview-strip" class="overview-strip">
+                <article class="overview-card">
+                  <div class="summary-label">项目阶段</div>
+                  <div id="overview-stage" class="overview-value">等待选择项目</div>
+                </article>
+                <article class="overview-card">
+                  <div class="summary-label">最新章节</div>
+                  <div id="overview-chapter" class="overview-value">尚未开始</div>
+                </article>
+                <article class="overview-card">
+                  <div class="summary-label">当前阻塞</div>
+                  <div id="overview-blocker" class="overview-value">暂无</div>
+                </article>
+                <article class="overview-card accent">
+                  <div class="summary-label">推荐操作</div>
+                  <div id="overview-action" class="overview-value">先选择一个项目。</div>
+                </article>
+              </section>
+            </details>
+            <details class="dashboard-details">
+              <summary>查看指标与进化建议</summary>
+              <section id="dashboard-metrics-panel" class="panel compact-panel">
+                <div class="panel-head">
+                  <div>
+                    <h3>业务飞轮指标</h3>
+                    <div id="metrics-caption" class="muted">系统会把最值得盯的业务指标翻译成人话。</div>
+                  </div>
+                </div>
+                <div id="business-metrics" class="summary-grid"></div>
+                <div id="business-metric-sections" class="stack business-metric-sections"></div>
+              </section>
+              <section id="dashboard-strategy-panel" class="panel compact-panel">
+                <div class="panel-head">
+                  <div>
+                    <h3>当前进化建议</h3>
+                    <div id="strategy-caption" class="muted">系统会根据最近的运行结果，先告诉你最值得试的改法。</div>
+                  </div>
+                </div>
+                <div id="strategy-suggestions" class="stack strategy-suggestion-list"></div>
+              </section>
+            </details>
+            <details class="dashboard-details">
+              <summary>查看本章学习面板</summary>
               <div class="learning-panel">
                 <div class="panel-head">
                   <h3>本章学习面板</h3>
@@ -167,7 +183,7 @@
                 </div>
                 <div id="learning-panel" class="learning-grid"></div>
               </div>
-            </section>
+            </details>
           </section>
         </section>
 
@@ -177,8 +193,17 @@
             <div class="muted panel-tip">默认从模糊灵感开始。只有在你已经想清楚时，才需要直接填写完整表单。</div>
             <section id="project-brief-summary" class="setup-card"></section>
             <section id="project-launch-readiness" class="setup-card"></section>
-            <div class="columns two-up project-setup-grid">
-              <section class="setup-card">
+            <section id="project-character-cards" class="setup-card"></section>
+            <section id="project-creator-paths" class="project-creator-paths">
+              <div class="eyebrow">先选一种开局方式</div>
+              <div class="project-creator-switch">
+                <button id="project-creator-idea-path" class="button secondary" type="button">从灵感开始</button>
+                <button id="project-creator-full-path" class="button ghost" type="button">直接完整设定</button>
+              </div>
+              <p id="project-creator-note" class="muted">第一次使用时，通常先从灵感开始就够了。</p>
+            </section>
+            <div id="project-create-section" class="columns two-up project-setup-grid">
+              <section id="idea-create-card" class="setup-card">
                 <div class="panel-head">
                   <div>
                     <h3>从灵感开始</h3>
@@ -224,7 +249,7 @@
                   <button class="button primary" type="submit">开始共创澄清</button>
                 </form>
               </section>
-              <section class="setup-card">
+              <section id="full-create-card" class="setup-card">
                 <div class="panel-head">
                   <div>
                     <h3>我已经想清楚了</h3>
@@ -273,6 +298,14 @@
                       <textarea name="brief_must_not_have" rows="3">后宫泛滥
 无代价外挂</textarea>
                     </label>
+                    <div class="form-block">
+                      <div class="form-block-title">人物卡</div>
+                      <div class="muted">默认先给出男主、女主、男配、女配等常用槽位。先选一张卡，再只编辑当前人物。</div>
+                      <div id="project-form-character-cards" class="character-card-editor"></div>
+                      <div class="actions">
+                        <button id="project-form-add-character" class="button ghost" type="button">添加人物卡</button>
+                      </div>
+                    </div>
                   </div>
                   <details class="advanced-box">
                     <summary>高级：直接编辑 Brief JSON</summary>
@@ -328,14 +361,19 @@
             </div>
           </div>
           <div class="muted panel-tip">先按你当前想解决的创作问题开一个线程。系统会按场景给出不同的追问和协作方式。</div>
-          <div class="conversation-scene-grid">
+          <section id="conversation-scene-guide" class="conversation-scene-guide">
+            <div class="eyebrow">先选一种协作方式</div>
+            <h3 id="conversation-scene-title">先选你现在要解决的问题</h3>
+            <p id="conversation-scene-note" class="muted">从最贴近你当前困惑的一项开始，系统会按场景切换追问方式和可沉淀的结论类型。</p>
+          </section>
+          <div id="conversation-scene-grid" class="conversation-scene-grid">
             <button id="conversation-create-bootstrap" class="scene-button" disabled>
               <strong>立项共创</strong>
               <span>适合先确定主题、卖点、主角欲望和写作禁区。</span>
             </button>
             <button id="conversation-create-characters" class="scene-button" disabled>
               <strong>人物讨论</strong>
-              <span>适合把主角缺陷、人物关系和行为边界聊清楚。</span>
+              <span>适合先选择人物卡，再把该人物的缺口、关系和行为边界聊清楚。</span>
             </button>
             <button id="conversation-create-outline" class="scene-button" disabled>
               <strong>大纲讨论</strong>
@@ -354,8 +392,8 @@
               <span>适合一章完成后总结哪些写法值得保留，哪些风险仍在。</span>
             </button>
           </div>
-          <div class="conversation-layout">
-            <div class="conversation-sidebar">
+          <div id="conversation-layout" class="conversation-layout">
+            <div id="conversation-sidebar" class="conversation-sidebar">
               <div class="section-caption">线程</div>
               <div id="conversation-thread-list" class="stack compact"></div>
               <div class="section-caption">已采纳结论</div>
@@ -366,7 +404,7 @@
                 <h3>消息流</h3>
                 <div id="conversation-thread-caption" class="muted">未选择线程</div>
               </div>
-              <div class="conversation-action-bar">
+              <div id="conversation-action-bar" class="conversation-action-bar">
                 <div id="conversation-action-copy" class="muted">先创建或选择一条对话线程，再决定下一步执行动作。</div>
                 <button id="conversation-execute" class="button secondary" disabled>按当前结论执行</button>
               </div>
@@ -376,7 +414,7 @@
               <div id="conversation-message-list" class="conversation-messages"></div>
               <form id="conversation-form" class="conversation-form">
                 <label>
-                  <span>告诉系统你想保留什么、调整什么、或者想继续追问什么</span>
+                  <span id="conversation-form-label">告诉系统你想保留什么、调整什么、或者想继续追问什么</span>
                   <textarea id="conversation-input" rows="4" placeholder="例如：这章我想保留主角克制的气质，但请把冲突前置，不要拖到中段。"></textarea>
                 </label>
                 <div class="action-row">
