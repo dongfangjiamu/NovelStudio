@@ -1365,9 +1365,34 @@ label {
 }
 
 .character-guide-panel,
-.character-portrait-panel {
+.character-portrait-panel,
+.character-discussion-panel {
   display: grid;
   gap: 12px;
+}
+
+.character-discussion-panel {
+  margin-bottom: 12px;
+}
+
+.character-discussion-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.character-inline-message-list {
+  display: grid;
+  gap: 10px;
+}
+
+.character-discussion-form {
+  display: grid;
+  gap: 12px;
+}
+
+.character-discussion-form textarea {
+  min-height: 132px;
 }
 
 .character-progress-bar {
@@ -2176,6 +2201,7 @@ body[data-workspace-mode="project_work"] .shell {
   .summary-grid,
   .metric-section-items,
   .character-workbench,
+  .character-discussion-grid,
   .character-card-shell,
   .character-guide-grid,
   .character-card-grid,

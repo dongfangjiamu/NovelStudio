@@ -1057,6 +1057,221 @@ function renderProjectFormCharacterCards() {
   el.projectFormCharacterCards.innerHTML = renderCharacterCardEditor(state.projectCreationCharacterCards, "create");
 }
 
+function loadedCharacterDiscussionThread(thread) {
+  if (!thread) return null;
+  return selectedThread()?.thread_id === thread.thread_id ? selectedThread() : null;
+}
+
+function loadedCharacterDiscussionMessages(thread) {
+  return loadedCharacterDiscussionThread(thread) ? state.conversationMessages || [] : [];
+}
+
+function renderCharacterDiscussionMessages(thread, messages) {
+  if (!thread) {
+    return `<div class="empty">当前人物卡还没有讨论线程。</div>`;
+  }
+  if (!loadedCharacterDiscussionThread(thread)) {
+    return `<div class="empty">当前已有讨论线程，但还没有在这个页面展开。点击“继续在此讨论”后，这里的问答记录会直接展开。</div>`;
+  }
+  if (!messages.length) {
+    return `<div class="empty">当前线程还没有消息。</div>`;
+  }
+  const compactHistory = messages.length > 4;
+  const visibleItems = compactHistory ? messages.slice(-4) : messages;
+  const earlierItems = compactHistory ? messages.slice(0, -4) : [];
+  const renderMessage = (item) => `
+    <article class="conversation-message ${item.role}">
+      <div class="conversation-role">${conversationRoleLabel(item.role, item.message_type)} · ${formatTimestamp(item.created_at)}</div>
+      <div class="conversation-content">${escapeHtml(item.content || "").replaceAll("\n", "<br>")}</div>
+    </article>
+  `;
+  return `
+    ${
+      earlierItems.length
+        ? `
+          <details class="conversation-message-history">
+            <summary>查看更早对话（${earlierItems.length}）</summary>
+            <div class="stack compact conversation-message-history-body">
+              ${earlierItems.map((item) => renderMessage(item)).join("")}
+            </div>
+          </details>
+        `
+        : ""
+    }
+    ${visibleItems.map((item) => renderMessage(item)).join("")}
+  `;
+}
+
+function renderCharacterDiscussionPanel(project, activeCharacter, activeThread, activeProgress) {
+  const activeCharacterLabel = characterCardTabLabel(activeCharacter?.card, activeCharacter?.index || 0);
+  const thread = loadedCharacterDiscussionThread(activeThread) || activeThread;
+  const messages = loadedCharacterDiscussionMessages(activeThread);
+  const interview = interviewState(thread);
+  const context = threadContext(thread);
+  const isLoaded = Boolean(loadedCharacterDiscussionThread(activeThread));
+  const currentDraft = interview?.current_draft?.sections?.length
+    ? `
+      <div class="interview-block">
+        <strong>${escapeHtml(interview.current_draft.title || "当前理解草案")}</strong>
+        <ul class="interview-list">
+          ${(interview.current_draft.sections || [])
+            .map((item) => `<li><strong>${escapeHtml(item.label || "")}</strong>：${escapeHtml(item.summary || "")}</li>`)
+            .join("")}
+        </ul>
+        <div class="meta">${escapeHtml(interview.current_draft.recommendation || "")}</div>
+      </div>
+    `
+    : "";
+  const stageSummary = interview?.stage_confirmation?.stage_summary?.items?.length
+    ? `
+      <div class="interview-block">
+        <strong>${escapeHtml(interview.stage_confirmation.stage_summary.title || "当前人物摘要")}</strong>
+        <ul class="interview-list">
+          ${(interview.stage_confirmation.stage_summary.items || [])
+            .map((item) => `<li><strong>${escapeHtml(item.label || "")}</strong>：${escapeHtml(item.summary || "")}</li>`)
+            .join("")}
+        </ul>
+        <div class="meta">${escapeHtml(interview.stage_confirmation.stage_summary.readiness || "")}</div>
+      </div>
+    `
+    : "";
+  const helperOptions = interview?.next_options?.length
+    ? `
+      <div class="actions compact">
+        ${interview.next_options
+          .map((item, index) => `<button class="button ghost" type="button" data-character-thread-option="${index}">${escapeHtml(item)}</button>`)
+          .join("")}
+      </div>
+    `
+    : "";
+  return `
+    <section class="summary-card character-discussion-panel">
+      <div class="panel-head">
+        <div>
+          <div class="summary-label">人物讨论</div>
+          <div class="summary-value">正在处理：${escapeHtml(activeCharacterLabel)}</div>
+          <div class="meta">${
+            thread
+              ? "讨论、摘要和画像都会围绕当前人物卡原地联动，不再跳去独立页面。"
+              : "先在这里开始当前人物卡的专属讨论，系统会根据这张卡的缺口继续追问。"
+          }</div>
+        </div>
+        <div class="actions">
+          <button class="button primary" type="button" data-character-action="discuss-inline">${
+            thread ? "继续在此讨论" : `开始讨论${escapeHtml(activeCharacterLabel)}`
+          }</button>
+          ${
+            thread?.status === "open"
+              ? `<button class="button ghost" type="button" data-character-action="restart-inline-discussion" data-thread-id="${escapeHtml(thread.thread_id)}">重开当前讨论</button>`
+              : ""
+          }
+          ${
+            interview?.stage_confirmation?.stage_summary?.items?.length
+              ? `<button class="button secondary" type="button" data-apply-stage-summary="${escapeHtml(thread.thread_id)}">${escapeHtml(stageSummaryApplyLabel("character_room"))}</button>`
+              : ""
+          }
+        </div>
+      </div>
+      <div class="character-progress-meta">
+        <span class="character-progress-pill">${escapeHtml(activeProgress.completionLabel)} 设定完成度</span>
+        <span class="character-progress-pill muted">${
+          thread ? `${escapeHtml(conversationThreadProgressLabel(thread) || "0/0")} 讨论进度` : "尚未开始讨论"
+        }</span>
+        <span class="character-progress-pill ${thread?.status === "open" ? "good" : "warn"}">${
+          thread?.status === "open" ? "当前线程可继续" : "需要先开始当前人物讨论"
+        }</span>
+      </div>
+      ${
+        thread
+          ? `
+            <div class="character-discussion-grid">
+              <div class="interview-block accent-block">
+                <strong>当前下一问</strong>
+                <div class="meta">${escapeHtml(interview?.next_prompt || "继续补充你认为最关键的信息。")}</div>
+                ${
+                  interview?.goal
+                    ? `<div class="meta">${escapeHtml(interview.goal)}</div>`
+                    : ""
+                }
+                ${
+                  interview?.reflection_summary
+                    ? `<div class="meta">${escapeHtml(interview.reflection_summary)}</div>`
+                    : ""
+                }
+                ${helperOptions}
+              </div>
+              <div class="interview-block">
+                <strong>这张卡当前还缺什么</strong>
+                ${
+                  context?.missing_items?.length
+                    ? `<ul class="interview-list">${context.missing_items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+                    : `<div class="meta">当前关键维度已经基本问清，可以开始确认摘要或生成画像。</div>`
+                }
+                ${
+                  context?.next_goal
+                    ? `<div class="meta">${escapeHtml(context.next_goal)}</div>`
+                    : ""
+                }
+              </div>
+            </div>
+            <div class="character-discussion-grid">
+              <div class="interview-block">
+                <strong>已确认事项</strong>
+                ${
+                  interview?.confirmed_topics?.length
+                    ? `<ul class="interview-list">${interview.confirmed_topics.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+                    : `<div class="meta">还没有稳定确认项，先从当前下一问开始回答。</div>`
+                }
+              </div>
+              <div class="interview-block">
+                <strong>当前继承信息</strong>
+                ${
+                  context?.inherited_items?.length
+                    ? `<ul class="interview-list">${context.inherited_items.map((item) => `<li><strong>${escapeHtml(item.label || "")}</strong>：${escapeHtml(item.summary || "")}</li>`).join("")}</ul>`
+                    : `<div class="meta">这张卡当前还没有明确可继承的稳定结论。</div>`
+                }
+              </div>
+            </div>
+            ${currentDraft || stageSummary ? `<div class="character-discussion-grid">${currentDraft}${stageSummary}</div>` : ""}
+            <div class="interview-block">
+              <strong>当前人物讨论记录</strong>
+              <div class="character-inline-message-list">
+                ${renderCharacterDiscussionMessages(thread, messages)}
+              </div>
+            </div>
+            <form class="character-discussion-form" data-character-thread-form="${escapeHtml(thread.thread_id)}">
+              <label>
+                <span>继续讨论 ${escapeHtml(activeCharacterLabel)}</span>
+                <textarea rows="5" data-character-thread-input placeholder="${escapeAttribute(
+                  isLoaded ? conversationInputPlaceholder(thread) : "先点“继续在此讨论”载入当前线程，再直接在这里回答。"
+                )}" ${isLoaded ? "" : "disabled"}></textarea>
+              </label>
+              <div class="actions">
+                <button class="button primary" type="submit" ${isLoaded ? "" : "disabled"}>发送回答</button>
+                <button class="button ghost" type="button" data-character-thread-helper="rephrase" ${isLoaded ? "" : "disabled"}>换个问法</button>
+                <button class="button ghost" type="button" data-character-thread-helper="more-options" ${isLoaded ? "" : "disabled"}>给我更多选项</button>
+                <button class="button ghost" type="button" data-character-thread-helper="skip" ${isLoaded ? "" : "disabled"}>先跳过</button>
+                <button class="button ghost" type="button" data-character-thread-helper="unsure" ${isLoaded ? "" : "disabled"}>我还不确定</button>
+              </div>
+            </form>
+          `
+          : `
+            <div class="character-discussion-grid">
+              <div class="interview-block accent-block">
+                <strong>为什么现在就要讨论</strong>
+                <div class="meta">人物字段只是草图。只有围绕当前人物卡把关键维度讨论清楚，后面的人物摘要和画像才会稳定。</div>
+              </div>
+              <div class="interview-block">
+                <strong>系统会怎么追问</strong>
+                <div class="meta">系统会根据当前人物卡缺口，从第一印象、核心欲望、关键关系张力、行动方式和人物边界开始，一步步把这张卡收紧。</div>
+              </div>
+            </div>
+          `
+      }
+    </section>
+  `;
+}
+
 function renderProjectCharacterCards(project = selectedProject()) {
   if (!el.projectCharacterCards) return;
   if (!project || currentProjectSetupSection(project) !== "character_room") {
@@ -1199,6 +1414,7 @@ function renderProjectCharacterCards(project = selectedProject()) {
         ${renderCharacterPortraitSections(activePortrait)}
       </section>
     </div>
+    ${renderCharacterDiscussionPanel(project, activeCharacter, activeThread, activeProgress)}
     ${renderCharacterCardEditor(cards, "project")}
   `;
   el.projectCharacterCards.querySelectorAll("[data-character-action='add']").forEach((node) => {
@@ -1231,9 +1447,22 @@ function renderProjectCharacterCards(project = selectedProject()) {
       saveProjectCharacterCards().catch((error) => setStatus(String(error.message || error), "error"));
     });
   });
-  el.projectCharacterCards.querySelectorAll("[data-character-action='discuss']").forEach((node) => {
+  el.projectCharacterCards.querySelectorAll("[data-character-action='discuss'], [data-character-action='discuss-inline']").forEach((node) => {
+    node.addEventListener("click", async () => {
+      try {
+        await openOrCreateConversationScope("character_room", { activateTab: false });
+        const input = el.projectCharacterCards.querySelector("[data-character-thread-input]");
+        if (input instanceof HTMLTextAreaElement && !input.disabled) {
+          input.focus();
+        }
+      } catch (error) {
+        setStatus(String(error.message || error), "error");
+      }
+    });
+  });
+  el.projectCharacterCards.querySelectorAll("[data-character-action='restart-inline-discussion']").forEach((node) => {
     node.addEventListener("click", () => {
-      openOrCreateConversationScope("character_room").catch((error) => setStatus(String(error.message || error), "error"));
+      restartConversationThread(node.dataset.threadId, { activateTab: false }).catch((error) => setStatus(String(error.message || error), "error"));
     });
   });
   el.projectCharacterCards.querySelectorAll("[data-character-action='generate-portrait']").forEach((node) => {
@@ -1249,6 +1478,51 @@ function renderProjectCharacterCards(project = selectedProject()) {
   el.projectCharacterCards.querySelectorAll("[data-apply-stage-summary]").forEach((node) => {
     node.addEventListener("click", () => {
       applyStageSummary(node.dataset.applyStageSummary).catch((error) => setStatus(String(error.message || error), "error"));
+    });
+  });
+  el.projectCharacterCards.querySelectorAll("[data-character-thread-option]").forEach((node) => {
+    node.addEventListener("click", () => {
+      const choice = loadedCharacterDiscussionThread(activeThread)?.interview_state?.next_options?.[Number(node.dataset.characterThreadOption)]
+        || interviewState(loadedCharacterDiscussionThread(activeThread) || activeThread)?.next_options?.[Number(node.dataset.characterThreadOption)]
+        || "";
+      const input = el.projectCharacterCards.querySelector("[data-character-thread-input]");
+      if (!choice || !(input instanceof HTMLTextAreaElement)) return;
+      input.value = choice;
+      input.focus();
+      setStatus("已把建议回答带入当前人物卡的讨论输入框。", "ready");
+    });
+  });
+  el.projectCharacterCards.querySelectorAll("[data-character-thread-helper]").forEach((node) => {
+    node.addEventListener("click", async () => {
+      if (!activeThread) return;
+      const helper =
+        node.dataset.characterThreadHelper === "skip"
+          ? "先跳过这个问题，继续问下一个。"
+          : node.dataset.characterThreadHelper === "rephrase"
+            ? "换个问法。"
+            : node.dataset.characterThreadHelper === "more-options"
+              ? "给我更多选项。"
+              : "我还不确定，先给我几个更具体的方向。";
+      try {
+        state.selectedThreadId = activeThread.thread_id;
+        await submitConversationMessage(helper);
+      } catch (error) {
+        setStatus(String(error.message || error), "error");
+      }
+    });
+  });
+  el.projectCharacterCards.querySelectorAll("[data-character-thread-form]").forEach((form) => {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!activeThread) return;
+      const input = form.querySelector("[data-character-thread-input]");
+      if (!(input instanceof HTMLTextAreaElement)) return;
+      try {
+        state.selectedThreadId = activeThread.thread_id;
+        await submitConversationMessage(input.value.trim());
+      } catch (error) {
+        setStatus(String(error.message || error), "error");
+      }
     });
   });
 }
@@ -2230,7 +2504,7 @@ function interviewDraftActions(thread, section) {
   return [{ label: "采纳为写作规则", decisionType: "writer_playbook_rule" }];
 }
 
-async function openOrCreateConversationScope(scope) {
+async function openOrCreateConversationScope(scope, { activateTab = true } = {}) {
   if (!state.selectedProjectId) return;
   const target = scope === "character_room" ? currentProjectCharacterCard()?.target : null;
   const existing = scope === "character_room"
@@ -2238,11 +2512,11 @@ async function openOrCreateConversationScope(scope) {
     : (state.projectSnapshot.conversationThreads || []).find((item) => item.scope === scope && item.status === "open");
   if (existing) {
     state.selectedThreadId = existing.thread_id;
-    await loadConversationMessages(existing.thread_id, { activateTab: true });
+    await loadConversationMessages(existing.thread_id, { activateTab });
     setStatus(scope === "character_room" ? `已进入${characterCardTabLabel(target, 0)}的人物讨论。` : `已进入${conversationScopeLabel(scope)}线程`, "ready");
     return;
   }
-  await createConversationThread(scope);
+  await createConversationThread(scope, { activateTab });
 }
 
 function renderInterviewSummary(thread) {
@@ -6049,14 +6323,17 @@ async function loadConversationMessages(threadId, { activateTab = true } = {}) {
   renderProjectState();
   const messages = await api(`/api/conversation-threads/${threadId}/messages`);
   state.conversationMessages = messages;
+  renderProjectState();
   renderConversationPanel();
 }
 
-async function openConversationThread(threadId) {
+async function openConversationThread(threadId, { activateTab = true } = {}) {
   if (!threadId) return;
   state.selectedThreadId = threadId;
-  setWorkspaceTab("conversation");
-  await loadConversationMessages(threadId, { activateTab: true });
+  if (activateTab) {
+    setWorkspaceTab("conversation");
+  }
+  await loadConversationMessages(threadId, { activateTab });
   clearConversationFeedback();
   setStatus("已进入人工协作线程", "ready");
 }
@@ -6077,9 +6354,11 @@ function conversationThreadBody(scope) {
   return body;
 }
 
-async function createConversationThread(scope) {
+async function createConversationThread(scope, { activateTab = true } = {}) {
   if (!state.selectedProjectId) return;
-  setWorkspaceTab("conversation");
+  if (activateTab) {
+    setWorkspaceTab("conversation");
+  }
   clearConversationFeedback();
   const body = conversationThreadBody(scope);
   const thread = await api(`/api/projects/${state.selectedProjectId}/conversation-threads`, {
@@ -6088,13 +6367,13 @@ async function createConversationThread(scope) {
   });
   await selectProject(state.selectedProjectId);
   state.selectedThreadId = thread.thread_id;
-  await loadConversationMessages(thread.thread_id, { activateTab: true });
+  await loadConversationMessages(thread.thread_id, { activateTab });
   clearConversationFeedback();
   const target = scope === "character_room" ? body.character_card : null;
   setStatus(scope === "character_room" ? `已创建${characterCardTabLabel(target, 0)}的人物讨论线程。` : `已创建${conversationScopeLabel(scope)}线程`, "ready");
 }
 
-async function restartConversationThread(threadId) {
+async function restartConversationThread(threadId, { activateTab = true } = {}) {
   if (!threadId) return;
   const confirmed = window.confirm("重开后，这条旧线程会被归档，当前阶段会从第 1 问重新开始。是否继续？");
   if (!confirmed) return;
@@ -6104,7 +6383,7 @@ async function restartConversationThread(threadId) {
   });
   await selectProject(state.selectedProjectId);
   state.selectedThreadId = thread.thread_id;
-  await loadConversationMessages(thread.thread_id, { activateTab: true });
+  await loadConversationMessages(thread.thread_id, { activateTab });
   clearConversationFeedback();
   setStatus("已重开当前阶段，请从第 1 问重新回答。", "ready");
 }
