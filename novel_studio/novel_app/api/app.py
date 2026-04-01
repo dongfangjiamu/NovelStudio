@@ -2403,7 +2403,7 @@ def create_app(
             ("character_room", "核心欲望"): ["想要", "最想", "争回", "得到", "守住", "目标", "不愿放手", "摆脱", "脱离", "命运", "主动权", "尊重", "真相"],
             ("character_room", "核心恐惧"): ["最怕", "害怕", "恐惧", "失去", "再次", "暴露", "失败", "抛弃", "看轻", "掌控", "工具"],
             ("character_room", "关键关系张力"): ["关系", "张力", "师门", "师徒", "首席", "宿敌", "同伴", "互相", "防备", "需要", "试探", "对抗", "拉扯", "恩怨"],
-            ("character_room", "行动方式 / 决策模式"): ["先忍", "先观察", "先试探", "先赌", "先动手", "出手", "布局", "保底线", "做决定", "选择", "行动"],
+            ("character_room", "行动方式 / 决策模式"): ["先忍", "先观察", "先试探", "先赌", "先动手", "出手", "布局", "保底线", "做决定", "选择", "行动", "冷静", "冲动", "莽", "绝境", "理智"],
             ("character_room", "成长缺口"): ["缺口", "成长", "跨过去", "卡住", "不会", "不敢", "总是", "必须学会", "升级"],
             ("character_room", "伪装与真实自我"): ["表面", "其实", "看着", "真实", "伪装", "反差", "内里", "秘密", "只有读者知道"],
         }
@@ -2438,8 +2438,9 @@ def create_app(
                     continue
                 topic_index = remaining_indices[0]
                 current_topic = topics[topic_index]
+                resolution_mode = "current"
                 if current_topic and not matches_interview_topic(scope=scope, topic=current_topic, content=item.content):
-                    topic_index = next(
+                    candidate_index = next(
                         (
                             candidate
                             for candidate in remaining_indices[1:]
@@ -2448,16 +2449,23 @@ def create_app(
                         ),
                         None,
                     )
-                if topic_index is None and current_topic and interview_topic_keywords(scope, str(current_topic.get("title") or "")):
-                    last_helper = {
+                    if candidate_index is not None:
+                        topic_index = candidate_index
+                        resolution_mode = "redirected"
+                    else:
+                        topic_index = remaining_indices[0]
+                        resolution_mode = "loose_accept"
+                handled.append(
+                    {
                         "message": item,
-                        "helper_action": "clarify",
-                        "topic_title": current_topic.get("title"),
+                        "effect": "answered",
+                        "helper_action": helper_action,
+                        "topic_index": topic_index,
+                        "resolution_mode": resolution_mode,
+                        "expected_topic_title": str(current_topic.get("title") or "") if current_topic else "",
+                        "resolved_topic_title": str(topics[topic_index].get("title") or "") if topic_index < len(topics) else "",
                     }
-                    continue
-                if topic_index is None:
-                    topic_index = remaining_indices[0]
-                handled.append({"message": item, "effect": "answered", "helper_action": helper_action, "topic_index": topic_index})
+                )
                 resolved_indices.add(topic_index)
                 last_helper = None
                 continue
@@ -2958,13 +2966,25 @@ def create_app(
         if thread.scope == "character_room" and target_character is not None:
             basis.append(f"当前人物：{character_card_display_label(target_character, '当前人物')}")
         answered_count = len(confirmed_topics)
+        last_answer_resolution = next(
+            (
+                {
+                    "mode": str(record.get("resolution_mode") or "current"),
+                    "expected_topic_title": str(record.get("expected_topic_title") or ""),
+                    "resolved_topic_title": str(record.get("resolved_topic_title") or ""),
+                }
+                for record in reversed(handled_records)
+                if record.get("effect") == "answered"
+            ),
+            None,
+        )
         reflection_summary = (
-            f"目前已确认 {answered_count} 项：{'、'.join(confirmed_topics)}。"
+            f"目前已经聊到 {answered_count} 个点：{'、'.join(confirmed_topics)}。"
             if confirmed_topics
-            else "当前还在捕获原始意图，系统会继续用小问题帮你把方向问清。"
+            else "当前还在一起摸人物和方向，系统会继续用小问题帮你慢慢收紧，不要求一次答标准。"
         )
         if skipped_topics:
-            reflection_summary = f"{reflection_summary} 已跳过：{'、'.join(skipped_topics)}。"
+            reflection_summary = f"{reflection_summary} 先放着：{'、'.join(skipped_topics)}。"
         current_draft = build_interview_draft(
             project=project,
             scope=thread.scope,
@@ -3001,6 +3021,7 @@ def create_app(
             "current_draft": current_draft,
             "stage_confirmation": stage_confirmation,
             "last_helper_action": last_helper["helper_action"] if last_helper else None,
+            "last_answer_resolution": last_answer_resolution,
             "target_character": target_character,
         }
 
@@ -3280,24 +3301,27 @@ def create_app(
         if thread.scope == "project_bootstrap":
             interview_state = build_interview_state(thread=thread, project=project)
             helper_action = interview_state.get("last_helper_action")
+            resolution = interview_state.get("last_answer_resolution") or {}
             helper_line = ""
             if helper_action == "rephrase":
-                helper_line = "我已经换了一种问法，尽量不用编辑术语。\n"
+                helper_line = "我换了一个更口语的问法，尽量不让你像在填术语题。\n"
             elif helper_action == "more_options":
-                helper_line = "我给你补了一组更具体的方向，你可以直接挑最接近的一项。\n"
+                helper_line = "我补了一组更具体的方向，你直接挑最接近的就行，不需要自己重新组织标准答案。\n"
             elif helper_action == "unsure":
-                helper_line = "没关系，不确定是正常的。我们先缩小范围，不要求一次说清。\n"
-            elif helper_action == "clarify":
-                helper_line = "这句我先不急着算作已确认结论，因为它更像在补别的点。我们先把当前这个问题说清，再继续往下走。\n"
+                helper_line = "不确定很正常，我们先缩小范围，不要求一次说清。\n"
+            elif resolution.get("mode") == "redirected":
+                helper_line = f"我先把你刚才那句收进“{resolution.get('resolved_topic_title') or '另一个更贴近的点'}”，这样不用重答；接下来继续帮你补“{resolution.get('expected_topic_title') or '当前这个点'}”。\n"
+            elif resolution.get("mode") == "loose_accept":
+                helper_line = f"我先把你刚才这句按“{resolution.get('resolved_topic_title') or '当前这个点'}”收进去，不要求你一开始就用特别标准的说法。\n"
             content = (
                 f"已记录你的方向：{excerpt}\n\n"
                 f"{helper_line}"
-                f"当前采访进度：{interview_state['completion_label']}。\n"
-                f"已确认：{'、'.join(interview_state['confirmed_topics']) if interview_state['confirmed_topics'] else '暂未形成稳定结论'}。\n"
+                f"当前已经聊到：{interview_state['completion_label']}。\n"
+                f"已经收进来的点：{'、'.join(interview_state['confirmed_topics']) if interview_state['confirmed_topics'] else '还在一起摸第一版方向'}。\n"
                 f"当前理解：{interview_state['reflection_summary']}\n"
-                f"下一问：{interview_state['next_prompt']}\n"
-                f"可直接选：{' / '.join(interview_state['next_options']) if interview_state['next_options'] else '也可以继续自由补充。'}\n"
-                f"仍待明确：{'、'.join(interview_state['unresolved_topics']) if interview_state['unresolved_topics'] else '已基本问清，可开始采纳结论。'}"
+                f"接下来我想继续补的是：{interview_state['next_prompt']}\n"
+                f"你可以直接从这里接着说：{' / '.join(interview_state['next_options']) if interview_state['next_options'] else '也可以继续自由补一句。'}\n"
+                f"后面还可以继续补：{'、'.join(interview_state['unresolved_topics']) if interview_state['unresolved_topics'] else '这条线已经基本问清，可以开始沉淀结论。'}"
             )
             payload = {"interview_state": interview_state}
             return "assistant_question", content, payload
@@ -3306,48 +3330,54 @@ def create_app(
             character_label = character_card_display_label(target_character, "当前人物")
             interview_state = build_interview_state(thread=thread, project=project)
             helper_action = interview_state.get("last_helper_action")
+            resolution = interview_state.get("last_answer_resolution") or {}
             helper_line = ""
             if helper_action == "rephrase":
-                helper_line = "我已经换了一种问法，尽量先从感觉和边界出发。\n"
+                helper_line = "我换了个更容易接的话头，先从感觉和边界聊，不用像答题一样组织。\n"
             elif helper_action == "more_options":
-                helper_line = "我补了一组更具体的人物方向，你可以直接挑最接近的一项。\n"
+                helper_line = "我补了一组更具体的人物方向，你直接挑最接近的就行。\n"
             elif helper_action == "unsure":
                 helper_line = "不用急着写小传，我们先抓住最像的感觉就够了。\n"
-            elif helper_action == "clarify":
-                helper_line = "这句我先不急着算作已确认结论，因为它更像在补别的人物问题。我们先把当前这一个点说清。\n"
+            elif resolution.get("mode") == "redirected":
+                helper_line = f"我先把你刚才那句收进“{resolution.get('resolved_topic_title') or '另一个更贴近的维度'}”，这样不用重答；接下来继续把“{resolution.get('expected_topic_title') or '当前这个点'}”补清。\n"
+            elif resolution.get("mode") == "loose_accept":
+                helper_line = f"我先把你刚才这句按“{resolution.get('resolved_topic_title') or '当前这个点'}”收进去，不要求你一上来就答得很标准。\n"
             content = (
                 f"已记录{character_label}的人物方向：{excerpt}\n\n"
                 f"{helper_line}"
-                f"当前采访进度：{interview_state['completion_label']}。\n"
-                f"已确认：{'、'.join(interview_state['confirmed_topics']) if interview_state['confirmed_topics'] else '暂未形成稳定结论'}。\n"
+                f"当前已经聊到：{interview_state['completion_label']}。\n"
+                f"已经收进来的人物点：{'、'.join(interview_state['confirmed_topics']) if interview_state['confirmed_topics'] else '还在一起摸这张卡的第一版感觉'}。\n"
                 f"当前理解：{interview_state['reflection_summary']}\n"
-                f"下一问：{interview_state['next_prompt']}\n"
-                f"可直接选：{' / '.join(interview_state['next_options']) if interview_state['next_options'] else '也可以继续自由补充。'}\n"
-                f"仍待明确：{'、'.join(interview_state['unresolved_topics']) if interview_state['unresolved_topics'] else '已可以采纳为人物设定。'}"
+                f"接下来我想继续补的是：{interview_state['next_prompt']}\n"
+                f"你可以直接顺着这里往下说：{' / '.join(interview_state['next_options']) if interview_state['next_options'] else '也可以继续自由补一句。'}\n"
+                f"这张卡后面还可以继续补：{'、'.join(interview_state['unresolved_topics']) if interview_state['unresolved_topics'] else '这张卡已经可以开始沉淀人物摘要了。'}"
             )
             payload = {"interview_state": interview_state, "target_character": target_character}
             return "assistant_question", content, payload
         if thread.scope == "outline_room":
             interview_state = build_interview_state(thread=thread, project=project)
             helper_action = interview_state.get("last_helper_action")
+            resolution = interview_state.get("last_answer_resolution") or {}
             helper_line = ""
             if helper_action == "rephrase":
-                helper_line = "我已经把问题换成更接近追更体验的问法。\n"
+                helper_line = "我把问题换成更接近追更体验的问法，不用你先想结构术语。\n"
             elif helper_action == "more_options":
-                helper_line = "我补了一组更具体的大纲推进方向，你可以先选最接近的一项。\n"
+                helper_line = "我补了一组更具体的大纲推进方向，你先选最接近的一项就行。\n"
             elif helper_action == "unsure":
                 helper_line = "不用一次说清整卷结构，我们先抓住主推动力就行。\n"
-            elif helper_action == "clarify":
-                helper_line = "这句我先不急着算作已确认结论，因为它更像在补别的大纲点。我们先把当前这个问题说清。\n"
+            elif resolution.get("mode") == "redirected":
+                helper_line = f"我先把你刚才那句收进“{resolution.get('resolved_topic_title') or '另一个更贴近的大纲点'}”，这样不用重答；接下来继续把“{resolution.get('expected_topic_title') or '当前这个点'}”补清。\n"
+            elif resolution.get("mode") == "loose_accept":
+                helper_line = f"我先把你刚才这句按“{resolution.get('resolved_topic_title') or '当前这个点'}”收进去，不要求你一开始就用标准大纲语言来答。\n"
             content = (
                 f"已记录大纲方向：{excerpt}\n\n"
                 f"{helper_line}"
-                f"当前采访进度：{interview_state['completion_label']}。\n"
-                f"已确认：{'、'.join(interview_state['confirmed_topics']) if interview_state['confirmed_topics'] else '暂未形成稳定结论'}。\n"
+                f"当前已经聊到：{interview_state['completion_label']}。\n"
+                f"已经收进来的大纲点：{'、'.join(interview_state['confirmed_topics']) if interview_state['confirmed_topics'] else '还在一起摸第一版卷纲方向'}。\n"
                 f"当前理解：{interview_state['reflection_summary']}\n"
-                f"下一问：{interview_state['next_prompt']}\n"
-                f"可直接选：{' / '.join(interview_state['next_options']) if interview_state['next_options'] else '也可以继续自由补充。'}\n"
-                f"仍待明确：{'、'.join(interview_state['unresolved_topics']) if interview_state['unresolved_topics'] else '已可以采纳为卷纲约束。'}"
+                f"接下来我想继续补的是：{interview_state['next_prompt']}\n"
+                f"你可以直接顺着这里往下说：{' / '.join(interview_state['next_options']) if interview_state['next_options'] else '也可以继续自由补一句。'}\n"
+                f"后面还可以继续补：{'、'.join(interview_state['unresolved_topics']) if interview_state['unresolved_topics'] else '这条线已经可以开始沉淀卷纲约束了。'}"
             )
             payload = {"interview_state": interview_state}
             return "assistant_question", content, payload

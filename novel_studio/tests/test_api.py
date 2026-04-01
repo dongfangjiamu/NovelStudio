@@ -763,7 +763,7 @@ def test_interview_helpers_can_rephrase_expand_and_skip_without_wrong_progress()
     assert thread_after_skip["interview_state"]["unresolved_topics"][0] == "主角行动方式"
 
 
-def test_off_topic_interview_answer_does_not_silently_advance_stage() -> None:
+def test_off_topic_interview_answer_is_softly_absorbed_without_blocking_progress() -> None:
     client = make_client()
     project = client.post(
         "/api/projects",
@@ -790,13 +790,16 @@ def test_off_topic_interview_answer_does_not_silently_advance_stage() -> None:
         json={"content": "我希望他不是莽，而是越到绝境越冷静。"},
     )
     assert off_topic.status_code == 201
-    assert "先不急着算作已确认结论" in off_topic.json()[1]["content"]
+    assert "这样不用重答" in off_topic.json()[1]["content"]
+    assert "行动方式 / 决策模式" in off_topic.json()[1]["content"]
 
     refreshed = client.get(f"/api/conversation-threads/{thread['thread_id']}")
     assert refreshed.status_code == 200
-    assert refreshed.json()["interview_state"]["completion_label"] == "1/8"
+    assert refreshed.json()["interview_state"]["completion_label"] == "2/8"
     assert refreshed.json()["interview_state"]["next_topic_title"] == "核心欲望"
-    assert refreshed.json()["interview_state"]["last_helper_action"] == "clarify"
+    assert refreshed.json()["interview_state"]["last_helper_action"] is None
+    assert refreshed.json()["interview_state"]["last_answer_resolution"]["mode"] == "redirected"
+    assert refreshed.json()["interview_state"]["last_answer_resolution"]["resolved_topic_title"] == "行动方式 / 决策模式"
 
 
 def test_interview_state_builds_current_draft_after_two_answers() -> None:

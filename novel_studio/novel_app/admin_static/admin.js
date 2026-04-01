@@ -1216,7 +1216,7 @@ function renderCharacterDiscussionPanel(project, activeCharacter, activeThread, 
             </div>
             <div class="character-discussion-grid">
               <div class="interview-block">
-                <strong>已确认事项</strong>
+                <strong>已经聊到的点</strong>
                 ${
                   interview?.confirmed_topics?.length
                     ? `<ul class="interview-list">${interview.confirmed_topics.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
@@ -2655,7 +2655,7 @@ function renderInterviewSummary(thread) {
         }
         <div class="interview-grid">
           <div class="interview-block">
-            <strong>已确认</strong>
+            <strong>已经聊到</strong>
             ${
               interview.stage_confirmation.confirmed_items?.length
                 ? `<ul class="interview-list">${interview.stage_confirmation.confirmed_items
@@ -2677,7 +2677,7 @@ function renderInterviewSummary(thread) {
         </div>
         <div class="interview-grid">
           <div class="interview-block">
-            <strong>未决问题</strong>
+            <strong>后面还可以继续补</strong>
             ${
               interview.stage_confirmation.open_questions?.length
                 ? `<ul class="interview-list">${interview.stage_confirmation.open_questions.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
@@ -2767,9 +2767,9 @@ function renderInterviewSummary(thread) {
         <div class="card-head">
           <div>
             <div class="section-caption">现在先做这一件事</div>
-            <h4>回答当前问题</h4>
+            <h4>顺着当前这个点继续聊</h4>
           </div>
-          <span class="status-chip status-approved">已确认 ${interview.completion_label}</span>
+          <span class="status-chip status-approved">已聊到 ${interview.completion_label}</span>
         </div>
         <div class="interview-focus-prompt">${escapeHtml(interview.next_prompt || "继续补充你认为最关键的信息。")}</div>
         <div class="meta">${escapeHtml(interview.goal || "")}</div>
@@ -2786,12 +2786,12 @@ function renderInterviewSummary(thread) {
         ${closureHint}
         <div class="interview-grid compact-grid">
           <div class="interview-block">
-            <strong>已确认事项</strong>
+            <strong>已经聊到的点</strong>
             ${confirmed}
             ${skipped}
           </div>
           <div class="interview-block">
-            <strong>未决问题</strong>
+            <strong>后面还可以继续补</strong>
             ${unresolved}
           </div>
         </div>
@@ -2803,8 +2803,8 @@ function renderInterviewSummary(thread) {
     : `
       <section class="interview-card">
         <div class="card-head">
-          <h4>共创采访进度</h4>
-          <span class="status-chip status-approved">已确认 ${interview.completion_label}</span>
+          <h4>当前共创进度</h4>
+          <span class="status-chip status-approved">已聊到 ${interview.completion_label}</span>
         </div>
         <div class="meta">${escapeHtml(interview.goal || "")}</div>
         <div class="meta">${escapeHtml(interview.reflection_summary || "")}</div>
@@ -2814,12 +2814,12 @@ function renderInterviewSummary(thread) {
         ${renderStagePrimaryAction(thread, interview.stage_confirmation)}
         <div class="interview-grid">
           <div class="interview-block">
-            <strong>已确认事项</strong>
+            <strong>已经聊到的点</strong>
             ${confirmed}
             ${skipped}
           </div>
           <div class="interview-block">
-            <strong>未决问题</strong>
+            <strong>后面还可以继续补</strong>
             ${unresolved}
           </div>
         </div>
