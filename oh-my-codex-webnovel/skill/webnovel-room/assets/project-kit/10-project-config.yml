@@ -1,0 +1,28 @@
+title: {{NOVEL_TITLE}}
+author: {{AUTHOR_NAME}}
+genre: {{GENRE}}
+target_audience: {{TARGET_AUDIENCE}}
+language: zh-CN
+created_at: {{DATE_CREATED}}
+workflow:
+  mode: serial
+  drafting_unit: chapter
+  role_order:
+    - chief_editor
+    - world_builder
+    - character_designer
+    - plot_architect
+    - chapter_planner
+    - drafter
+    - continuity_editor
+    - reader_simulator
+    - style_editor
+quality_thresholds:
+  爽点: 4
+  节奏: 4
+  代入: 4
+  追更欲: 4
+  连贯性: pass
+publishing:
+  cadence: to-be-decided
+  default_chapter_words: 2500
