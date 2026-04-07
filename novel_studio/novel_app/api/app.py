@@ -1,5 +1,8 @@
 from __future__ import annotations
+import hashlib
 import inspect
+import json
+import re
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from uuid import uuid4
@@ -37,7 +40,17 @@ from novel_app.api.schemas import (
     ConversationThreadCreateRequest,
     ConversationThreadResponse,
     CurrentUserResponse,
+    CharacterCardAutofillRequest,
+    ConversationOmxLaunchRequest,
+    ConversationOmxLaunchResponse,
     HealthResponse,
+    OmxHumanActionRequest,
+    OmxTaskCreateRequest,
+    OmxTaskCreateResponse,
+    OmxTaskStatusResponse,
+    OmxTaskLatestResponse,
+    OmxTaskApprovalResponse,
+    OmxTaskOutputResponse,
     ProjectCreateRequest,
     ProjectBriefUpdateRequest,
     ProjectResponse,
@@ -49,10 +62,12 @@ from novel_app.api.schemas import (
     StrategySuggestionsResponse,
 )
 from novel_app.config import AppConfig, load_config
+from novel_app.schemas import CharacterCardAutofillDraft
 from novel_app.services.store import InMemoryStore
 from novel_app.services.sql_store import SqlAlchemyStore
 from novel_app.services.workflow import WorkflowService
 from novel_app.services.store import utc_now_iso
+from novel_app.utils.llm import invoke_structured
 
 
 LIVE_ARTIFACT_TYPES = [
@@ -105,10 +120,11 @@ def normalize_character_cards(cards: object) -> list[dict[str, object]]:
         action_mode = str(raw_item.get("action_mode") or "").strip()
         growth_gap = str(raw_item.get("growth_gap") or "").strip()
         mask_true_self = str(raw_item.get("mask_true_self") or "").strip()
+        concept_seed = str(raw_item.get("concept_seed") or "").strip()
         summary = str(raw_item.get("summary") or "").strip()
         discussion_summary = raw_item.get("discussion_summary") if isinstance(raw_item.get("discussion_summary"), dict) else None
         character_portrait = raw_item.get("character_portrait") if isinstance(raw_item.get("character_portrait"), dict) else None
-        if not any((name, story_role, desire, fear, voiceprint, relationship, action_mode, growth_gap, mask_true_self, summary)) and not discussion_summary and not character_portrait:
+        if not any((name, story_role, desire, fear, voiceprint, relationship, action_mode, growth_gap, mask_true_self, concept_seed, summary)) and not discussion_summary and not character_portrait:
             continue
 
         raw_character_id = str(raw_item.get("character_id") or name or slot_label).strip().lower()
@@ -131,6 +147,7 @@ def normalize_character_cards(cards: object) -> list[dict[str, object]]:
                 "action_mode": action_mode,
                 "growth_gap": growth_gap,
                 "mask_true_self": mask_true_self,
+                "concept_seed": concept_seed,
                 "summary": summary,
                 "discussion_summary": discussion_summary,
                 "character_portrait": character_portrait,
@@ -184,6 +201,7 @@ def normalize_character_target(
         "action_mode": str(raw.get("action_mode") or "").strip(),
         "growth_gap": str(raw.get("growth_gap") or "").strip(),
         "mask_true_self": str(raw.get("mask_true_self") or "").strip(),
+        "concept_seed": str(raw.get("concept_seed") or "").strip(),
         "summary": str(raw.get("summary") or "").strip(),
     }
     discussion_summary = raw.get("discussion_summary")
@@ -540,6 +558,162 @@ def upsert_character_card(brief: dict[str, object] | None, card: dict[str, objec
         cards[target_index] = normalized_card
     normalized["character_cards"] = normalize_character_cards(cards)
     return normalized
+
+
+def _compact_sentence(value: str, limit: int = 70) -> str:
+    text = " ".join(str(value or "").strip().split())
+    if len(text) <= limit:
+        return text
+    return f"{text[: limit - 1].rstrip()}..."
+
+
+def _split_character_seed_sentences(description: str) -> list[str]:
+    parts = re.split(r"[。！？!\?\n]+", str(description or "").strip())
+    return [part.strip("；;，, ") for part in parts if part.strip("；;，, ")]
+
+
+def _pick_sentence(sentences: list[str], keywords: list[str]) -> str:
+    for sentence in sentences:
+        if any(keyword in sentence for keyword in keywords):
+            return sentence
+    return ""
+
+
+def _build_character_card_autofill_stub(description: str, target_character: dict[str, object] | None = None) -> CharacterCardAutofillDraft:
+    text = " ".join(str(description or "").strip().split())
+    sentences = _split_character_seed_sentences(text)
+    summary = _compact_sentence("；".join(sentences[:2]) or text, 120)
+    voiceprint = _pick_sentence(sentences, ["第一次出场", "给人", "气质", "看着", "表面", "冷", "狠", "疏离", "危险", "压迫", "克制", "温和"])
+    if not voiceprint and sentences:
+        voiceprint = sentences[0]
+    desire = _pick_sentence(sentences, ["最想", "想要", "想得到", "想摆脱", "目标", "不愿放手", "争回", "守住", "获得"])
+    fear = _pick_sentence(sentences, ["最怕", "害怕", "恐惧", "担心", "失去", "再次", "不敢"])
+    relationship = _pick_sentence(sentences, ["关系", "张力", "之间", "互相", "拉扯", "防备", "试探", "宿敌", "师徒", "同盟", "利用"])
+    action_mode = _pick_sentence(sentences, ["行动", "出手", "做决定", "习惯", "遇到", "面对", "宁可", "先", "再", "会立刻", "会先"])
+    growth_gap = _pick_sentence(sentences, ["成长缺口", "卡住", "不会", "不敢", "必须学会", "总是", "只会", "跨不过去"])
+    mask_true_self = _pick_sentence(sentences, ["表面", "其实", "内里", "真实", "伪装", "骨子里", "看着"])
+    is_protagonist = str((target_character or {}).get("cast_type") or "").strip() == "protagonist"
+    filled_map = {
+        "第一印象": voiceprint,
+        "核心欲望": desire,
+        "核心恐惧": fear,
+        "关键关系张力": relationship,
+        "行动方式 / 决策模式": action_mode,
+        "成长缺口": growth_gap if is_protagonist else "",
+        "伪装与真实自我": mask_true_self if is_protagonist else "",
+    }
+    dimensions = ["第一印象", "核心欲望", "核心恐惧", "关键关系张力", "行动方式 / 决策模式", "人物边界"]
+    if is_protagonist:
+        dimensions.extend(["成长缺口", "伪装与真实自我"])
+    missing_dimensions = [item for item in dimensions if not filled_map.get(item)]
+    return CharacterCardAutofillDraft(
+        summary=summary or _compact_sentence(text, 120),
+        voiceprint=_compact_sentence(voiceprint, 80),
+        desire=_compact_sentence(desire, 80),
+        fear=_compact_sentence(fear, 80),
+        relationship=_compact_sentence(relationship, 80),
+        action_mode=_compact_sentence(action_mode, 80),
+        growth_gap=_compact_sentence(growth_gap, 80) if is_protagonist else "",
+        mask_true_self=_compact_sentence(mask_true_self, 80) if is_protagonist else "",
+        missing_dimensions=missing_dimensions,
+        next_focus=missing_dimensions[0] if missing_dimensions else "",
+    )
+
+
+def build_character_card_autofill(
+    *,
+    description: str,
+    target_character: dict[str, object] | None,
+    runtime_context,
+) -> dict[str, object]:
+    payload = {
+        "target_character": {
+            "slot_label": (target_character or {}).get("slot_label"),
+            "name": (target_character or {}).get("name"),
+            "cast_type": (target_character or {}).get("cast_type"),
+            "story_role": (target_character or {}).get("story_role"),
+        },
+        "description": str(description or "").strip(),
+    }
+    return invoke_structured(
+        prompt_name="character_card_autofill",
+        schema_cls=CharacterCardAutofillDraft,
+        payload=payload,
+        runtime_context=runtime_context,
+        stub_factory=lambda: _build_character_card_autofill_stub(description, target_character),
+    )
+
+
+def build_character_card_seed_summary(
+    *,
+    card: dict[str, object],
+    draft: dict[str, object],
+    description: str,
+) -> dict[str, object]:
+    normalized_card = normalize_character_target(card)
+    label = character_card_display_label(normalized_card, "当前人物")
+    summary_items: list[dict[str, str]] = []
+    mapping = [
+        ("第一印象", "voiceprint"),
+        ("核心欲望", "desire"),
+        ("核心恐惧", "fear"),
+        ("关键关系张力", "relationship"),
+        ("行动方式 / 决策模式", "action_mode"),
+        ("成长缺口", "growth_gap"),
+        ("伪装与真实自我", "mask_true_self"),
+    ]
+    for summary_label, field in mapping:
+        value = str(draft.get(field) or "").strip()
+        if value:
+            summary_items.append({"label": summary_label, "summary": value[:160]})
+    missing_dimensions = [str(item).strip() for item in (draft.get("missing_dimensions") or []) if str(item).strip()]
+    return {
+        "title": f"{label}人物摘要草稿",
+        "review_status": "draft",
+        "items": summary_items,
+        "character_id": normalized_card.get("character_id"),
+        "character_label": label,
+        "source_scope": "character_seed",
+        "source_thread_id": None,
+        "concept_seed": str(description or "").strip(),
+        "target_character": {
+            "character_id": normalized_card.get("character_id"),
+            "slot_label": normalized_card.get("slot_label"),
+            "name": normalized_card.get("name"),
+            "cast_type": normalized_card.get("cast_type"),
+            "story_role": normalized_card.get("story_role"),
+        },
+        "readiness": (
+            f"系统先根据这段描述整理出 {len(summary_items)} 个暂定维度。请先确认哪些地方不对，再优先继续补：{'、'.join(missing_dimensions[:2]) or '人物边界'}。"
+            if missing_dimensions
+            else "这段描述已经足够支撑一版待确认的人物卡草稿。请先确认无误，再继续细化或生成画像。"
+        ),
+    }
+
+
+def apply_character_seed_draft_to_card(
+    *,
+    card: dict[str, object],
+    description: str,
+    draft: dict[str, object],
+) -> dict[str, object]:
+    updated_card = normalize_character_target(card)
+    updated_card["concept_seed"] = str(description or "").strip()
+    if str(draft.get("summary") or "").strip():
+        updated_card["summary"] = str(draft["summary"]).strip()
+    for field in ("voiceprint", "desire", "fear", "relationship", "action_mode", "growth_gap", "mask_true_self"):
+        current_value = str(updated_card.get(field) or "").strip()
+        draft_value = str(draft.get(field) or "").strip()
+        if draft_value and not current_value:
+            updated_card[field] = draft_value
+    updated_card["discussion_summary"] = build_character_card_seed_summary(
+        card=updated_card,
+        draft=draft,
+        description=description,
+    )
+    # Portrait generation should happen after the draft is reviewed, not immediately after free description autofill.
+    updated_card["character_portrait"] = None
+    return updated_card
 
 
 def run_requires_human_approval(result: dict[str, object]) -> bool:
@@ -2241,56 +2415,56 @@ def create_app(
             topics = [
                 {
                     "title": "第一印象",
-                    "prompt": f"这轮只讨论{label}。你更希望这个人物第一次出场时，给读者的第一印象是下面哪种？",
+                    "prompt": f"如果镜头第一次推到{label}身上，你最想让读者先感到什么？不用急着下定义，先说气场、动作、眼神，或者一句很模糊的感觉都可以。",
                     "options": ["克制", "危险", "倔强", "聪明", "讨喜", "还没想清"],
                     "extra_options": ["沉默但压迫感强", "看着冷其实很护短", "嘴上淡但下手果断", "不讨喜但很上头"],
-                    "rephrase_prompt": f"换个问法：{label}第一次出场时，你更希望读者先喜欢这个人物、先怕这个人物，还是先想看懂这个人物？",
-                    "support_prompt": f"你可以直接围绕{label}补一句感觉，比如“别太少年气”“要有压迫感但不能油”。",
+                    "rephrase_prompt": f"换个问法：{label}一出场，你更想让读者先喜欢 TA、先怕 TA，还是先想看懂 TA？",
+                    "support_prompt": f"如果一时说不准，我也可以给你几个更有画面感的方向；你也可以直接说“别太少年气”“要有压迫感但不能油”这种感觉句。",
                     "answer_mode": "choice_or_short_text",
                 },
                 {
                     "title": "核心欲望",
-                    "prompt": f"{label}眼下最想得到或最想争回来的东西是什么？最好说到足够具体，可以驱动这个人物持续行动。",
+                    "prompt": f"现在最能驱动{label}往前走的，到底是什么？你可以把它说成 TA 非抢不可、非守不可、非摆脱不可的东西。",
                     "options": ["争回身份", "摆脱束缚", "保护某人", "证明自己", "我自己补充"],
                     "extra_options": ["拿回主动权", "获得安全感", "赢得尊重", "查清真相"],
-                    "rephrase_prompt": f"换个问法：如果只给{label}一个非做不可的目标，这个人最不愿放手的会是什么？",
-                    "support_prompt": f"不要写大词，尽量说成{label}会真的去争、去抢、去守住的具体东西。",
+                    "rephrase_prompt": f"换个问法：如果只给{label}留一个绝不能放手的目标，这个人会死死抓住什么？",
+                    "support_prompt": f"先别写大词，尽量说成{label}真的会去争、去抢、去守住的具体东西。我也可以先帮你缩成几个方向。",
                     "answer_mode": "choice_or_short_text",
                 },
                 {
                     "title": "核心恐惧",
-                    "prompt": f"{label}最怕失去什么，或最怕再次发生什么？",
+                    "prompt": f"什么事一旦发生，会让{label}立刻失衡，甚至做出和平时不一样的决定？",
                     "options": ["再次被抛弃", "再次失败", "失去重要之人", "暴露真实自己", "我自己补充"],
                     "extra_options": ["被看轻", "失去掌控", "沦为工具", "失去现在的身份位置"],
-                    "rephrase_prompt": f"换个问法：什么事一旦发生，{label}会立刻失衡，甚至做出和平时不同的决定？",
-                    "support_prompt": f"恐惧不是为了卖惨，而是为了确定{label}在压力里最容易被什么击中。",
+                    "rephrase_prompt": f"换个问法：{label}最怕再经历一次什么，或者最怕被夺走什么？",
+                    "support_prompt": f"这里不是为了卖惨，而是为了抓住{label}在压力里最容易被什么击中。你也可以直接说一个 TA 最不愿重演的场景。",
                     "answer_mode": "choice_or_short_text",
                 },
                 {
                     "title": "关键关系张力",
-                    "prompt": f"{label}最关键的关系张力更像哪一种？",
+                    "prompt": f"围绕{label}，你最想写出火花的那段关系，核心拉扯到底是什么？",
                     "options": ["师徒/前辈压迫", "宿敌对抗", "同伴互相拉扯", "亲密关系试探", "我自己描述"],
                     "extra_options": ["旧恩旧怨", "利益绑定但互不信任", "强者压迫弱者反抗", "表面合作暗中试探"],
-                    "rephrase_prompt": f"换个问法：围绕{label}，这本书里最容易写出火花的两个人为什么一见面就不可能轻松？",
-                    "support_prompt": f"你也可以先说“我最想写的是{label}和某人之间那种既靠近又提防的感觉”。",
+                    "rephrase_prompt": f"换个问法：在这本书里，谁一碰上{label}就不可能轻松？他们之间最带劲的地方是什么？",
+                    "support_prompt": f"你可以直接说一句关系感觉，比如“既靠近又提防”“互相利用但会慢慢卸防”。不需要先把关系类型定义得很死。",
                     "answer_mode": "choice_or_short_text",
                 },
                 {
                     "title": "行动方式 / 决策模式",
-                    "prompt": f"{label}在冲突里通常怎么做决定？是先忍、先试探、先赌、先动手，还是别的方式？",
+                    "prompt": f"当{label}被逼到必须做选择时，这个人通常怎么动？是先看、先忍、先试探，还是会突然出手？",
                     "options": ["先观察再出手", "先忍后爆", "边试探边推进", "先赌一把", "我自己描述"],
                     "extra_options": ["表面退让实则布局", "先保底线再争利益", "先护人再谈输赢", "先切断退路逼自己行动"],
-                    "rephrase_prompt": f"换个问法：当{label}被逼到必须选的时候，这个人更像是算清再动，还是被情绪点燃就动？",
-                    "support_prompt": f"这个问题决定{label}后面写出来会不会始终像同一个人。",
+                    "rephrase_prompt": f"换个问法：真到要选的时候，{label}更像是算清了再动，还是被情绪点燃就动？",
+                    "support_prompt": f"这个问题决定{label}后面写出来会不会始终像同一个人。你也可以直接给我一个场景，我来帮你提炼行动逻辑。",
                     "answer_mode": "choice_or_short_text",
                 },
                 {
                     "title": "人物边界",
-                    "prompt": f"什么行为一旦出现，你会立刻觉得{label}写崩了？",
+                    "prompt": f"你最不想把{label}写成什么样？或者说，哪种变化一出现，你会立刻觉得这个人物已经写崩了？",
                     "options": ["突然圣母", "突然莽撞", "突然油腻", "突然降智", "我自己描述"],
                     "extra_options": ["突然恋爱脑", "突然软弱到失真", "突然嘴炮太多", "突然轻佻没分寸"],
                     "rephrase_prompt": f"换个问法：读者后面看到哪种变化，会觉得“这已经不是开头那个{label}了”？",
-                    "support_prompt": f"如果不好概括，也可以直接说“不要把{label}写成……”。",
+                    "support_prompt": f"如果不好概括，也可以直接说“不要把{label}写成……”或者“TA绝不会做这种事”。",
                     "answer_mode": "choice_or_short_text",
                 },
             ]
@@ -2299,20 +2473,20 @@ def create_app(
                     [
                         {
                             "title": "成长缺口",
-                            "prompt": f"作为主角，{label}现在最明显的成长缺口是什么？后面必须跨过去的那道坎是什么？",
+                            "prompt": f"如果{label}从头到尾都不改变，后面最可能死在哪道坎上？作为主角，TA必须补上的缺口是什么？",
                             "options": ["不敢信任别人", "只会硬扛不会协同", "判断太情绪化", "能力够但格局不够", "我自己描述"],
                             "extra_options": ["总想独自承担", "太在意输赢", "太怕暴露软肋", "只会防守不会主动争取"],
-                            "rephrase_prompt": f"换个问法：如果{label}从头到尾都不改变，最容易卡死在哪个地方？",
-                            "support_prompt": f"成长缺口不是缺点清单，而是主角后面必须完成的一次内在升级。",
+                            "rephrase_prompt": f"换个问法：如果{label}一直停在现在这个状态，后面最容易卡死在哪里？",
+                            "support_prompt": f"成长缺口不是缺点清单，而是主角后面必须完成的一次内在升级。你也可以直接说“TA太容易……”或“TA始终做不到……”。",
                             "answer_mode": "choice_or_short_text",
                         },
                         {
                             "title": "伪装与真实自我",
-                            "prompt": f"{label}平时给别人看的样子，和这个人物真正的自己之间，有没有明显落差？",
+                            "prompt": f"{label}给别人看的样子，和 TA 真正的自己之间，有没有一层很带劲的落差？",
                             "options": ["看着冷，其实很在意", "看着强，其实一直怕输", "看着无所谓，其实执念很重", "没有明显伪装", "我自己描述"],
                             "extra_options": ["看着理智，其实很容易被触发", "看着温和，其实控制欲很强", "看着好相处，其实很难真正信人", "表面克制，内里很激烈"],
-                            "rephrase_prompt": f"换个问法：如果只有读者知道{label}的秘密，那读者最该先知道这层反差是什么？",
-                            "support_prompt": f"这会决定主角为什么耐看，也决定后续很多情绪反转有没有力量。",
+                            "rephrase_prompt": f"换个问法：如果只有读者知道{label}的一层秘密，那最该先知道哪层反差？",
+                            "support_prompt": f"这会决定主角为什么耐看，也决定后续很多情绪反转有没有力量。你可以直接说“TA看着……其实……”就行。",
                             "answer_mode": "choice_or_short_text",
                         },
                     ]
@@ -2383,12 +2557,18 @@ def create_app(
             return "more_options"
         if "我还不确定" in normalized or "没想清" in normalized or "不知道怎么答" in normalized:
             return "unsure"
+        if "更狠一点" in normalized or "更狠的版本" in normalized or "更狠版" in normalized:
+            return "push_harder"
+        if "一个场景" in normalized or "场景试一下" in normalized or "用场景试" in normalized:
+            return "scene_probe"
+        if "反差版本" in normalized or "反差版" in normalized or "给我反差" in normalized:
+            return "contrast_probe"
         return None
 
     def build_interview_user_payload(*, thread, content: str, operator_id: str) -> dict:
         helper_action = detect_interview_helper_action(content) if interview_blueprint(thread.scope) else None
         progress_effect = "answered"
-        if helper_action in {"rephrase", "more_options", "unsure", "draft_confirm"}:
+        if helper_action in {"rephrase", "more_options", "unsure", "draft_confirm", "push_harder", "scene_probe", "contrast_probe"}:
             progress_effect = "helper"
         elif helper_action == "skip":
             progress_effect = "skipped"
@@ -2400,10 +2580,12 @@ def create_app(
 
     def interview_topic_keywords(scope: str, title: str) -> list[str]:
         topic_keywords = {
+            ("character_room", "第一印象"): ["第一印象", "出场", "感觉", "气质", "眼神", "气场", "看着", "表面", "冷", "危险", "聪明", "倔强", "讨喜", "压迫感", "护短", "少年气", "克制"],
             ("character_room", "核心欲望"): ["想要", "最想", "争回", "得到", "守住", "目标", "不愿放手", "摆脱", "脱离", "命运", "主动权", "尊重", "真相"],
             ("character_room", "核心恐惧"): ["最怕", "害怕", "恐惧", "失去", "再次", "暴露", "失败", "抛弃", "看轻", "掌控", "工具"],
             ("character_room", "关键关系张力"): ["关系", "张力", "师门", "师徒", "首席", "宿敌", "同伴", "互相", "防备", "需要", "试探", "对抗", "拉扯", "恩怨"],
             ("character_room", "行动方式 / 决策模式"): ["先忍", "先观察", "先试探", "先赌", "先动手", "出手", "布局", "保底线", "做决定", "选择", "行动", "冷静", "冲动", "莽", "绝境", "理智"],
+            ("character_room", "人物边界"): ["不要", "不能", "写崩", "别写成", "不要写成", "一旦", "失真", "圣母", "油腻", "降智", "恋爱脑", "软弱", "轻佻", "没分寸"],
             ("character_room", "成长缺口"): ["缺口", "成长", "跨过去", "卡住", "不会", "不敢", "总是", "必须学会", "升级"],
             ("character_room", "伪装与真实自我"): ["表面", "其实", "看着", "真实", "伪装", "反差", "内里", "秘密", "只有读者知道"],
         }
@@ -2439,6 +2621,34 @@ def create_app(
                 topic_index = remaining_indices[0]
                 current_topic = topics[topic_index]
                 resolution_mode = "current"
+                if scope == "character_room":
+                    matched_indices = [
+                        candidate
+                        for candidate in remaining_indices
+                        if interview_topic_keywords(scope, str(topics[candidate].get("title") or ""))
+                        and matches_interview_topic(scope=scope, topic=topics[candidate], content=item.content)
+                    ]
+                    if matched_indices:
+                        primary_index = topic_index if topic_index in matched_indices else matched_indices[0]
+                        ordered_indices = [index for index in matched_indices if index != primary_index] + [primary_index]
+                        resolved_titles = [str(topics[index].get("title") or "") for index in matched_indices]
+                        primary_mode = "multi_capture" if len(matched_indices) > 1 else ("current" if primary_index == topic_index else "redirected")
+                        for candidate in ordered_indices:
+                            handled.append(
+                                {
+                                    "message": item,
+                                    "effect": "answered",
+                                    "helper_action": helper_action,
+                                    "topic_index": candidate,
+                                    "resolution_mode": primary_mode if candidate == primary_index else "multi_capture",
+                                    "expected_topic_title": str(current_topic.get("title") or "") if current_topic else "",
+                                    "resolved_topic_title": str(topics[candidate].get("title") or "") if candidate < len(topics) else "",
+                                    "resolved_topic_titles": resolved_titles,
+                                }
+                            )
+                        resolved_indices.update(matched_indices)
+                        last_helper = None
+                        continue
                 if current_topic and not matches_interview_topic(scope=scope, topic=current_topic, content=item.content):
                     candidate_index = next(
                         (
@@ -2483,39 +2693,106 @@ def create_app(
         return handled, last_helper
 
     def build_interview_draft(*, project, scope: str, answered_records: list[dict], topics: list[dict], target_character: dict[str, object] | None = None) -> dict | None:
-        if len(answered_records) < 2:
+        if scope != "character_room" and len(answered_records) < 2:
             return None
         brief = project.default_user_brief or {}
         title = brief.get("title") or project.name
         sections: list[dict[str, str]] = []
         sorted_records = sorted(answered_records, key=lambda item: item.get("topic_index", 0))
         summary_item_limit = interview_summary_item_limit(scope, topics=topics, target_character=target_character)
-        for record in sorted_records[: min(len(sorted_records), len(topics), summary_item_limit)]:
-            if record["effect"] == "skipped":
-                continue
-            topic_index = int(record.get("topic_index", 0) or 0)
-            if topic_index >= len(topics):
-                continue
-            answer = str(record["message"].content or "").strip()
-            if not answer:
-                continue
-            sections.append(
-                {
-                    "label": topics[topic_index]["title"],
-                    "summary": answer[:120],
-                }
-            )
+        if scope == "character_room":
+            normalized_character = normalize_character_target(target_character or {})
+            summary_map = character_summary_label_map(normalized_character.get("discussion_summary"))
+            cast_type_label = {
+                "protagonist": "主角",
+                "supporting": "配角",
+                "antagonist": "反派/对位",
+                "mentor": "导师/引路人",
+            }.get(str(normalized_character.get("cast_type") or "").strip(), "")
+            section_map: dict[str, str] = {}
+
+            def add_section(label: str, *values: object) -> None:
+                if label in section_map:
+                    return
+                for value in values:
+                    text = str(value or "").strip()
+                    if text:
+                        section_map[label] = text[:160]
+                        return
+
+            add_section("人物卡标签", normalized_character.get("slot_label"))
+            add_section("角色名", normalized_character.get("name"))
+            add_section("主次定位", cast_type_label)
+            add_section("剧情职责", normalized_character.get("story_role"))
+            add_section("声音与气质", normalized_character.get("voiceprint"), summary_map.get("第一印象"), summary_map.get("主角第一印象"))
+            add_section("核心欲望", normalized_character.get("desire"), summary_map.get("核心欲望"), summary_map.get("真正想摆脱什么"), summary_map.get("主角真正想摆脱什么"))
+            add_section("主要恐惧", normalized_character.get("fear"), summary_map.get("核心恐惧"))
+            add_section("与主角关系", normalized_character.get("relationship"), summary_map.get("关键关系张力"))
+            add_section("行动方式 / 决策模式", normalized_character.get("action_mode"), summary_map.get("行动方式 / 决策模式"), summary_map.get("行动方式"))
+            add_section("人物边界", summary_map.get("人物边界"), summary_map.get("角色边界"))
+            add_section("补充备注", normalized_character.get("summary"))
+            add_section("自由描述基底", normalized_character.get("concept_seed"))
+            if str(normalized_character.get("cast_type") or "").strip() == "protagonist":
+                add_section("成长缺口", normalized_character.get("growth_gap"), summary_map.get("成长缺口"))
+                add_section("伪装与真实自我", normalized_character.get("mask_true_self"), summary_map.get("伪装与真实自我"))
+
+            for record in sorted_records:
+                if record["effect"] == "skipped":
+                    continue
+                topic_index = int(record.get("topic_index", 0) or 0)
+                if topic_index >= len(topics):
+                    continue
+                answer = str(record["message"].content or "").strip()
+                if not answer:
+                    continue
+                section_map.setdefault(topics[topic_index]["title"], answer[:160])
+
+            preferred_order = [
+                "人物卡标签",
+                "角色名",
+                "主次定位",
+                "剧情职责",
+                "声音与气质",
+                "核心欲望",
+                "主要恐惧",
+                "与主角关系",
+                "行动方式 / 决策模式",
+                "人物边界",
+                "成长缺口",
+                "伪装与真实自我",
+                "补充备注",
+                "自由描述基底",
+            ]
+            sections = [{"label": label, "summary": section_map[label]} for label in preferred_order if section_map.get(label)]
+            if not sections:
+                return None
+        else:
+            for record in sorted_records[: min(len(sorted_records), len(topics), summary_item_limit)]:
+                if record["effect"] == "skipped":
+                    continue
+                topic_index = int(record.get("topic_index", 0) or 0)
+                if topic_index >= len(topics):
+                    continue
+                answer = str(record["message"].content or "").strip()
+                if not answer:
+                    continue
+                sections.append(
+                    {
+                        "label": topics[topic_index]["title"],
+                        "summary": answer[:120],
+                    }
+                )
         if not sections:
             return None
         lead = f"《{title}》目前已经有一版可继续确认的方向草案。"
         if brief.get("idea_seed"):
             lead = f"基于你最初的灵感“{str(brief['idea_seed'])[:32]}...”，《{title}》已经有一版可继续确认的方向草案。"
         if scope == "character_room":
-            lead = f"《{title}》里的{character_card_display_label(target_character, '当前人物')}已经有一版可继续确认的人物摘要草案。"
+            lead = f"《{title}》里的{character_card_display_label(target_character, '当前人物')}已经有一版可继续确认的人物理解草稿，下面会尽量完整展示这张人物卡当前已知的特性。"
         return {
             "title": "当前理解草案",
             "lead": lead,
-            "sections": sections[:summary_item_limit],
+            "sections": sections if scope == "character_room" else sections[:summary_item_limit],
             "recommendation": "如果这版大致对，可以继续补缺口；如果明显不对，就用“换个问法”或直接指出系统理解偏了哪里。",
         }
 
@@ -2818,6 +3095,8 @@ def create_app(
                 inherited.append({"label": f"{character_label}当前关系", "summary": str(target["relationship"])[:160]})
             if str(target.get("action_mode") or "").strip():
                 inherited.append({"label": f"{character_label}当前行动方式", "summary": str(target["action_mode"])[:160]})
+            if str(target.get("concept_seed") or "").strip():
+                inherited.append({"label": f"{character_label}原始描述", "summary": str(target["concept_seed"])[:160]})
             if str(target.get("summary") or "").strip():
                 inherited.append({"label": f"{character_label}当前备注", "summary": str(target["summary"])[:160]})
             for decision in decisions:
@@ -2895,11 +3174,168 @@ def create_app(
         }
         return mapping.get(str(topic_title or "").strip())
 
-    def interview_prompt_variants(*, topic: dict, helper_action: str | None) -> tuple[str, list[str]]:
+    def character_creative_probe_variants(*, topic: dict, helper_action: str, target_character: dict[str, object] | None = None) -> tuple[str, list[str]]:
+        label = character_card_display_label(target_character, "TA")
+        topic_title = str(topic.get("title") or "").strip()
+        fallback_options = {
+            "push_harder": [
+                f"{label}在“{topic_title}”上再往更锋利、更不好惹的方向推半步。",
+                f"先不要太稳，给{label}一个更有棱角、更有代价感的版本。",
+                f"如果只求让人一下记住，{label}在“{topic_title}”上最该更狠一点的地方是什么？",
+            ],
+            "scene_probe": [
+                f"别先下定义，给我一个能直接看见{label}“{topic_title}”的小场景。",
+                f"如果把“{topic_title}”拍成一个镜头，{label}会先做什么？",
+                f"先用一个具体瞬间把{label}试出来，再回头总结也行。",
+            ],
+            "contrast_probe": [
+                f"试一个更有反差的版本：{label}看起来像这样，但真正被触发时会露出另一面。",
+                f"你可以直接用“看着……其实……”来把{label}的“{topic_title}”说出来。",
+                f"先别求标准，先给{label}一个更耐看的反差点。",
+            ],
+        }
+        prompt_map = {
+            "push_harder": f"那我们先别求稳，试一个更锋利、更有记忆点的版本。你可以先把{label}往更狠、更不好惹的方向推半步。",
+            "scene_probe": f"我们先别抽象概括，直接拿一个小场景把{label}试出来。你可以只说一个瞬间、一个动作、或者一句台词。",
+            "contrast_probe": f"我们先抓反差，让{label}更耐看。你可以直接用“看着……其实……”这种句式往下说。",
+        }
+        option_map = {
+            ("push_harder", "第一印象"): [
+                f"{label}不是普通的冷，而是那种让人本能不敢越线的冷。",
+                f"{label}一出场就不必讨喜，先要让人觉得不好惹。",
+                f"{label}看着克制，但压迫感要重到让人下意识收声。",
+            ],
+            ("scene_probe", "第一印象"): [
+                f"{label}第一次出场时，做了什么动作，让周围人立刻安静下来？",
+                f"给{label}一个初登场镜头：别人先轻视 TA，下一秒发生了什么？",
+                f"如果只用一个镜头立住{label}，你最想拍到 TA 的哪个瞬间？",
+            ],
+            ("contrast_probe", "第一印象"): [
+                f"{label}看着很冷，其实比谁都更护短。",
+                f"{label}表面像在退，真到关键处反而最敢顶上去。",
+                f"别人以为{label}难以接近，其实 TA 只是太早学会防备。",
+            ],
+            ("push_harder", "核心欲望"): [
+                f"{label}不是普通地想赢，而是宁可付代价也要把主动权抢回来。",
+                f"{label}真正死死不放的，不只是目标，而是绝不能再被摆布。",
+                f"把{label}的欲望再推狠一点：TA非拿回什么不可？",
+            ],
+            ("scene_probe", "核心欲望"): [
+                f"给我一个场景：为了拿到自己最想要的东西，{label}愿意先舍掉什么？",
+                f"如果把{label}的欲望拍成一个动作，TA会扑向什么、拦住什么、守住什么？",
+                f"真把{label}逼到眼前，TA最先护住的会是什么？",
+            ],
+            ("contrast_probe", "核心欲望"): [
+                f"{label}嘴上像无所谓，其实最不肯松手的恰恰是这个东西。",
+                f"{label}看着像在争利益，骨子里其实是在争体面或命运的主动权。",
+                f"{label}表面像为了别人，真正最放不下的却是自己被夺走的那部分人生。",
+            ],
+            ("push_harder", "核心恐惧"): [
+                f"{label}最怕的不是普通失败，而是再次沦为别人手里的工具。",
+                f"把{label}的恐惧再推狠一点：什么一发生，TA会立刻失衡？",
+                f"{label}平时再稳，一旦碰到这个点就会瞬间变掉。",
+            ],
+            ("scene_probe", "核心恐惧"): [
+                f"给我一个小场景：什么画面一出现，就会让{label}整个人绷起来？",
+                f"如果{label}最怕的事突然重演，TA第一反应会做什么？",
+                f"把{label}的恐惧落到一个具体触发点上：一句话、一个动作、还是一个人？",
+            ],
+            ("contrast_probe", "核心恐惧"): [
+                f"{label}看着什么都不怕，其实最怕重新失去掌控。",
+                f"{label}表面像冷静理智，但只要碰到这个伤口就会做出和平时不一样的决定。",
+                f"{label}看着最能扛，真正最不能碰的反而是这个点。",
+            ],
+            ("push_harder", "关键关系张力"): [
+                f"{label}和对方不是普通拉扯，而是越靠近越危险、越离不开。",
+                f"把这段关系再推狠一点：两个人之间最不肯先退的那口气是什么？",
+                f"{label}和 TA 不是简单互相利用，而是谁先交心谁就先输。",
+            ],
+            ("scene_probe", "关键关系张力"): [
+                f"给我一个场景：{label}和那个人第一次真正针锋相对时，空气里最重的是什么？",
+                f"如果要用一句对话试出这段关系的火花，谁会先说什么？",
+                f"把这段关系放进一个具体局面里：合作、对峙，还是互相试探？",
+            ],
+            ("contrast_probe", "关键关系张力"): [
+                f"{label}和对方表面在合作，其实谁都在提防谁。",
+                f"{label}看着像压着对方，真到关键处却反而会先露出软肋。",
+                f"两个人嘴上互相防备，身体和行动却总会下意识站到同一边。",
+            ],
+            ("push_harder", "行动方式 / 决策模式"): [
+                f"{label}不是犹豫型，而是越到绝境越冷，观察完就会下狠手。",
+                f"把{label}的行动方式再推狠一点：TA真做决定时会有多果断？",
+                f"{label}平时再克制，一旦确认方向就不会给别人第二次机会。",
+            ],
+            ("scene_probe", "行动方式 / 决策模式"): [
+                f"给我一个临场场景：真到必须选的时候，{label}会先观察、先试探，还是直接动手？",
+                f"把{label}丢进一个危急瞬间，看 TA 第一个动作是什么。",
+                f"如果要用一个选择题外的具体局面来试出{label}，TA在压力里会先做什么？",
+            ],
+            ("contrast_probe", "行动方式 / 决策模式"): [
+                f"{label}看着像会退，其实只是先算清楚再一击到位。",
+                f"{label}表面平静，真正做决定时反而比谁都快。",
+                f"{label}平时像很克制，一旦碰到底线却会突然出手。",
+            ],
+            ("push_harder", "人物边界"): [
+                f"{label}可以吃亏、可以隐忍，但绝不能被写成没骨头的人。",
+                f"把{label}的边界说狠一点：什么变化一出现，你会立刻觉得 TA 被写崩了？",
+                f"{label}再怎么变，也绝不会跨过这条线。",
+            ],
+            ("scene_probe", "人物边界"): [
+                f"给我一个场景：什么情况下，如果{label}做了某种选择，你会立刻觉得这个人不对了？",
+                f"把“不能写崩”落到一个具体瞬间，{label}绝不会怎么做？",
+                f"如果读者看到这个场面会喊“这不像 TA 了”，那通常会是什么？",
+            ],
+            ("contrast_probe", "人物边界"): [
+                f"{label}可以外冷，也可以嘴硬，但不能突然变成轻佻油腻的人。",
+                f"{label}看着能退让，可底线一到绝不会自我背叛。",
+                f"{label}可以对人软一点，但绝不能软到失真。",
+            ],
+            ("push_harder", "成长缺口"): [
+                f"{label}现在最大的坎不是普通缺点，而是迟早会把 TA 自己逼进死路的那个习惯。",
+                f"把{label}的成长缺口说狠一点：TA要是不改，后面最可能死在哪？",
+                f"{label}眼下最致命的，不是不够强，而是这一点始终跨不过去。",
+            ],
+            ("scene_probe", "成长缺口"): [
+                f"给我一个场景：{label}因为这个缺口，最容易在什么局面里把事情越搞越糟？",
+                f"如果成长缺口要在剧情里第一次显形，会是哪一个具体瞬间？",
+                f"把{label}放进一次必须求助或必须放手的局面，TA会卡在哪里？",
+            ],
+            ("contrast_probe", "成长缺口"): [
+                f"{label}看着最强的地方，往往也是 TA 最容易出事的地方。",
+                f"{label}表面像很能扛，真正的问题却是 TA 太习惯一个人硬扛。",
+                f"{label}看着很会掌控局面，其实最不会处理的是自己的软肋。",
+            ],
+            ("push_harder", "伪装与真实自我"): [
+                f"{label}表面越稳，内里那层真正压着的东西就要越重。",
+                f"把{label}的反差再推狠一点：别人看到的是哪一层，真正的 TA 又是哪一层？",
+                f"{label}越像没事，越说明 TA 真正不肯给人看到的那部分更激烈。",
+            ],
+            ("scene_probe", "伪装与真实自我"): [
+                f"给我一个场景：什么时候{label}伪装快撑不住了？",
+                f"如果读者要在一个镜头里看见{label}真实的一面，那会是 TA 独处时还是被逼到极限时？",
+                f"把{label}的反差放到一个具体瞬间，TA 是怎么露馅的？",
+            ],
+            ("contrast_probe", "伪装与真实自我"): [
+                f"{label}看着冷静克制，其实情绪一旦被点燃会比谁都激烈。",
+                f"{label}表面像没什么执念，骨子里其实比谁都不肯认输。",
+                f"{label}看着很好相处，真正进入内圈却比谁都难信人。",
+            ],
+        }
+        return prompt_map.get(helper_action, topic["prompt"]), option_map.get((helper_action, topic_title), fallback_options.get(helper_action, []))
+
+    def interview_prompt_variants(
+        *,
+        scope: str,
+        topic: dict,
+        helper_action: str | None,
+        target_character: dict[str, object] | None = None,
+    ) -> tuple[str, list[str]]:
         if helper_action == "rephrase":
             prompt = topic.get("rephrase_prompt") or topic["prompt"]
             options = list(topic.get("options") or [])
             return prompt, options
+        if scope == "character_room" and helper_action in {"push_harder", "scene_probe", "contrast_probe"}:
+            return character_creative_probe_variants(topic=topic, helper_action=helper_action, target_character=target_character)
         if helper_action in {"more_options", "unsure"}:
             prompt = topic.get("support_prompt") or topic["prompt"]
             options = list(topic.get("options") or [])
@@ -2908,6 +3344,60 @@ def create_app(
                     options.append(item)
             return prompt, options
         return topic["prompt"], list(topic.get("options") or [])
+
+    def character_prefilled_interview_records(
+        *,
+        target_character: dict[str, object] | None,
+        topics: list[dict],
+        resolved_indices: set[int],
+    ) -> list[dict]:
+        if not isinstance(target_character, dict):
+            return []
+        summary_map = character_summary_label_map(target_character.get("discussion_summary"))
+        title_to_value = {
+            "第一印象": str(target_character.get("voiceprint") or summary_map.get("第一印象") or summary_map.get("主角第一印象") or "").strip(),
+            "核心欲望": str(target_character.get("desire") or summary_map.get("核心欲望") or summary_map.get("真正想摆脱什么") or summary_map.get("主角真正想摆脱什么") or "").strip(),
+            "核心恐惧": str(target_character.get("fear") or summary_map.get("核心恐惧") or "").strip(),
+            "关键关系张力": str(target_character.get("relationship") or summary_map.get("关键关系张力") or "").strip(),
+            "行动方式 / 决策模式": str(target_character.get("action_mode") or summary_map.get("行动方式 / 决策模式") or summary_map.get("行动方式") or "").strip(),
+            "人物边界": str(summary_map.get("人物边界") or summary_map.get("角色边界") or "").strip(),
+            "成长缺口": str(target_character.get("growth_gap") or summary_map.get("成长缺口") or "").strip(),
+            "伪装与真实自我": str(target_character.get("mask_true_self") or summary_map.get("伪装与真实自我") or "").strip(),
+        }
+        records: list[dict] = []
+        for index, topic in enumerate(topics):
+            if index in resolved_indices:
+                continue
+            title = str(topic.get("title") or "").strip()
+            content = title_to_value.get(title, "")
+            if not content:
+                continue
+            records.append(
+                {
+                    "message": SimpleNamespace(content=content),
+                    "effect": "answered",
+                    "helper_action": None,
+                    "topic_index": index,
+                    "resolution_mode": "prefilled",
+                    "expected_topic_title": title,
+                    "resolved_topic_title": title,
+                    "source": "prefilled",
+                }
+            )
+        return records
+
+    def interview_response_hint(scope: str, *, target_character: dict[str, object] | None = None) -> str:
+        if scope == "character_room":
+            label = character_card_display_label(target_character, "这个人物")
+            return f"你不用按题目答。直接说{label}给人的感觉、一个场景、两个人之间的火花，或者一句“我最怕把 TA 写成……”，我来帮你把里面的关键信息整理出来。"
+        if scope == "outline_room":
+            return "你可以直接说节奏感觉、想要的反转、最怕写平的地方，或者先丢一个大概走向，我来帮你整理成大纲方向。"
+        return "你可以直接说想保住的感觉、脑中最清楚的画面、人物状态，或者最担心跑偏的地方，我来帮你收成项目方向。"
+
+    def interview_option_hint(next_options: list[str]) -> str:
+        if next_options:
+            return "这些只是我帮你抛出来的几个灵感方向，不是标准答案；你可以随便借一句，也可以完全不按这些说。"
+        return "如果一时说不圆也没关系，先给一句最接近的感觉就行，后面可以边聊边补。"
 
     def build_interview_state(*, thread, project) -> dict | None:
         target_character = resolve_character_room_target(project=project, thread=thread) if thread.scope == "character_room" else None
@@ -2918,6 +3408,14 @@ def create_app(
         topics = blueprint["topics"]
         handled_records, last_helper = interview_answer_records(scope=thread.scope, topics=topics, messages=messages)
         resolved_indices = {int(record.get("topic_index", 0) or 0) for record in handled_records if record.get("topic_index") is not None}
+        if thread.scope == "character_room":
+            prefilled_records = character_prefilled_interview_records(
+                target_character=target_character,
+                topics=topics,
+                resolved_indices=resolved_indices,
+            )
+            handled_records.extend(prefilled_records)
+            resolved_indices = {int(record.get("topic_index", 0) or 0) for record in handled_records if record.get("topic_index") is not None}
         completed_count = min(len(resolved_indices), len(topics))
         confirmed_topics: list[str] = []
         skipped_topics: list[str] = []
@@ -2933,15 +3431,28 @@ def create_app(
         unresolved_topics = [item["title"] for index, item in enumerate(topics) if index not in resolved_indices]
         next_topic = next((item for index, item in enumerate(topics) if index not in resolved_indices), None)
         next_prompt = (
-            interview_prompt_variants(topic=next_topic, helper_action=last_helper["helper_action"] if last_helper else None)[0]
+            interview_prompt_variants(
+                scope=thread.scope,
+                topic=next_topic,
+                helper_action=last_helper["helper_action"] if last_helper else None,
+                target_character=target_character,
+            )[0]
             if next_topic is not None
             else blueprint["closing_prompt"]
         )
         next_options = (
-            interview_prompt_variants(topic=next_topic, helper_action=last_helper["helper_action"] if last_helper else None)[1]
+            interview_prompt_variants(
+                scope=thread.scope,
+                topic=next_topic,
+                helper_action=last_helper["helper_action"] if last_helper else None,
+                target_character=target_character,
+            )[1]
             if next_topic is not None
             else []
         )
+        response_hint = interview_response_hint(thread.scope, target_character=target_character)
+        option_hint = interview_option_hint(next_options)
+        show_next_options = bool(next_options and ((last_helper or {}).get("helper_action") in {"more_options", "unsure", "push_harder", "scene_probe", "contrast_probe"}))
         relevant_types = set(blueprint["decision_types"])
         adopted = [
             item
@@ -2972,19 +3483,20 @@ def create_app(
                     "mode": str(record.get("resolution_mode") or "current"),
                     "expected_topic_title": str(record.get("expected_topic_title") or ""),
                     "resolved_topic_title": str(record.get("resolved_topic_title") or ""),
+                    "resolved_topic_titles": list(record.get("resolved_topic_titles") or []),
                 }
                 for record in reversed(handled_records)
-                if record.get("effect") == "answered"
+                if record.get("effect") == "answered" and record.get("source") != "prefilled"
             ),
             None,
         )
         reflection_summary = (
-            f"目前已经聊到 {answered_count} 个点：{'、'.join(confirmed_topics)}。"
+            f"我们已经慢慢收住这些方向：{'、'.join(confirmed_topics)}。"
             if confirmed_topics
-            else "当前还在一起摸人物和方向，系统会继续用小问题帮你慢慢收紧，不要求一次答标准。"
+            else "当前还在一起摸第一版感觉，你可以先说画面、情绪、边界或一个很小的例子，我来帮你归纳。"
         )
         if skipped_topics:
-            reflection_summary = f"{reflection_summary} 先放着：{'、'.join(skipped_topics)}。"
+            reflection_summary = f"{reflection_summary} 暂时先放着：{'、'.join(skipped_topics)}。"
         current_draft = build_interview_draft(
             project=project,
             scope=thread.scope,
@@ -3013,11 +3525,14 @@ def create_app(
             "next_topic_title": next_topic["title"] if next_topic else None,
             "next_prompt": next_prompt,
             "next_options": next_options,
+            "show_next_options": show_next_options,
             "answer_mode": next_topic.get("answer_mode", "short_text") if next_topic else "review",
             "basis": basis,
             "adopted_count": len(adopted),
             "adopted_highlights": [conversation_decision_summary(item) for item in adopted[:3]],
             "reflection_summary": reflection_summary,
+            "response_hint": response_hint,
+            "option_hint": option_hint,
             "current_draft": current_draft,
             "stage_confirmation": stage_confirmation,
             "last_helper_action": last_helper["helper_action"] if last_helper else None,
@@ -3218,12 +3733,12 @@ def create_app(
             title = brief.get("title") or project.name
             seed = str(brief.get("idea_seed") or "").strip()
             content = (
-                f"我们先从《{title}》最原始的灵感开始，不要求你现在就回答完整的立项问题。\n\n"
+                f"我们先把《{title}》的第一版方向慢慢聊出来，不要求你现在就把整套立项问题一次答满。\n\n"
                 f"我先接住你现在手里这点材料：{seed or '你还没有写下原始灵感，可以直接用一句话告诉我脑中最清楚的画面、人物、冲突或感觉。'}\n\n"
-                f"本线程目标：{interview_state['goal']}\n"
-                f"当前进度：{interview_state['completion_label']}\n\n"
-                f"先回答第 1 问：{interview_state['next_prompt']}\n"
-                f"可直接从这些方向里选：{' / '.join(interview_state['next_options']) if interview_state['next_options'] else '也可以直接用一两句话回答。'}"
+                f"这一轮先从“{interview_state['next_topic_title'] or '当前这个点'}”聊起。\n"
+                f"我想先听你说：{interview_state['next_prompt']}\n"
+                f"{interview_state['response_hint']}\n"
+                f"{interview_state['option_hint']}"
             )
             return "assistant_question", content, {"interview_state": interview_state}
 
@@ -3235,15 +3750,14 @@ def create_app(
             brief = project.default_user_brief or {}
             title = brief.get("title") or project.name
             character_label = character_card_display_label(resolved_target, "当前人物")
+            inherited_note = "；".join(item.get("summary", "") for item in room_context.get("inherited_items", [])[:2]) if room_context.get("inherited_items") else ""
             content = (
-                f"这是《{title}》里“{character_label}”的人物讨论线程。\n\n"
-                f"当前承接：{room_context.get('reason') or '先承接前面已经确认的人物方向。'}\n"
-                f"已经继承：{'；'.join(item.get('summary', '') for item in room_context.get('inherited_items', [])[:2]) if room_context.get('inherited_items') else '还没有稳定继承项，可以边问边定。'}\n"
-                f"这一轮还要补：{'、'.join(room_context.get('missing_items') or [])}\n\n"
-                f"本线程目标：{interview_state['goal']}\n"
-                f"当前进度：{interview_state['completion_label']}\n\n"
-                f"先回答第 1 问：{interview_state['next_prompt']}\n"
-                f"可直接选：{' / '.join(interview_state['next_options']) if interview_state['next_options'] else '也可以直接补一句。'}"
+                f"我们现在专门聊《{title}》里的“{character_label}”。先别把这当成填表，我会更像采访一样，边聊边帮你把这个人捋清。\n\n"
+                f"{f'我目前手里已经有一点底子：{inherited_note}。\\n' if inherited_note else ''}"
+                f"眼下我最想先抓住的是：{room_context.get('missing_items', [interview_state['next_topic_title'] or '当前这个点'])[0] if room_context.get('missing_items') else interview_state['next_topic_title'] or '当前这个点'}。\n"
+                f"先从这里开始：{interview_state['next_prompt']}\n"
+                f"{interview_state['response_hint']}\n"
+                "如果你一时卡住，也可以直接让我给你一点灵感、一个场景、一个更狠版本，或者一个更有反差的版本。"
             )
             return "assistant_question", content, {"interview_state": interview_state, "thread_context": room_context, "target_character": resolved_target}
 
@@ -3254,14 +3768,13 @@ def create_app(
             brief = project.default_user_brief or {}
             title = brief.get("title") or project.name
             content = (
-                f"这是《{title}》的大纲讨论线程。\n\n"
+                f"这是《{title}》的大纲共创线程。\n\n"
                 f"当前承接：{room_context.get('reason') or '先承接前面已经确认的项目方向。'}\n"
                 f"已经继承：{'；'.join(item.get('summary', '') for item in room_context.get('inherited_items', [])[:2]) if room_context.get('inherited_items') else '还没有稳定继承项，可以边问边定。'}\n"
-                f"这一轮还要补：{'、'.join(room_context.get('missing_items') or [])}\n\n"
-                f"本线程目标：{interview_state['goal']}\n"
-                f"当前进度：{interview_state['completion_label']}\n\n"
-                f"先回答第 1 问：{interview_state['next_prompt']}\n"
-                f"可直接选：{' / '.join(interview_state['next_options']) if interview_state['next_options'] else '也可以直接补一句。'}"
+                f"这一轮先优先补：{room_context.get('missing_items', [interview_state['next_topic_title'] or '当前这个点'])[0] if room_context.get('missing_items') else interview_state['next_topic_title'] or '当前这个点'}\n\n"
+                f"我想先听你聊：{interview_state['next_prompt']}\n"
+                f"{interview_state['response_hint']}\n"
+                f"{interview_state['option_hint']}"
             )
             return "assistant_question", content, {"interview_state": interview_state, "thread_context": room_context}
 
@@ -3314,14 +3827,13 @@ def create_app(
             elif resolution.get("mode") == "loose_accept":
                 helper_line = f"我先把你刚才这句按“{resolution.get('resolved_topic_title') or '当前这个点'}”收进去，不要求你一开始就用特别标准的说法。\n"
             content = (
-                f"已记录你的方向：{excerpt}\n\n"
+                f"已收到你的这句：{excerpt}\n\n"
                 f"{helper_line}"
-                f"当前已经聊到：{interview_state['completion_label']}。\n"
-                f"已经收进来的点：{'、'.join(interview_state['confirmed_topics']) if interview_state['confirmed_topics'] else '还在一起摸第一版方向'}。\n"
-                f"当前理解：{interview_state['reflection_summary']}\n"
-                f"接下来我想继续补的是：{interview_state['next_prompt']}\n"
-                f"你可以直接从这里接着说：{' / '.join(interview_state['next_options']) if interview_state['next_options'] else '也可以继续自由补一句。'}\n"
-                f"后面还可以继续补：{'、'.join(interview_state['unresolved_topics']) if interview_state['unresolved_topics'] else '这条线已经基本问清，可以开始沉淀结论。'}"
+                f"我现在先这样理解：{interview_state['reflection_summary']}\n"
+                f"如果顺着往下聊，我更想继续补：{interview_state['next_prompt']}\n"
+                f"{interview_state['response_hint']}\n"
+                f"{interview_state['option_hint']}\n"
+                "如果我理解偏了，也可以直接指出哪里不对。"
             )
             payload = {"interview_state": interview_state}
             return "assistant_question", content, payload
@@ -3333,24 +3845,30 @@ def create_app(
             resolution = interview_state.get("last_answer_resolution") or {}
             helper_line = ""
             if helper_action == "rephrase":
-                helper_line = "我换了个更容易接的话头，先从感觉和边界聊，不用像答题一样组织。\n"
+                helper_line = "我换了个更容易接的话头，先顺着感觉往下聊，不用像答题一样组织。\n"
             elif helper_action == "more_options":
-                helper_line = "我补了一组更具体的人物方向，你直接挑最接近的就行。\n"
+                helper_line = "我补了一组更有画面感的人物方向，你只要借一个起步就行，不必照着选项答。\n"
             elif helper_action == "unsure":
-                helper_line = "不用急着写小传，我们先抓住最像的感觉就够了。\n"
+                helper_line = "不用急着写小传，我们先抓住最像的感觉、最带劲的关系，或者一个你脑中最清楚的小场景就够了。\n"
+            elif helper_action == "push_harder":
+                helper_line = "好，那我们先别求稳，试一个更锋利、更不好惹的版本；先把劲头推上去，再回来收。\n"
+            elif helper_action == "scene_probe":
+                helper_line = "好，我们先不抽象概括，直接用一个小场景把这个人试出来。\n"
+            elif helper_action == "contrast_probe":
+                helper_line = "好，我们先抓反差，让这个人更耐看。你可以直接用“看着……其实……”往下说。\n"
+            elif resolution.get("mode") == "multi_capture":
+                helper_line = f"我从你刚才那段里已经同时抓到这些点：{'、'.join(resolution.get('resolved_topic_titles') or [resolution.get('resolved_topic_title') or '几个关键维度'])}。所以你不用一题一题地答。\n"
             elif resolution.get("mode") == "redirected":
                 helper_line = f"我先把你刚才那句收进“{resolution.get('resolved_topic_title') or '另一个更贴近的维度'}”，这样不用重答；接下来继续把“{resolution.get('expected_topic_title') or '当前这个点'}”补清。\n"
             elif resolution.get("mode") == "loose_accept":
                 helper_line = f"我先把你刚才这句按“{resolution.get('resolved_topic_title') or '当前这个点'}”收进去，不要求你一上来就答得很标准。\n"
             content = (
-                f"已记录{character_label}的人物方向：{excerpt}\n\n"
+                f"我先接住你刚才关于{character_label}的这句：{excerpt}\n\n"
                 f"{helper_line}"
-                f"当前已经聊到：{interview_state['completion_label']}。\n"
-                f"已经收进来的人物点：{'、'.join(interview_state['confirmed_topics']) if interview_state['confirmed_topics'] else '还在一起摸这张卡的第一版感觉'}。\n"
-                f"当前理解：{interview_state['reflection_summary']}\n"
-                f"接下来我想继续补的是：{interview_state['next_prompt']}\n"
-                f"你可以直接顺着这里往下说：{' / '.join(interview_state['next_options']) if interview_state['next_options'] else '也可以继续自由补一句。'}\n"
-                f"这张卡后面还可以继续补：{'、'.join(interview_state['unresolved_topics']) if interview_state['unresolved_topics'] else '这张卡已经可以开始沉淀人物摘要了。'}"
+                f"我现在先抓到的是：{interview_state['reflection_summary']}\n"
+                f"如果顺着这张卡继续往下聊，我更想追这一点：{interview_state['next_prompt']}\n"
+                f"{interview_state['response_hint']}\n"
+                "如果你不想正面回答，也可以直接给我一个场景、一句台词，或者说一句“TA绝不会……”。"
             )
             payload = {"interview_state": interview_state, "target_character": target_character}
             return "assistant_question", content, payload
@@ -3370,14 +3888,13 @@ def create_app(
             elif resolution.get("mode") == "loose_accept":
                 helper_line = f"我先把你刚才这句按“{resolution.get('resolved_topic_title') or '当前这个点'}”收进去，不要求你一开始就用标准大纲语言来答。\n"
             content = (
-                f"已记录大纲方向：{excerpt}\n\n"
+                f"已收到这句大纲方向：{excerpt}\n\n"
                 f"{helper_line}"
-                f"当前已经聊到：{interview_state['completion_label']}。\n"
-                f"已经收进来的大纲点：{'、'.join(interview_state['confirmed_topics']) if interview_state['confirmed_topics'] else '还在一起摸第一版卷纲方向'}。\n"
-                f"当前理解：{interview_state['reflection_summary']}\n"
-                f"接下来我想继续补的是：{interview_state['next_prompt']}\n"
-                f"你可以直接顺着这里往下说：{' / '.join(interview_state['next_options']) if interview_state['next_options'] else '也可以继续自由补一句。'}\n"
-                f"后面还可以继续补：{'、'.join(interview_state['unresolved_topics']) if interview_state['unresolved_topics'] else '这条线已经可以开始沉淀卷纲约束了。'}"
+                f"我现在先这样理解：{interview_state['reflection_summary']}\n"
+                f"如果顺着这一卷继续聊，我更想补：{interview_state['next_prompt']}\n"
+                f"{interview_state['response_hint']}\n"
+                f"{interview_state['option_hint']}\n"
+                "如果我理解偏了，也可以直接指出哪里不对。"
             )
             payload = {"interview_state": interview_state}
             return "assistant_question", content, payload
@@ -3642,6 +4159,694 @@ def create_app(
             updated["human_instruction"] = current_instruction
         return updated
 
+    def require_admin_request(request: Request) -> None:
+        if not getattr(request.state, "is_admin", False):
+            raise HTTPException(status_code=403, detail="admin_required")
+
+    def dedupe_str_list(values: list[object]) -> list[str]:
+        result: list[str] = []
+        for item in values:
+            text = str(item or "").strip()
+            if text and text not in result:
+                result.append(text)
+        return result
+
+    def omx_launch_supported_scope(scope: str) -> bool:
+        return scope in {"project_bootstrap", "character_room", "outline_room"}
+
+    def default_omx_phase_goal_for_thread(*, thread, project) -> str:
+        if thread.scope == "project_bootstrap":
+            return "基于当前立项共创结论，开始首轮开书执行。"
+        if thread.scope == "character_room":
+            target_character = resolve_character_room_target(project=project, thread=thread)
+            return f"继承最新{character_card_display_label(target_character, '当前人物')}人物讨论结果，继续推进开书流程。"
+        if thread.scope == "outline_room":
+            return "继承最新大纲讨论结论，继续推进首轮开书流程。"
+        return "基于当前对话结论继续执行工作流。"
+
+    def maybe_apply_thread_stage_summary_for_omx_launch(*, thread, project) -> tuple[object, bool]:
+        interview_state = build_interview_state(thread=thread, project=project)
+        if interview_state is None:
+            return project, False
+        if thread.scope == "project_bootstrap":
+            updated_brief = build_project_summary_brief(project=project, thread=thread, interview_state=interview_state)
+        elif thread.scope in {"character_room", "outline_room"}:
+            updated_brief = build_scope_stage_brief(project=project, thread=thread, interview_state=interview_state)
+        else:
+            updated_brief = None
+        if updated_brief is None:
+            return project, False
+        updated_project = app.state.store.update_project_brief(
+            project_id=project.project_id,
+            default_user_brief=normalize_project_brief(updated_brief),
+        )
+        return updated_project or project, True
+
+    def build_omx_task_create_request_from_project(
+        *,
+        project,
+        thread,
+        operator_id: str,
+        launch_payload: ConversationOmxLaunchRequest,
+    ) -> OmxTaskCreateRequest:
+        brief = normalize_project_brief(dict(project.default_user_brief or {}))
+        working_title = str(brief.get("title") or project.name or "").strip()
+        platform = str(brief.get("platform") or "").strip()
+        genre = str(brief.get("genre") or "").strip()
+        one_sentence_hook = str(brief.get("hook") or "").strip()
+        missing_fields = [
+            field
+            for field, value in (
+                ("title", working_title),
+                ("platform", platform),
+                ("genre", genre),
+                ("hook", one_sentence_hook),
+            )
+            if not value
+        ]
+        if missing_fields:
+            missing_text = ",".join(missing_fields)
+            raise HTTPException(
+                status_code=409,
+                detail=f"omx_launch_requires_project_fields:{missing_text}",
+            )
+        phase_goal = str(launch_payload.phase_goal or "").strip() or default_omx_phase_goal_for_thread(thread=thread, project=project)
+        note_lines = dedupe_str_list(
+            [
+                str(launch_payload.notes or "").strip(),
+                f"发起来源：{thread.title}",
+                f"来源范围：{conversation_scope_label(thread.scope)}",
+            ]
+        )
+        instruction = {
+            "strict_rules": dedupe_str_list(launch_payload.strict_rules),
+            "notes": "\n".join(note_lines) if note_lines else None,
+            "must_fix": dedupe_str_list(launch_payload.must_fix),
+            "style": str(launch_payload.style or "").strip() or None,
+            "risk_guard": dedupe_str_list(launch_payload.risk_guard),
+        }
+        if not any([instruction["strict_rules"], instruction["notes"], instruction["must_fix"], instruction["style"], instruction["risk_guard"]]):
+            instruction_payload = None
+        else:
+            instruction_payload = instruction
+        return OmxTaskCreateRequest.model_validate(
+            {
+                "operator_id": operator_id,
+                "project": {
+                    "project_id": project.project_id,
+                    "working_title": working_title,
+                    "platform": platform,
+                    "genre": genre,
+                    "description": project.description,
+                },
+                "planning": {
+                    "target_chapters": launch_payload.target_chapters or project.default_target_chapters or 1,
+                    "phase_goal": phase_goal,
+                },
+                "user_brief": {
+                    "one_sentence_hook": one_sentence_hook,
+                    "must_have": list(brief.get("must_have") or []),
+                    "must_not_have": list(brief.get("must_not_have") or []),
+                    "tone": str(brief.get("tone") or "").strip() or None,
+                    "idea_seed": str(brief.get("idea_seed") or "").strip() or None,
+                    "idea_seed_type": str(brief.get("idea_seed_type") or "").strip() or None,
+                    "character_cards": list(brief.get("character_cards") or []),
+                },
+                "human_instruction": instruction_payload,
+            }
+        )
+
+    def conversation_scope_label(scope: str) -> str:
+        if scope == "project_bootstrap":
+            return "立项共创"
+        if scope == "character_room":
+            return "人物讨论"
+        if scope == "outline_room":
+            return "大纲讨论"
+        if scope == "chapter_planning":
+            return "章卡协商"
+        if scope == "rewrite_intervention":
+            return "修稿协作"
+        if scope == "chapter_retro":
+            return "章节复盘"
+        return scope or "创作对话"
+
+    def meaningful_thread_basis_id(thread_id: str) -> str:
+        messages = app.state.store.list_conversation_messages(thread_id)
+        relevant = [
+            item.message_id
+            for item in messages
+            if item.message_type != "system_action_result"
+        ]
+        return relevant[-1] if relevant else thread_id
+
+    def build_conversation_omx_idempotency_key(
+        *,
+        thread,
+        payload: OmxTaskCreateRequest,
+    ) -> str:
+        basis_id = meaningful_thread_basis_id(thread.thread_id)
+        fingerprint = json.dumps(payload.model_dump(mode="json"), ensure_ascii=False, sort_keys=True)
+        digest = hashlib.sha1(f"{thread.thread_id}|{basis_id}|{fingerprint}".encode("utf-8")).hexdigest()[:20]
+        return f"conversation-omx-{thread.thread_id}-{basis_id}-{digest}"[:255]
+
+    def resolve_conversation_omx_launch_idempotency_key(
+        *,
+        thread,
+        payload: OmxTaskCreateRequest,
+    ) -> str:
+        base_key = build_conversation_omx_idempotency_key(thread=thread, payload=payload)
+        latest_task = latest_omx_task_for_thread(thread)
+        if latest_task is None:
+            return base_key
+        latest_key = str(latest_task.idempotency_key or "").strip() or base_key
+        if latest_task.status in {"running", "awaiting_approval"}:
+            return latest_key
+        if latest_task.status in {"completed", "failed", "rejected"}:
+            return f"{base_key}:retry-after:{latest_task.task_id}"[:255]
+        return latest_key
+
+    def map_omx_request_to_project_brief(payload: OmxTaskCreateRequest) -> dict[str, object]:
+        brief: dict[str, object] = {
+            "title": payload.project.working_title,
+            "platform": payload.project.platform,
+            "genre": payload.project.genre,
+            "hook": payload.user_brief.one_sentence_hook,
+            "must_have": dedupe_str_list(payload.user_brief.must_have),
+            "must_not_have": dedupe_str_list(payload.user_brief.must_not_have),
+            "omx_source": {
+                "planning": payload.planning.model_dump(),
+                "user_brief": payload.user_brief.model_dump(),
+            },
+        }
+        if payload.user_brief.tone:
+            brief["tone"] = payload.user_brief.tone.strip()
+        if payload.user_brief.idea_seed:
+            brief["idea_seed"] = payload.user_brief.idea_seed.strip()
+        if payload.user_brief.idea_seed_type:
+            brief["idea_seed_type"] = payload.user_brief.idea_seed_type.strip()
+        if payload.user_brief.character_cards:
+            brief["character_cards"] = payload.user_brief.character_cards
+        return normalize_project_brief(brief)
+
+    def map_omx_human_instruction(
+        *,
+        operator_id: str,
+        phase_goal: str | None,
+        instruction_payload,
+        requested_action: str,
+        reason: str,
+        comment: str | None = None,
+    ) -> dict[str, object] | None:
+        strict_rules = dedupe_str_list(list((instruction_payload.strict_rules if instruction_payload else []) or []))
+        must_fix = dedupe_str_list(list((instruction_payload.must_fix if instruction_payload else []) or []))
+        risk_guard = dedupe_str_list(list((instruction_payload.risk_guard if instruction_payload else []) or []))
+        style = str((instruction_payload.style if instruction_payload else "") or "").strip()
+        notes = str((instruction_payload.notes if instruction_payload else "") or "").strip()
+        phase_goal_text = str(phase_goal or "").strip()
+        free_comment = str(comment or "").strip()
+        comment_lines = dedupe_str_list(
+            [
+                f"阶段目标：{phase_goal_text}" if phase_goal_text else "",
+                notes,
+                f"风格要求：{style}" if style else "",
+                free_comment,
+            ]
+        )
+        if not any([strict_rules, must_fix, risk_guard, style, notes, phase_goal_text, free_comment]):
+            return None
+        return {
+            "requested_action": requested_action,
+            "reason": reason,
+            "operator_id": operator_id,
+            "comment": "\n".join(comment_lines) if comment_lines else None,
+            "strict_rules": strict_rules,
+            "must_fix": must_fix,
+            "risk_guard": risk_guard,
+            "style": style or None,
+            "payload": {
+                "source": "omx_adapter",
+                "phase_goal": phase_goal_text or None,
+                "notes": notes or None,
+                "strict_rules": strict_rules,
+                "must_fix": must_fix,
+                "risk_guard": risk_guard,
+                "style": style or None,
+            },
+        }
+
+    def merge_human_instruction(
+        base: dict[str, object] | None,
+        extra: dict[str, object] | None,
+    ) -> dict[str, object] | None:
+        if not base and not extra:
+            return None
+        if not base:
+            return dict(extra or {})
+        if not extra:
+            return dict(base or {})
+        merged = dict(base)
+        merged["requested_action"] = extra.get("requested_action") or merged.get("requested_action")
+        merged["reason"] = extra.get("reason") or merged.get("reason")
+        merged["operator_id"] = extra.get("operator_id") or merged.get("operator_id")
+        merged["comment"] = "\n".join(
+            dedupe_str_list([merged.get("comment"), extra.get("comment")])
+        ) or None
+        merged["strict_rules"] = dedupe_str_list(list(merged.get("strict_rules") or []) + list(extra.get("strict_rules") or []))
+        merged["must_fix"] = dedupe_str_list(list(merged.get("must_fix") or []) + list(extra.get("must_fix") or []))
+        merged["risk_guard"] = dedupe_str_list(list(merged.get("risk_guard") or []) + list(extra.get("risk_guard") or []))
+        merged["style"] = extra.get("style") or merged.get("style")
+        merged_payload = dict(merged.get("payload") or {})
+        extra_payload = dict(extra.get("payload") or {})
+        for key, value in extra_payload.items():
+            if isinstance(value, list):
+                merged_payload[key] = dedupe_str_list(list(merged_payload.get(key) or []) + value)
+            else:
+                merged_payload[key] = value
+        merged["payload"] = merged_payload
+        return merged
+
+    def create_or_replay_omx_task(
+        *,
+        payload: OmxTaskCreateRequest,
+        idempotency_key: str | None,
+    ) -> tuple[OmxTaskCreateResponse, bool]:
+        normalized_source_payload = payload.model_dump()
+        if idempotency_key:
+            existing_task = app.state.store.get_omx_task_by_idempotency_key(idempotency_key)
+            if existing_task is not None:
+                if dict(existing_task.source_payload or {}) != normalized_source_payload:
+                    raise HTTPException(status_code=409, detail="omx_task_idempotency_conflict")
+                snapshot = build_omx_task_snapshot(existing_task)
+                return (
+                    OmxTaskCreateResponse(
+                        task_id=existing_task.task_id,
+                        project_id=existing_task.project_id,
+                        run_id=snapshot.run_id,
+                        status=snapshot.status,
+                        poll_url=f"/omx-adapter/v1/tasks/{existing_task.task_id}",
+                    ),
+                    True,
+                )
+
+        mapped_brief = map_omx_request_to_project_brief(payload)
+        if payload.project.project_id:
+            project = app.state.store.get_project(payload.project.project_id)
+            if project is None:
+                raise HTTPException(status_code=404, detail="project_not_found")
+            updated_project = app.state.store.update_project_brief(
+                project_id=project.project_id,
+                default_user_brief=mapped_brief,
+            )
+            project = updated_project or project
+        else:
+            project = app.state.store.create_project(
+                name=payload.project.working_title,
+                description=payload.project.description,
+                default_user_brief=mapped_brief,
+                default_target_chapters=payload.planning.target_chapters,
+                owner_user_id=None,
+                owner_pen_name=None,
+            )
+        request_payload = call_prepare_project_request(
+            app.state.workflow,
+            project=project,
+            user_brief=mapped_brief,
+            target_chapters=payload.planning.target_chapters,
+            operator_id=payload.operator_id,
+        )
+        omx_instruction = map_omx_human_instruction(
+            operator_id=payload.operator_id,
+            phase_goal=payload.planning.phase_goal,
+            instruction_payload=payload.human_instruction,
+            requested_action="omx_guidance",
+            reason="来自OMX适配层的首轮阶段要求",
+        )
+        merged_instruction = merge_human_instruction(
+            dict(request_payload.get("human_instruction") or {}),
+            omx_instruction,
+        )
+        if merged_instruction:
+            request_payload["human_instruction"] = merged_instruction
+        request_payload = merge_conversation_decisions_into_request(
+            project_id=project.project_id,
+            request_payload=request_payload,
+        )
+        run = start_background_project_run(project=project, request_payload=request_payload)
+        task = app.state.store.create_omx_task(
+            project_id=project.project_id,
+            current_run_id=run.run_id,
+            latest_approval_id=None,
+            status="running",
+            operator_id=payload.operator_id,
+            idempotency_key=idempotency_key,
+            source_payload=normalized_source_payload,
+            latest_snapshot={},
+            last_error=None,
+        )
+        build_omx_task_snapshot(task)
+        return (
+            OmxTaskCreateResponse(
+                task_id=task.task_id,
+                project_id=project.project_id,
+                run_id=run.run_id,
+                status="running",
+                poll_url=f"/omx-adapter/v1/tasks/{task.task_id}",
+            ),
+            False,
+        )
+
+    def start_background_project_run(*, project, request_payload: dict[str, object]):
+        run = app.state.store.save_run(
+            project_id=project.project_id,
+            status="running",
+            request=request_payload,
+            result=initial_progress_snapshot(current_node="interviewer_contract"),
+            error=None,
+        )
+        launch_background_run(
+            run_id=run.run_id,
+            work=lambda on_update: app.state.workflow.run_project(
+                project=project,
+                request_payload=request_payload,
+                on_update=on_update,
+            ),
+        )
+        return run
+
+    def start_background_followup_run(*, project, request_payload: dict[str, object]):
+        run = app.state.store.save_run(
+            project_id=project.project_id,
+            status="running",
+            request=request_payload,
+            result=initial_progress_snapshot(current_node="interviewer_contract"),
+            error=None,
+        )
+        launch_background_run(
+            run_id=run.run_id,
+            work=lambda on_update: app.state.workflow.run_followup(
+                project=project,
+                request_payload=request_payload,
+                on_update=on_update,
+            ),
+        )
+        return run
+
+    def build_omx_task_snapshot(task) -> OmxTaskStatusResponse:
+        completed_at = task.completed_at
+        run = app.state.store.get_run(task.current_run_id)
+        if run is None:
+            snapshot = {
+                "task_id": task.task_id,
+                "project_id": task.project_id,
+                "run_id": task.current_run_id,
+                "status": "failed",
+                "operator_id": task.operator_id,
+                "created_at": task.created_at,
+                "updated_at": utc_now_iso(),
+                "completed_at": completed_at or utc_now_iso(),
+                "latest": None,
+                "approval": None,
+                "output": None,
+                "error": {
+                    "code": "NS_RUN_NOT_FOUND",
+                    "message": "current run not found",
+                    "retryable": False,
+                },
+            }
+            updated = app.state.store.update_omx_task(
+                task_id=task.task_id,
+                status="failed",
+                latest_snapshot=snapshot,
+                last_error="current run not found",
+            )
+            task = updated or task
+            return OmxTaskStatusResponse.model_validate(snapshot)
+
+        run = maybe_finalize_stale_run(run)
+        progress = dict((run.result or {}).get("progress") or {})
+        approval = next(
+            (
+                item
+                for item in app.state.store.list_approval_requests(project_id=task.project_id)
+                if item.run_id == run.run_id
+            ),
+            None,
+        )
+        if approval is not None and approval.status == "rejected":
+            status = "rejected"
+        elif approval is not None and run.status == "awaiting_approval":
+            status = "awaiting_approval"
+        else:
+            status = run.status
+        if status in {"completed", "failed", "rejected"}:
+            completed_at = completed_at or utc_now_iso()
+        latest = OmxTaskLatestResponse(
+            phase=progress.get("phase_decision") or run.status,
+            chapters_completed=int(progress.get("chapter_no") or ((run.result or {}).get("publish_package") or {}).get("chapter_no") or 0),
+            target_chapters=int(run.request.get("target_chapters") or 0),
+            current_node=progress.get("current_node"),
+            latest_event=progress.get("latest_event"),
+            event_log_tail=list(progress.get("event_log_tail") or []),
+        )
+        approval_payload = None
+        if approval is not None and run.status == "awaiting_approval":
+            approval_payload = OmxTaskApprovalResponse(
+                approval_id=approval.approval_id,
+                reason=approval.reason,
+                requested_action=approval.requested_action,
+                status=approval.status,
+                options=[
+                    "approve_continue",
+                    "approve_patch",
+                    "approve_replan",
+                    "provide_human_instruction",
+                    "reject",
+                ],
+                latest_review_reports=list((run.result or {}).get("latest_review_reports") or []),
+                human_checkpoint=(run.result or {}).get("human_checkpoint"),
+            )
+        output_payload = None
+        if run.status == "completed":
+            output_payload = OmxTaskOutputResponse(
+                publish_package=(run.result or {}).get("publish_package"),
+                canon_state=(run.result or {}).get("canon_state"),
+                phase_decision=(run.result or {}).get("phase_decision"),
+            )
+        error_payload = None
+        if run.status == "failed":
+            error_payload = {
+                "code": "NS_RUN_FAILED",
+                "message": run.error or "run failed",
+                "retryable": False,
+                "event_log_tail": list(progress.get("event_log_tail") or []),
+            }
+        snapshot = {
+            "task_id": task.task_id,
+            "project_id": task.project_id,
+            "run_id": run.run_id,
+            "status": status,
+            "operator_id": task.operator_id,
+            "created_at": task.created_at,
+            "updated_at": utc_now_iso(),
+            "completed_at": completed_at if status in {"completed", "failed", "rejected"} else None,
+            "latest": latest.model_dump(),
+            "approval": approval_payload.model_dump() if approval_payload else None,
+            "output": output_payload.model_dump() if output_payload else None,
+            "error": error_payload,
+        }
+        updated = app.state.store.update_omx_task(
+            task_id=task.task_id,
+            current_run_id=run.run_id,
+            latest_approval_id=approval.approval_id if approval else None,
+            status=status,
+            latest_snapshot=snapshot,
+            last_error=run.error if run.status == "failed" else None,
+        )
+        return OmxTaskStatusResponse.model_validate((updated.latest_snapshot if updated else snapshot))
+
+    def latest_omx_task_for_thread(thread) -> object | None:
+        messages = app.state.store.list_conversation_messages(thread.thread_id)
+        for message in reversed(messages):
+            payload = message.structured_payload or {}
+            if payload.get("source") != "conversation_omx_launch":
+                continue
+            task_id = str(payload.get("task_id") or "").strip()
+            if not task_id:
+                continue
+            task = app.state.store.get_omx_task(task_id)
+            if task is not None:
+                return task
+        return None
+
+    def execute_omx_task_human_action_internal(
+        *,
+        task,
+        payload: OmxHumanActionRequest,
+        request: Request,
+        response: Response,
+        thread=None,
+    ) -> OmxTaskStatusResponse:
+        current_snapshot = build_omx_task_snapshot(task)
+        if current_snapshot.status != "awaiting_approval" or current_snapshot.approval is None:
+            raise HTTPException(status_code=409, detail="omx_task_not_waiting_for_approval")
+        approval = app.state.store.get_approval_request(current_snapshot.approval.approval_id)
+        if approval is None:
+            raise HTTPException(status_code=404, detail="approval_not_found")
+        if payload.action == "reject":
+            updated_approval = app.state.store.resolve_approval_request(
+                approval_id=approval.approval_id,
+                decision="rejected",
+                operator_id=task.operator_id,
+                comment=payload.comment,
+            )
+            if updated_approval is None:
+                raise HTTPException(status_code=404, detail="approval_request_not_found")
+            updated_task = app.state.store.update_omx_task(
+                task_id=task.task_id,
+                latest_approval_id=updated_approval.approval_id,
+                status="rejected",
+                last_error="approval rejected by omx adapter",
+            )
+            if thread is not None:
+                app.state.store.add_conversation_message(
+                    thread_id=thread.thread_id,
+                    role="system",
+                    message_type="system_action_result",
+                    content=f"已在当前线程中拒绝 OMX 任务 {task.task_id}，任务状态已记为 rejected。",
+                    structured_payload={
+                        "source": "conversation_omx_human_action",
+                        "task_id": task.task_id,
+                        "action": payload.action,
+                        "status": "rejected",
+                    },
+                )
+            audit(
+                request=request,
+                response=response,
+                status_code=200,
+                action="omx_task.reject",
+                resource_type="omx_task",
+                resource_id=task.task_id,
+                project_id=task.project_id,
+                run_id=task.current_run_id,
+                approval_id=approval.approval_id,
+                payload={"task_id": task.task_id},
+            )
+            return build_omx_task_snapshot(updated_task or task)
+
+        if approval.status == "pending":
+            resolved_approval = app.state.store.resolve_approval_request(
+                approval_id=approval.approval_id,
+                decision="approved",
+                operator_id=task.operator_id,
+                comment=payload.comment,
+            )
+            if resolved_approval is None:
+                raise HTTPException(status_code=404, detail="approval_request_not_found")
+            approval = resolved_approval
+
+        if approval.executed_run_id:
+            updated_task = app.state.store.update_omx_task(
+                task_id=task.task_id,
+                current_run_id=approval.executed_run_id,
+                latest_approval_id=approval.approval_id,
+                status="running",
+                last_error=None,
+            )
+            return build_omx_task_snapshot(updated_task or task)
+
+        source_run = app.state.store.get_run(approval.run_id)
+        if source_run is None:
+            raise HTTPException(status_code=404, detail="source_run_not_found")
+        project = app.state.store.get_project(task.project_id)
+        if project is None:
+            raise HTTPException(status_code=404, detail="project_not_found")
+        if payload.action == "approve_patch":
+            requested_action = "rewrite"
+        elif payload.action == "approve_replan":
+            requested_action = "replan"
+        elif payload.action == "approve_continue":
+            requested_action = "continue"
+        else:
+            if payload.instruction is None and not str(payload.comment or "").strip():
+                raise HTTPException(status_code=400, detail="human_instruction_required")
+            requested_action = suggested_recovery_mode(
+                human_guidance={
+                    "reason": (payload.instruction.notes if payload.instruction else "") or payload.comment or "",
+                    "must_fix": list((payload.instruction.must_fix if payload.instruction else []) or []),
+                    "suggested_actions": list((payload.instruction.risk_guard if payload.instruction else []) or []),
+                },
+                requested_action=None,
+            )
+        request_payload = app.state.workflow.prepare_followup_request(
+            project=project,
+            original_request=source_run.request,
+            artifacts=[item.__dict__ for item in app.state.store.list_artifacts(approval.run_id)],
+            approval=approval,
+            requested_action=requested_action,
+        )
+        omx_instruction = map_omx_human_instruction(
+            operator_id=task.operator_id,
+            phase_goal=((task.source_payload.get("planning") or {}).get("phase_goal") if isinstance(task.source_payload, dict) else None),
+            instruction_payload=payload.instruction,
+            requested_action=requested_action,
+            reason="来自OMX适配层的人工动作补充",
+            comment=payload.comment,
+        )
+        request_payload["human_instruction"] = merge_human_instruction(
+            dict(request_payload.get("human_instruction") or {}),
+            omx_instruction,
+        )
+        request_payload = merge_conversation_decisions_into_request(
+            project_id=project.project_id,
+            request_payload=request_payload,
+        )
+        followup_run = start_background_followup_run(project=project, request_payload=request_payload)
+        app.state.store.mark_approval_request_executed(
+            approval_id=approval.approval_id,
+            run_id=followup_run.run_id,
+        )
+        updated_task = app.state.store.update_omx_task(
+            task_id=task.task_id,
+            current_run_id=followup_run.run_id,
+            latest_approval_id=approval.approval_id,
+            status="running",
+            last_error=None,
+        )
+        if thread is not None:
+            app.state.store.add_conversation_message(
+                thread_id=thread.thread_id,
+                role="system",
+                message_type="system_action_result",
+                content=f"已对 OMX 任务 {task.task_id} 执行“{payload.action}”，系统已继续跑下一轮，当前运行号：{followup_run.run_id}。",
+                structured_payload={
+                    "source": "conversation_omx_human_action",
+                    "task_id": task.task_id,
+                    "action": payload.action,
+                    "requested_action": requested_action,
+                    "run_id": followup_run.run_id,
+                    "status": "running",
+                },
+            )
+        audit(
+            request=request,
+            response=response,
+            status_code=200,
+            action="omx_task.human_action",
+            resource_type="omx_task",
+            resource_id=task.task_id,
+            project_id=task.project_id,
+            run_id=followup_run.run_id,
+            approval_id=approval.approval_id,
+            payload={
+                "task_id": task.task_id,
+                "action": payload.action,
+                "requested_action": requested_action,
+            },
+        )
+        return build_omx_task_snapshot(updated_task or task)
+
     @app.exception_handler(ValueError)
     async def value_error_handler(_: Request, exc: ValueError) -> JSONResponse:
         return JSONResponse(status_code=400, content={"detail": str(exc)})
@@ -3822,6 +5027,65 @@ def create_app(
     @app.get("/admin", include_in_schema=False)
     async def admin_console() -> Response:
         return FileResponse(static_dir / "index.html")
+
+    @app.post("/omx-adapter/v1/tasks", response_model=OmxTaskCreateResponse, status_code=201)
+    async def create_omx_task(
+        payload: OmxTaskCreateRequest,
+        request: Request,
+        response: Response,
+    ) -> OmxTaskCreateResponse:
+        require_admin_request(request)
+        idempotency_key = str(request.headers.get("Idempotency-Key") or "").strip() or None
+        task_response, replayed = create_or_replay_omx_task(
+            payload=payload,
+            idempotency_key=idempotency_key,
+        )
+        response.status_code = 200 if replayed else 201
+        audit(
+            request=request,
+            response=response,
+            status_code=response.status_code,
+            action="omx_task.create" if not replayed else "omx_task.replay",
+            resource_type="omx_task",
+            resource_id=task_response.task_id,
+            project_id=task_response.project_id,
+            run_id=task_response.run_id,
+            approval_id=None,
+            payload={
+                "task_id": task_response.task_id,
+                "operator_id": payload.operator_id,
+                "target_chapters": payload.planning.target_chapters,
+                "phase_goal": payload.planning.phase_goal,
+                "replayed": replayed,
+            },
+        )
+        return task_response
+
+    @app.get("/omx-adapter/v1/tasks/{task_id}", response_model=OmxTaskStatusResponse)
+    async def get_omx_task(task_id: str, request: Request) -> OmxTaskStatusResponse:
+        require_admin_request(request)
+        task = app.state.store.get_omx_task(task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="omx_task_not_found")
+        return build_omx_task_snapshot(task)
+
+    @app.post("/omx-adapter/v1/tasks/{task_id}/human-action", response_model=OmxTaskStatusResponse)
+    async def execute_omx_task_human_action(
+        task_id: str,
+        payload: OmxHumanActionRequest,
+        request: Request,
+        response: Response,
+    ) -> OmxTaskStatusResponse:
+        require_admin_request(request)
+        task = app.state.store.get_omx_task(task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="omx_task_not_found")
+        return execute_omx_task_human_action_internal(
+            task=task,
+            payload=payload,
+            request=request,
+            response=response,
+        )
 
     @app.post("/api/projects", response_model=ProjectResponse, status_code=201)
     async def create_project(payload: ProjectCreateRequest, request: Request, response: Response) -> ProjectResponse:
@@ -4459,6 +5723,58 @@ def create_app(
         )
         return ProjectResponse.model_validate(updated_project.__dict__)
 
+    @app.post("/api/projects/{project_id}/character-cards/{character_id}/autofill", response_model=ProjectResponse)
+    async def autofill_character_card_from_description(
+        project_id: str,
+        character_id: str,
+        payload: CharacterCardAutofillRequest,
+        request: Request,
+        response: Response,
+    ) -> ProjectResponse:
+        project = require_project_access(project_id, request)
+        cards = [dict(item) for item in normalize_character_cards((project.default_user_brief or {}).get("character_cards"))]
+        target_index, target_card = find_matching_character_card(cards, character_id=character_id)
+        if target_card is None:
+            raise HTTPException(status_code=404, detail="character_card_not_found")
+        description = " ".join(payload.description.strip().split())
+        if not description:
+            raise HTTPException(status_code=422, detail="character_description_required")
+        autofill_draft = build_character_card_autofill(
+            description=description,
+            target_character=target_card,
+            runtime_context=app.state.config.to_runtime_context(),
+        )
+        updated_card = apply_character_seed_draft_to_card(
+            card=target_card,
+            description=description,
+            draft=autofill_draft,
+        )
+        updated_brief = upsert_character_card(project.default_user_brief, updated_card)
+        updated_project = app.state.store.update_project_brief(
+            project_id=project.project_id,
+            default_user_brief=normalize_project_brief(updated_brief),
+        )
+        if updated_project is None:
+            raise HTTPException(status_code=404, detail="project_not_found")
+        audit(
+            request=request,
+            response=response,
+            status_code=200,
+            action="project.character_card.autofill",
+            resource_type="project",
+            resource_id=updated_project.project_id,
+            project_id=updated_project.project_id,
+            run_id=None,
+            approval_id=None,
+            payload={
+                "character_id": character_id,
+                "character_label": character_card_display_label(updated_card),
+                "filled_fields": [field for field in ("voiceprint", "desire", "fear", "relationship", "action_mode", "growth_gap", "mask_true_self") if str(autofill_draft.get(field) or "").strip()],
+                "next_focus": autofill_draft.get("next_focus"),
+            },
+        )
+        return ProjectResponse.model_validate(updated_project.__dict__)
+
     @app.post("/api/projects/{project_id}/character-cards/{character_id}/portrait", response_model=ProjectResponse)
     async def generate_character_card_portrait(
         project_id: str,
@@ -4556,6 +5872,122 @@ def create_app(
             payload={"thread_id": thread.thread_id, "scope": thread.scope},
         )
         return ProjectResponse.model_validate(updated_project.__dict__)
+
+    @app.post("/api/conversation-threads/{thread_id}/launch-omx-task", response_model=ConversationOmxLaunchResponse, status_code=201)
+    async def launch_conversation_thread_into_omx_task(
+        thread_id: str,
+        payload: ConversationOmxLaunchRequest,
+        request: Request,
+        response: Response,
+    ) -> ConversationOmxLaunchResponse:
+        thread, project = require_thread_access(thread_id, request)
+        require_open_thread(thread)
+        if not omx_launch_supported_scope(thread.scope):
+            raise HTTPException(status_code=409, detail="omx_launch_not_supported_for_scope")
+
+        auto_applied_stage_summary = False
+        if payload.auto_apply_stage_summary:
+            project, auto_applied_stage_summary = maybe_apply_thread_stage_summary_for_omx_launch(thread=thread, project=project)
+
+        omx_payload = build_omx_task_create_request_from_project(
+            project=project,
+            thread=thread,
+            operator_id=request.state.actor,
+            launch_payload=payload,
+        )
+        idempotency_key = resolve_conversation_omx_launch_idempotency_key(thread=thread, payload=omx_payload)
+        task_response, replayed = create_or_replay_omx_task(
+            payload=omx_payload,
+            idempotency_key=idempotency_key,
+        )
+        response.status_code = 200 if replayed else 201
+
+        target_character = resolve_character_room_target(project=project, thread=thread) if thread.scope == "character_room" else None
+        scope_label = conversation_scope_label(thread.scope)
+        stage_summary_note = "已先把当前阶段摘要写回项目设定。" if auto_applied_stage_summary else "当前任务直接基于项目中已存在的稳定设定发起。"
+        character_suffix = (
+            f" 当前聚焦人物：{character_card_display_label(target_character, '当前人物')}。"
+            if target_character is not None
+            else ""
+        )
+        launch_note = (
+            f"已基于当前{scope_label}结论发起 OMX 执行任务"
+            if not replayed
+            else f"已复用当前{scope_label}对应的 OMX 执行任务"
+        )
+        app.state.store.add_conversation_message(
+            thread_id=thread.thread_id,
+            role="system",
+            message_type="system_action_result",
+            content=f"{launch_note}。任务号：{task_response.task_id}。{stage_summary_note}{character_suffix}",
+            structured_payload={
+                "source": "conversation_omx_launch",
+                "task_id": task_response.task_id,
+                "project_id": task_response.project_id,
+                "run_id": task_response.run_id,
+                "poll_url": task_response.poll_url,
+                "source_scope": thread.scope,
+                "auto_applied_stage_summary": auto_applied_stage_summary,
+                "replayed": replayed,
+            },
+        )
+        audit(
+            request=request,
+            response=response,
+            status_code=response.status_code,
+            action="conversation_thread.launch_omx_task",
+            resource_type="omx_task",
+            resource_id=task_response.task_id,
+            project_id=task_response.project_id,
+            run_id=task_response.run_id,
+            approval_id=None,
+            payload={
+                "thread_id": thread.thread_id,
+                "scope": thread.scope,
+                "auto_applied_stage_summary": auto_applied_stage_summary,
+                "replayed": replayed,
+            },
+        )
+        return ConversationOmxLaunchResponse(
+            task_id=task_response.task_id,
+            project_id=task_response.project_id,
+            run_id=task_response.run_id,
+            status=task_response.status,
+            poll_url=task_response.poll_url,
+            source_thread_id=thread.thread_id,
+            source_scope=thread.scope,
+            auto_applied_stage_summary=auto_applied_stage_summary,
+        )
+
+    @app.get("/api/conversation-threads/{thread_id}/omx-task", response_model=OmxTaskStatusResponse)
+    async def get_conversation_thread_omx_task(
+        thread_id: str,
+        request: Request,
+    ) -> OmxTaskStatusResponse:
+        thread, _project = require_thread_access(thread_id, request)
+        task = latest_omx_task_for_thread(thread)
+        if task is None:
+            raise HTTPException(status_code=404, detail="omx_task_not_found_for_thread")
+        return build_omx_task_snapshot(task)
+
+    @app.post("/api/conversation-threads/{thread_id}/omx-task/human-action", response_model=OmxTaskStatusResponse)
+    async def handle_conversation_thread_omx_task_human_action(
+        thread_id: str,
+        payload: OmxHumanActionRequest,
+        request: Request,
+        response: Response,
+    ) -> OmxTaskStatusResponse:
+        thread, _project = require_thread_access(thread_id, request)
+        task = latest_omx_task_for_thread(thread)
+        if task is None:
+            raise HTTPException(status_code=404, detail="omx_task_not_found_for_thread")
+        return execute_omx_task_human_action_internal(
+            task=task,
+            payload=payload,
+            request=request,
+            response=response,
+            thread=thread,
+        )
 
     @app.post("/api/conversation-threads/{thread_id}/split-stage-summary", response_model=list[ConversationDecisionResponse], status_code=201)
     async def split_conversation_stage_summary(

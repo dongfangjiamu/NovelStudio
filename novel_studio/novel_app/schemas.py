@@ -51,6 +51,19 @@ class CharacterCard(StrictModel):
     voiceprint: str
 
 
+class CharacterCardAutofillDraft(StrictModel):
+    summary: str
+    voiceprint: str = ""
+    desire: str = ""
+    fear: str = ""
+    relationship: str = ""
+    action_mode: str = ""
+    growth_gap: str = ""
+    mask_true_self: str = ""
+    missing_dimensions: list[str] = Field(default_factory=list)
+    next_focus: str = ""
+
+
 class StoryBible(StrictModel):
     premise: str
     world_rules: list[str] = Field(default_factory=list)

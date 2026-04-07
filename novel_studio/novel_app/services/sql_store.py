@@ -19,6 +19,7 @@ from novel_app.db_models import (
     ConversationDecisionModel,
     ConversationMessageModel,
     ConversationThreadModel,
+    OmxTaskModel,
     ProjectModel,
     RunModel,
     StrategySuggestionModel,
@@ -33,6 +34,7 @@ from novel_app.services.store import (
     ConversationDecisionRecord,
     ConversationMessageRecord,
     ConversationThreadRecord,
+    OmxTaskRecord,
     ProjectRecord,
     RunRecord,
     StrategySuggestionRecord,
@@ -217,6 +219,24 @@ class SqlAlchemyStore:
             adopted_decision_id=row.adopted_decision_id,
             created_at=row.created_at,
             updated_at=row.updated_at,
+        )
+
+    @staticmethod
+    def _omx_task_record(row: OmxTaskModel) -> OmxTaskRecord:
+        return OmxTaskRecord(
+            task_id=row.task_id,
+            project_id=row.project_id,
+            current_run_id=row.current_run_id,
+            latest_approval_id=row.latest_approval_id,
+            status=row.status,
+            operator_id=row.operator_id,
+            idempotency_key=row.idempotency_key,
+            source_payload=row.source_payload,
+            latest_snapshot=row.latest_snapshot,
+            last_error=row.last_error,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+            completed_at=row.completed_at,
         )
 
     def create_project(
@@ -836,6 +856,89 @@ class SqlAlchemyStore:
             session.add(row)
             session.flush()
             return self._strategy_suggestion_record(row)
+
+    def create_omx_task(
+        self,
+        *,
+        project_id: str,
+        current_run_id: str,
+        latest_approval_id: str | None,
+        status: str,
+        operator_id: str,
+        idempotency_key: str | None,
+        source_payload: dict,
+        latest_snapshot: dict,
+        last_error: str | None,
+    ) -> OmxTaskRecord:
+        now = utc_now_iso()
+        record = OmxTaskRecord(
+            task_id=f"task_{uuid4().hex[:12]}",
+            project_id=project_id,
+            current_run_id=current_run_id,
+            latest_approval_id=latest_approval_id,
+            status=status,
+            operator_id=operator_id,
+            idempotency_key=idempotency_key,
+            source_payload=source_payload,
+            latest_snapshot=latest_snapshot,
+            last_error=last_error,
+            created_at=now,
+            updated_at=now,
+            completed_at=now if status in {"completed", "failed", "rejected"} else None,
+        )
+        with session_scope(self.session_factory) as session:
+            session.add(OmxTaskModel(**record.__dict__))
+        return record
+
+    def get_omx_task(self, task_id: str) -> OmxTaskRecord | None:
+        with session_scope(self.session_factory) as session:
+            row = session.get(OmxTaskModel, task_id)
+            if row is None:
+                return None
+            return self._omx_task_record(row)
+
+    def get_omx_task_by_idempotency_key(self, idempotency_key: str) -> OmxTaskRecord | None:
+        normalized = str(idempotency_key or "").strip()
+        if not normalized:
+            return None
+        with session_scope(self.session_factory) as session:
+            stmt = select(OmxTaskModel).where(OmxTaskModel.idempotency_key == normalized)
+            row = session.execute(stmt).scalar_one_or_none()
+            if row is None:
+                return None
+            return self._omx_task_record(row)
+
+    def update_omx_task(
+        self,
+        *,
+        task_id: str,
+        current_run_id: str | None = None,
+        latest_approval_id: str | None = None,
+        status: str | None = None,
+        latest_snapshot: dict | None = None,
+        last_error: str | None = None,
+    ) -> OmxTaskRecord | None:
+        with session_scope(self.session_factory) as session:
+            row = session.get(OmxTaskModel, task_id)
+            if row is None:
+                return None
+            next_status = status or row.status
+            row.current_run_id = current_run_id or row.current_run_id
+            if latest_approval_id is not None:
+                row.latest_approval_id = latest_approval_id
+            row.status = next_status
+            if latest_snapshot is not None:
+                row.latest_snapshot = latest_snapshot
+            if last_error is not None:
+                row.last_error = last_error
+            row.updated_at = utc_now_iso()
+            if next_status in {"completed", "failed", "rejected"} and not row.completed_at:
+                row.completed_at = row.updated_at
+            if next_status not in {"completed", "failed", "rejected"}:
+                row.completed_at = None
+            session.add(row)
+            session.flush()
+            return self._omx_task_record(row)
 
     def health_status(self) -> dict[str, str | None]:
         ready, detail = ping_database(self.engine)

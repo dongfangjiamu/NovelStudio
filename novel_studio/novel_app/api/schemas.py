@@ -124,6 +124,10 @@ class ProjectBriefUpdateRequest(BaseModel):
     default_user_brief: dict[str, Any] = Field(default_factory=dict)
 
 
+class CharacterCardAutofillRequest(BaseModel):
+    description: str = Field(min_length=1, max_length=3000)
+
+
 class ProjectResponse(BaseModel):
     project_id: str
     name: str
@@ -239,6 +243,128 @@ class AuditLogResponse(BaseModel):
 class ApprovalExecuteResponse(BaseModel):
     approval: ApprovalRequestResponse
     run: RunResponse
+
+
+class OmxProjectInput(BaseModel):
+    project_id: str | None = Field(default=None, min_length=1, max_length=32)
+    working_title: str = Field(min_length=1, max_length=120)
+    platform: str = Field(min_length=1, max_length=60)
+    genre: str = Field(min_length=1, max_length=60)
+    description: str | None = Field(default=None, max_length=1000)
+
+
+class OmxPlanningInput(BaseModel):
+    target_chapters: int = Field(default=1, ge=1, le=100)
+    phase_goal: str = Field(min_length=1, max_length=1000)
+
+
+class OmxUserBriefInput(BaseModel):
+    one_sentence_hook: str = Field(min_length=1, max_length=300)
+    must_have: list[str] = Field(default_factory=list)
+    must_not_have: list[str] = Field(default_factory=list)
+    tone: str | None = Field(default=None, max_length=200)
+    idea_seed: str | None = Field(default=None, max_length=1000)
+    idea_seed_type: str | None = Field(default=None, max_length=60)
+    character_cards: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class OmxHumanInstructionInput(BaseModel):
+    strict_rules: list[str] = Field(default_factory=list)
+    notes: str | None = Field(default=None, max_length=2000)
+    must_fix: list[str] = Field(default_factory=list)
+    style: str | None = Field(default=None, max_length=500)
+    risk_guard: list[str] = Field(default_factory=list)
+
+
+class OmxTaskCreateRequest(BaseModel):
+    operator_id: str = Field(min_length=1, max_length=120)
+    project: OmxProjectInput
+    planning: OmxPlanningInput
+    user_brief: OmxUserBriefInput
+    human_instruction: OmxHumanInstructionInput | None = None
+
+
+class OmxTaskCreateResponse(BaseModel):
+    task_id: str
+    project_id: str
+    run_id: str
+    status: Literal["running", "awaiting_approval", "completed", "failed", "rejected"]
+    poll_url: str
+
+
+class OmxTaskLatestResponse(BaseModel):
+    phase: str | None = None
+    chapters_completed: int = 0
+    target_chapters: int = 0
+    current_node: str | None = None
+    latest_event: str | None = None
+    event_log_tail: list[str] = Field(default_factory=list)
+
+
+class OmxTaskApprovalResponse(BaseModel):
+    approval_id: str
+    reason: str
+    requested_action: str
+    status: str
+    options: list[str] = Field(default_factory=list)
+    latest_review_reports: list[dict[str, Any]] = Field(default_factory=list)
+    human_checkpoint: dict[str, Any] | None = None
+
+
+class OmxTaskOutputResponse(BaseModel):
+    publish_package: dict[str, Any] | None = None
+    canon_state: dict[str, Any] | None = None
+    phase_decision: dict[str, Any] | None = None
+
+
+class OmxTaskStatusResponse(BaseModel):
+    task_id: str
+    project_id: str
+    run_id: str
+    status: Literal["running", "awaiting_approval", "completed", "failed", "rejected"]
+    operator_id: str
+    created_at: str
+    updated_at: str
+    completed_at: str | None = None
+    latest: OmxTaskLatestResponse | None = None
+    approval: OmxTaskApprovalResponse | None = None
+    output: OmxTaskOutputResponse | None = None
+    error: dict[str, Any] | None = None
+
+
+class OmxHumanActionRequest(BaseModel):
+    action: Literal["approve_continue", "approve_patch", "approve_replan", "provide_human_instruction", "reject"]
+    instruction: OmxHumanInstructionInput | None = None
+    comment: str | None = Field(default=None, max_length=1000)
+
+
+class ConversationOmxLaunchRequest(BaseModel):
+    target_chapters: int | None = Field(default=None, ge=1, le=100)
+    phase_goal: str | None = Field(default=None, max_length=1000)
+    notes: str | None = Field(default=None, max_length=2000)
+    strict_rules: list[str] = Field(default_factory=list)
+    must_fix: list[str] = Field(default_factory=list)
+    style: str | None = Field(default=None, max_length=500)
+    risk_guard: list[str] = Field(default_factory=list)
+    auto_apply_stage_summary: bool = True
+
+
+class ConversationOmxLaunchResponse(BaseModel):
+    task_id: str
+    project_id: str
+    run_id: str
+    status: Literal["running", "awaiting_approval", "completed", "failed", "rejected"]
+    poll_url: str
+    source_thread_id: str
+    source_scope: Literal[
+        "project_bootstrap",
+        "character_room",
+        "outline_room",
+        "chapter_planning",
+        "rewrite_intervention",
+        "chapter_retro",
+    ]
+    auto_applied_stage_summary: bool = False
 
 
 class ConversationThreadCreateRequest(BaseModel):

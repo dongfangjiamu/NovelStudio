@@ -26,6 +26,24 @@ def make_client() -> TestClient:
     return authenticated_client(app)
 
 
+def make_admin_client() -> tuple[TestClient, object]:
+    app = create_app(
+        config=AppConfig(
+            stub_mode=True,
+            openai_api_key=None,
+            admin_token="secret-token",
+            database_url="sqlite:///:memory:",
+            model_name="gpt-5-nano",
+            project_id="api-test",
+            operator_id="tester",
+        ),
+        store=InMemoryStore(),
+    )
+    client = TestClient(app)
+    client.headers.update({"x-api-key": "secret-token"})
+    return client, app
+
+
 def authenticate_client(client: TestClient, *, pen_name: str = "writer-a", password: str = "password123") -> TestClient:
     response = client.post("/api/auth/register", json={"pen_name": pen_name, "password": password})
     if response.status_code == 409:
@@ -53,6 +71,19 @@ def wait_for_run(client: TestClient, run_id: str, *, timeout: float = 2.0) -> di
     raise AssertionError(f"run did not finish in time: {run_id} last={last_payload}")
 
 
+def wait_for_omx_task(client: TestClient, task_id: str, *, timeout: float = 2.0) -> dict:
+    deadline = time.time() + timeout
+    last_payload = None
+    while time.time() < deadline:
+        response = client.get(f"/omx-adapter/v1/tasks/{task_id}")
+        assert response.status_code == 200
+        last_payload = response.json()
+        if last_payload["status"] != "running":
+            return last_payload
+        time.sleep(0.02)
+    raise AssertionError(f"omx task did not finish in time: {task_id} last={last_payload}")
+
+
 def test_healthz() -> None:
     client = make_client()
 
@@ -64,6 +95,181 @@ def test_healthz() -> None:
     assert response.json()["auth_mode"] == "open"
     assert response.json()["database"]["status"] == "ready"
     assert response.json()["database"]["backend"] == "inmemory"
+
+
+def test_omx_task_can_create_and_complete_project_run() -> None:
+    client, _app = make_admin_client()
+
+    created = client.post(
+        "/omx-adapter/v1/tasks",
+        headers={"Idempotency-Key": "omx-create-1"},
+        json={
+            "operator_id": "omx-editor",
+            "project": {
+                "working_title": "九霄夜行",
+                "platform": "番茄",
+                "genre": "都市修仙",
+            },
+            "planning": {
+                "target_chapters": 1,
+                "phase_goal": "先完成第一章试写并建立追更钩子",
+            },
+            "user_brief": {
+                "one_sentence_hook": "失去灵根的少年在城市底层逆袭。",
+                "must_have": ["成长爽点", "章末钩子"],
+                "must_not_have": ["大段设定灌输"],
+                "tone": "克制但有爆点",
+            },
+            "human_instruction": {
+                "strict_rules": ["第一章不引入超过3个新名词"],
+                "notes": "优先保证可读性",
+            },
+        },
+    )
+
+    assert created.status_code == 201
+    payload = created.json()
+    assert payload["status"] == "running"
+    task_status = wait_for_omx_task(client, payload["task_id"])
+    assert task_status["project_id"] == payload["project_id"]
+    assert task_status["latest"]["target_chapters"] == 1
+    assert task_status["status"] in {"completed", "awaiting_approval"}
+
+    project_response = client.get(f"/api/projects/{payload['project_id']}")
+    assert project_response.status_code == 200
+    project = project_response.json()
+    assert project["default_user_brief"]["title"] == "九霄夜行"
+    assert project["default_user_brief"]["platform"] == "番茄"
+    assert project["default_user_brief"]["genre"] == "都市修仙"
+    assert project["default_user_brief"]["hook"] == "失去灵根的少年在城市底层逆袭。"
+
+    duplicated = client.post(
+        "/omx-adapter/v1/tasks",
+        headers={"Idempotency-Key": "omx-create-1"},
+        json={
+            "operator_id": "omx-editor",
+            "project": {
+                "working_title": "九霄夜行",
+                "platform": "番茄",
+                "genre": "都市修仙",
+            },
+            "planning": {
+                "target_chapters": 1,
+                "phase_goal": "先完成第一章试写并建立追更钩子",
+            },
+            "user_brief": {
+                "one_sentence_hook": "失去灵根的少年在城市底层逆袭。",
+                "must_have": ["成长爽点", "章末钩子"],
+                "must_not_have": ["大段设定灌输"],
+                "tone": "克制但有爆点",
+            },
+            "human_instruction": {
+                "strict_rules": ["第一章不引入超过3个新名词"],
+                "notes": "优先保证可读性",
+            },
+        },
+    )
+    assert duplicated.status_code == 200
+    assert duplicated.json()["task_id"] == payload["task_id"]
+
+
+def test_omx_task_create_rejects_idempotency_conflict() -> None:
+    client, _app = make_admin_client()
+    headers = {"Idempotency-Key": "omx-conflict-1"}
+    first_payload = {
+        "operator_id": "omx-editor",
+        "project": {
+            "working_title": "九霄夜行",
+            "platform": "番茄",
+            "genre": "都市修仙",
+        },
+        "planning": {
+            "target_chapters": 1,
+            "phase_goal": "完成首章试写",
+        },
+        "user_brief": {
+            "one_sentence_hook": "失去灵根的少年在城市底层逆袭。",
+            "must_have": ["成长爽点"],
+            "must_not_have": [],
+            "tone": "克制",
+        },
+        "human_instruction": {
+            "notes": "优先保证可读性",
+        },
+    }
+    second_payload = {
+        **first_payload,
+        "planning": {
+            "target_chapters": 2,
+            "phase_goal": "改成两章试写",
+        },
+    }
+
+    created = client.post("/omx-adapter/v1/tasks", headers=headers, json=first_payload)
+    assert created.status_code == 201, created.text
+
+    conflicted = client.post("/omx-adapter/v1/tasks", headers=headers, json=second_payload)
+    assert conflicted.status_code == 409
+    assert conflicted.json()["detail"] == "omx_task_idempotency_conflict"
+
+
+def test_omx_task_completed_at_remains_stable_after_completion() -> None:
+    client, app = make_admin_client()
+
+    project = app.state.store.create_project(
+        name="OMX完成时间测试",
+        description=None,
+        default_user_brief={"title": "长夜炉火", "genre": "东方玄幻", "hook": "炉火中的秘密会改命"},
+        default_target_chapters=1,
+    )
+    run = app.state.store.save_run(
+        project_id=project.project_id,
+        status="completed",
+        request={"user_brief": project.default_user_brief, "target_chapters": 1, "operator_id": "omx-editor"},
+        result={
+            "progress": {
+                "current_node": "publisher",
+                "latest_event": "publish_package:ready",
+                "event_log_tail": ["publish_package:ready"],
+                "chapter_no": 1,
+                "phase_decision": "completed",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            },
+            "publish_package": {"chapter_no": 1, "title": "第一章"},
+            "canon_state": {"version": 1},
+            "phase_decision": {"final_decision": "completed"},
+        },
+        error=None,
+    )
+    task = app.state.store.create_omx_task(
+        project_id=project.project_id,
+        current_run_id=run.run_id,
+        latest_approval_id=None,
+        status="completed",
+        operator_id="omx-editor",
+        idempotency_key="omx-stable-completed-at",
+        source_payload={
+            "operator_id": "omx-editor",
+            "project": {"working_title": "长夜炉火", "platform": "起点中文网", "genre": "东方玄幻"},
+            "planning": {"target_chapters": 1, "phase_goal": "完成首章"},
+            "user_brief": {"one_sentence_hook": "炉火中的秘密会改命", "must_have": [], "must_not_have": [], "tone": None},
+        },
+        latest_snapshot={},
+        last_error=None,
+    )
+
+    first = client.get(f"/omx-adapter/v1/tasks/{task.task_id}")
+    assert first.status_code == 200, first.text
+    first_payload = first.json()
+    assert first_payload["status"] == "completed"
+
+    time.sleep(0.02)
+
+    second = client.get(f"/omx-adapter/v1/tasks/{task.task_id}")
+    assert second.status_code == 200, second.text
+    second_payload = second.json()
+    assert second_payload["status"] == "completed"
+    assert second_payload["completed_at"] == first_payload["completed_at"]
 
 
 def test_project_brief_supports_multiple_character_cards() -> None:
@@ -567,7 +773,10 @@ def test_conversation_thread_flow() -> None:
     initial_messages = client.get(f"/api/conversation-threads/{thread['thread_id']}/messages")
     assert initial_messages.status_code == 200
     assert initial_messages.json()[0]["role"] == "assistant"
-    assert "先别急着定义卖点" in initial_messages.json()[0]["content"]
+    assert "第一版方向慢慢聊出来" in initial_messages.json()[0]["content"]
+    assert "不是标准答案" in initial_messages.json()[0]["content"]
+    assert "response_hint" in thread["interview_state"]
+    assert "option_hint" in thread["interview_state"]
 
     reply = client.post(
         f"/api/conversation-threads/{thread['thread_id']}/messages",
@@ -578,6 +787,7 @@ def test_conversation_thread_flow() -> None:
     assert len(created_messages) == 2
     assert created_messages[0]["role"] == "user"
     assert created_messages[1]["role"] == "assistant"
+    assert "如果我理解偏了，也可以直接指出哪里不对。" in created_messages[1]["content"]
 
     refreshed_thread = client.get(f"/api/conversation-threads/{thread['thread_id']}")
     assert refreshed_thread.status_code == 200
@@ -711,10 +921,10 @@ def test_conversation_scene_scopes_seed_targeted_opening_messages() -> None:
     character_messages = client.get(f"/api/conversation-threads/{character_thread.json()['thread_id']}/messages")
     outline_messages = client.get(f"/api/conversation-threads/{outline_thread.json()['thread_id']}/messages")
 
-    assert "“女主”的人物讨论线程" in character_messages.json()[0]["content"]
-    assert "先回答第 1 问" in character_messages.json()[0]["content"]
+    assert "“女主”的人物共创线程" in character_messages.json()[0]["content"]
+    assert "这一轮先优先补" in character_messages.json()[0]["content"]
     assert "这轮只讨论女主" in character_messages.json()[0]["content"]
-    assert "大纲讨论线程" in outline_messages.json()[0]["content"]
+    assert "大纲共创线程" in outline_messages.json()[0]["content"]
     assert "第一卷最主要靠什么把读者往下带" in outline_messages.json()[0]["content"]
 
 
@@ -763,6 +973,59 @@ def test_interview_helpers_can_rephrase_expand_and_skip_without_wrong_progress()
     assert thread_after_skip["interview_state"]["unresolved_topics"][0] == "主角行动方式"
 
 
+def test_character_interview_creative_helpers_offer_probe_modes_without_advancing_progress() -> None:
+    client = make_client()
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "人物采访创意辅助项目",
+            "default_user_brief": {"title": "长夜炉火"},
+            "default_target_chapters": 1,
+        },
+    ).json()
+
+    thread = client.post(
+        f"/api/projects/{project['project_id']}/conversation-threads",
+        json={"scope": "character_room"},
+    ).json()
+
+    harder = client.post(
+        f"/api/conversation-threads/{thread['thread_id']}/messages",
+        json={"content": "给我一个更狠一点的版本。"},
+    )
+    assert harder.status_code == 201
+    assert "更锋利" in harder.json()[1]["content"]
+    thread_after_harder = client.get(f"/api/conversation-threads/{thread['thread_id']}").json()
+    assert thread_after_harder["interview_state"]["completion_label"] == "0/8"
+    assert thread_after_harder["interview_state"]["last_helper_action"] == "push_harder"
+    assert thread_after_harder["interview_state"]["show_next_options"] is True
+    assert any("不好惹" in item or "更狠" in item for item in thread_after_harder["interview_state"]["next_options"])
+
+    scene = client.post(
+        f"/api/conversation-threads/{thread['thread_id']}/messages",
+        json={"content": "用一个场景帮我试出来。"},
+    )
+    assert scene.status_code == 201
+    assert "小场景" in scene.json()[1]["content"]
+    thread_after_scene = client.get(f"/api/conversation-threads/{thread['thread_id']}").json()
+    assert thread_after_scene["interview_state"]["completion_label"] == "0/8"
+    assert thread_after_scene["interview_state"]["last_helper_action"] == "scene_probe"
+    assert thread_after_scene["interview_state"]["show_next_options"] is True
+    assert any("场景" in item or "镜头" in item for item in thread_after_scene["interview_state"]["next_options"])
+
+    contrast = client.post(
+        f"/api/conversation-threads/{thread['thread_id']}/messages",
+        json={"content": "给我一个反差版本。"},
+    )
+    assert contrast.status_code == 201
+    assert "抓反差" in contrast.json()[1]["content"]
+    thread_after_contrast = client.get(f"/api/conversation-threads/{thread['thread_id']}").json()
+    assert thread_after_contrast["interview_state"]["completion_label"] == "0/8"
+    assert thread_after_contrast["interview_state"]["last_helper_action"] == "contrast_probe"
+    assert thread_after_contrast["interview_state"]["show_next_options"] is True
+    assert any("看着" in item and "其实" in item for item in thread_after_contrast["interview_state"]["next_options"])
+
+
 def test_off_topic_interview_answer_is_softly_absorbed_without_blocking_progress() -> None:
     client = make_client()
     project = client.post(
@@ -800,6 +1063,43 @@ def test_off_topic_interview_answer_is_softly_absorbed_without_blocking_progress
     assert refreshed.json()["interview_state"]["last_helper_action"] is None
     assert refreshed.json()["interview_state"]["last_answer_resolution"]["mode"] == "redirected"
     assert refreshed.json()["interview_state"]["last_answer_resolution"]["resolved_topic_title"] == "行动方式 / 决策模式"
+
+
+def test_character_interview_can_capture_multiple_dimensions_from_one_reply() -> None:
+    client = make_client()
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "人物采访多维吸收项目",
+            "default_user_brief": {"title": "长夜炉火"},
+            "default_target_chapters": 1,
+        },
+    ).json()
+
+    thread = client.post(
+        f"/api/projects/{project['project_id']}/conversation-threads",
+        json={"scope": "character_room"},
+    ).json()
+
+    reply = client.post(
+        f"/api/conversation-threads/{thread['thread_id']}/messages",
+        json={"content": "他看着很冷，最怕再次沦为别人的工具，和大师兄之间一直互相试探。真到绝境时，他会先观察，再突然出手。"},
+    )
+    assert reply.status_code == 201
+    assert "同时抓到这些点" in reply.json()[1]["content"]
+
+    refreshed = client.get(f"/api/conversation-threads/{thread['thread_id']}")
+    assert refreshed.status_code == 200
+    interview_state = refreshed.json()["interview_state"]
+    assert interview_state["completion_label"] == "4/8"
+    assert interview_state["next_topic_title"] == "核心欲望"
+    assert interview_state["last_answer_resolution"]["mode"] == "multi_capture"
+    assert interview_state["last_answer_resolution"]["resolved_topic_titles"] == [
+        "第一印象",
+        "核心恐惧",
+        "关键关系张力",
+        "行动方式 / 决策模式",
+    ]
 
 
 def test_interview_state_builds_current_draft_after_two_answers() -> None:
@@ -1087,6 +1387,72 @@ def test_character_stage_summary_is_written_back_to_selected_character_card_only
     assert any(section["label"] == "关键关系张力" for section in female_card["character_portrait"]["sections"])
     assert male_card["voiceprint"] == "冷硬克制"
     assert male_card.get("discussion_summary") is None
+
+
+def test_character_card_can_be_autofilled_from_free_description_before_discussion() -> None:
+    client = make_client()
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "人物自由描述项目",
+            "default_user_brief": {
+                "title": "长夜炉火",
+                "character_cards": [
+                    {"slot_label": "女主", "name": "苏离", "cast_type": "supporting"},
+                ],
+            },
+            "default_target_chapters": 1,
+        },
+    ).json()
+
+    card = project["default_user_brief"]["character_cards"][0]
+    autofilled = client.post(
+        f"/api/projects/{project['project_id']}/character-cards/{card['character_id']}/autofill",
+        json={
+            "description": "她第一次出场要显得冷静、疏离，让人猜不透。她最想摆脱被家族拿去交换利益的命运。她最怕再次失去唯一能信的人。和男主之间会一直互相试探又互相利用。遇到危险时，她习惯先观察再出手。"
+        },
+    )
+    assert autofilled.status_code == 200, autofilled.text
+
+    updated_card = autofilled.json()["default_user_brief"]["character_cards"][0]
+    assert updated_card["concept_seed"].startswith("她第一次出场要显得冷静、疏离")
+    assert updated_card["voiceprint"] == "她第一次出场要显得冷静、疏离，让人猜不透"
+    assert updated_card["desire"] == "她最想摆脱被家族拿去交换利益的命运"
+    assert updated_card["fear"] == "她最怕再次失去唯一能信的人"
+    assert updated_card["relationship"] == "和男主之间会一直互相试探又互相利用"
+    assert updated_card["action_mode"] == "遇到危险时，她习惯先观察再出手"
+    assert updated_card["discussion_summary"]["title"] == "女主人物摘要草稿"
+    assert updated_card["discussion_summary"]["review_status"] == "draft"
+    assert [item["label"] for item in updated_card["discussion_summary"]["items"]] == [
+        "第一印象",
+        "核心欲望",
+        "核心恐惧",
+        "关键关系张力",
+        "行动方式 / 决策模式",
+    ]
+    assert updated_card["character_portrait"] is None
+
+    thread = client.post(
+        f"/api/projects/{project['project_id']}/conversation-threads",
+        json={"scope": "character_room", "character_card": {"slot_label": "女主", "name": "苏离", "cast_type": "supporting"}},
+    )
+    assert thread.status_code == 201, thread.text
+    assert thread.json()["interview_state"]["completion_label"] == "5/6"
+    assert thread.json()["interview_state"]["next_topic_title"] == "人物边界"
+    current_draft = thread.json()["interview_state"]["current_draft"]
+    assert current_draft["title"] == "当前理解草案"
+    assert [item["label"] for item in current_draft["sections"]] == [
+        "人物卡标签",
+        "角色名",
+        "主次定位",
+        "声音与气质",
+        "核心欲望",
+        "主要恐惧",
+        "与主角关系",
+        "行动方式 / 决策模式",
+        "补充备注",
+        "自由描述基底",
+    ]
 
 
 def test_protagonist_character_summary_keeps_all_discussion_dimensions() -> None:
@@ -2633,3 +2999,393 @@ def test_stale_running_run_auto_transitions_to_failed() -> None:
     assert "自动判定该运行已超时" in payload["error"]
     assert "文风审校" in payload["error"]
     assert payload["result"]["manual_intervention"]["action"] == "auto_timeout"
+
+
+def test_omx_task_human_action_can_resume_from_awaiting_approval() -> None:
+    client, app = make_admin_client()
+
+    project = app.state.store.create_project(
+        name="OMX人工动作测试",
+        description=None,
+        default_user_brief={"title": "长夜炉火", "genre": "东方玄幻", "hook": "炉火中的秘密会改命"},
+        default_target_chapters=1,
+    )
+    run = app.state.store.save_run(
+        project_id=project.project_id,
+        status="awaiting_approval",
+        request={"user_brief": project.default_user_brief, "target_chapters": 1, "operator_id": "omx-editor"},
+        result={
+            "progress": {
+                "current_node": "chief_editor",
+                "latest_event": "phase_decision:human_check",
+                "event_log_tail": ["phase_decision:human_check"],
+                "chapter_no": 1,
+                "rewrite_count": 1,
+                "phase_decision": "human_check",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "stage_goal": "等待人工确认",
+                "possible_cause": "存在需要人工裁定的分歧",
+                "review_progress": {
+                    "stage_status": "completed",
+                    "stage_started_at": datetime.now(timezone.utc).isoformat(),
+                    "completed_count": 4,
+                    "total_count": 4,
+                    "active_reviewers": [],
+                    "pending_reviewers": [],
+                    "longest_wait_reviewer": None,
+                    "longest_wait_seconds": 0,
+                    "stall_hint": None,
+                    "reviewers": {},
+                },
+            },
+            "phase_decision": {
+                "final_decision": "human_check",
+                "must_fix": ["统一关键术语"],
+                "can_defer": [],
+                "next_owner": "human_gate",
+                "reason": "需要人工确认后继续",
+            },
+            "latest_review_reports": [
+                {
+                    "reviewer": "continuity",
+                    "decision": "rewrite",
+                    "issues": [{"severity": "major", "type": "canon_conflict", "evidence": "术语冲突", "fix_instruction": "统一术语"}],
+                }
+            ],
+        },
+        error=None,
+    )
+    approval = app.state.store.create_approval_request(
+        project_id=project.project_id,
+        run_id=run.run_id,
+        chapter_no=1,
+        requested_action="continue",
+        reason="需要人工确认后继续",
+        payload={"source": "auto"},
+    )
+    task = app.state.store.create_omx_task(
+        project_id=project.project_id,
+        current_run_id=run.run_id,
+        latest_approval_id=approval.approval_id,
+        status="awaiting_approval",
+        operator_id="omx-editor",
+        idempotency_key=None,
+        source_payload={
+            "operator_id": "omx-editor",
+            "project": {"working_title": "长夜炉火", "platform": "起点中文网", "genre": "东方玄幻"},
+            "planning": {"target_chapters": 1, "phase_goal": "修正当前问题后继续推进"},
+            "user_brief": {"one_sentence_hook": "炉火中的秘密会改命", "must_have": [], "must_not_have": [], "tone": None},
+        },
+        latest_snapshot={},
+        last_error=None,
+    )
+
+    action = client.post(
+        f"/omx-adapter/v1/tasks/{task.task_id}/human-action",
+        json={
+            "action": "provide_human_instruction",
+            "instruction": {
+                "must_fix": ["统一世界术语“灵汐”定义"],
+                "notes": "先统一术语，再继续当前章节",
+                "risk_guard": ["不要引入新组织"],
+            },
+            "comment": "优先修术语，不要扩写新设定。",
+        },
+    )
+
+    assert action.status_code == 200, action.text
+    action_payload = action.json()
+    assert action_payload["status"] == "running"
+    assert action_payload["run_id"] != run.run_id
+
+    updated_approval = app.state.store.get_approval_request(approval.approval_id)
+    assert updated_approval is not None
+    assert updated_approval.status == "approved"
+    assert updated_approval.executed_run_id == action_payload["run_id"]
+
+    followup_run = app.state.store.get_run(action_payload["run_id"])
+    assert followup_run is not None
+    assert followup_run.request["human_instruction"]["must_fix"] == ["统一世界术语“灵汐”定义"]
+    assert "不要引入新组织" in followup_run.request["human_instruction"]["risk_guard"]
+
+
+def test_project_bootstrap_thread_can_launch_omx_task_from_conversation_flow() -> None:
+    client = make_client()
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "OMX线程发起项目",
+            "default_user_brief": {
+                "title": "长夜炉火",
+                "platform": "番茄",
+                "genre": "东方玄幻",
+                "hook": "一个被逐出山门的人，靠炉火中的古老声音翻盘。",
+                "idea_seed": "一个被逐出山门的人，靠炉火中的古老声音翻盘。",
+            },
+            "default_target_chapters": 1,
+        },
+    ).json()
+
+    thread = client.post(
+        f"/api/projects/{project['project_id']}/conversation-threads",
+        json={"scope": "project_bootstrap"},
+    ).json()
+    client.post(
+        f"/api/conversation-threads/{thread['thread_id']}/messages",
+        json={"content": "我最想保住的是压迫中翻盘和悬念感。"},
+    )
+    client.post(
+        f"/api/conversation-threads/{thread['thread_id']}/messages",
+        json={"content": "主角要是那种克制但危险的人，平时忍着，关键时刻会立刻动手。"},
+    )
+
+    launched = client.post(f"/api/conversation-threads/{thread['thread_id']}/launch-omx-task", json={})
+
+    assert launched.status_code == 201, launched.text
+    payload = launched.json()
+    assert payload["source_thread_id"] == thread["thread_id"]
+    assert payload["source_scope"] == "project_bootstrap"
+    assert payload["auto_applied_stage_summary"] is True
+    assert payload["status"] == "running"
+
+    refreshed_project = client.get(f"/api/projects/{project['project_id']}")
+    assert refreshed_project.status_code == 200
+    assert refreshed_project.json()["default_user_brief"]["project_summary"]["source_thread_id"] == thread["thread_id"]
+
+    messages = client.get(f"/api/conversation-threads/{thread['thread_id']}/messages").json()
+    assert any("已基于当前立项共创结论发起 OMX 执行任务" in item["content"] for item in messages)
+
+    replayed = client.post(f"/api/conversation-threads/{thread['thread_id']}/launch-omx-task", json={})
+    assert replayed.status_code == 200, replayed.text
+    assert replayed.json()["task_id"] == payload["task_id"]
+
+
+def test_character_room_thread_can_launch_omx_task_with_current_character_summary() -> None:
+    client = make_client()
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "OMX人物线程发起项目",
+            "default_user_brief": {
+                "title": "长夜炉火",
+                "platform": "番茄",
+                "genre": "东方玄幻",
+                "hook": "一个被逐出山门的人，靠炉火中的古老声音翻盘。",
+                "character_cards": [
+                    {"slot_label": "女主", "name": "苏离", "cast_type": "supporting"},
+                ],
+            },
+            "default_target_chapters": 1,
+        },
+    ).json()
+
+    thread = client.post(
+        f"/api/projects/{project['project_id']}/conversation-threads",
+        json={"scope": "character_room", "character_card": {"slot_label": "女主", "name": "苏离", "cast_type": "supporting"}},
+    ).json()
+    client.post(
+        f"/api/conversation-threads/{thread['thread_id']}/messages",
+        json={"content": "她第一次出场时要显得冷静、疏离，但让人很想继续看懂她。"},
+    )
+    client.post(
+        f"/api/conversation-threads/{thread['thread_id']}/messages",
+        json={"content": "她真正想摆脱的是被家族拿去交换利益的命运。"},
+    )
+    client.post(
+        f"/api/conversation-threads/{thread['thread_id']}/messages",
+        json={"content": "最关键的关系张力，是她和男主之间彼此利用又慢慢卸下防备。"},
+    )
+
+    launched = client.post(f"/api/conversation-threads/{thread['thread_id']}/launch-omx-task", json={})
+
+    assert launched.status_code == 201, launched.text
+    payload = launched.json()
+    assert payload["source_scope"] == "character_room"
+    assert payload["auto_applied_stage_summary"] is True
+
+    refreshed_project = client.get(f"/api/projects/{project['project_id']}")
+    assert refreshed_project.status_code == 200
+    cards = refreshed_project.json()["default_user_brief"]["character_cards"]
+    female_card = next(item for item in cards if item["slot_label"] == "女主")
+    assert female_card["desire"] == "她真正想摆脱的是被家族拿去交换利益的命运。"
+    assert female_card["relationship"] == "最关键的关系张力，是她和男主之间彼此利用又慢慢卸下防备。"
+    assert female_card["discussion_summary"]["source_thread_id"] == thread["thread_id"]
+
+    messages = client.get(f"/api/conversation-threads/{thread['thread_id']}/messages").json()
+    assert any("当前聚焦人物：女主" in item["content"] for item in messages)
+
+
+def test_conversation_thread_can_query_latest_omx_task_status() -> None:
+    client = make_client()
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "线程任务查询项目",
+            "default_user_brief": {
+                "title": "长夜炉火",
+                "platform": "番茄",
+                "genre": "东方玄幻",
+                "hook": "一个被逐出山门的人，靠炉火中的古老声音翻盘。",
+                "idea_seed": "一个被逐出山门的人，靠炉火中的古老声音翻盘。",
+            },
+            "default_target_chapters": 1,
+        },
+    ).json()
+    thread = client.post(
+        f"/api/projects/{project['project_id']}/conversation-threads",
+        json={"scope": "project_bootstrap"},
+    ).json()
+    client.post(
+        f"/api/conversation-threads/{thread['thread_id']}/messages",
+        json={"content": "我最想保住的是压迫中翻盘和悬念感。"},
+    )
+    client.post(
+        f"/api/conversation-threads/{thread['thread_id']}/messages",
+        json={"content": "主角要是那种克制但危险的人，平时忍着，关键时刻会立刻动手。"},
+    )
+    launched = client.post(f"/api/conversation-threads/{thread['thread_id']}/launch-omx-task", json={})
+    assert launched.status_code == 201, launched.text
+
+    task_status = client.get(f"/api/conversation-threads/{thread['thread_id']}/omx-task")
+
+    assert task_status.status_code == 200, task_status.text
+    payload = task_status.json()
+    assert payload["task_id"] == launched.json()["task_id"]
+    assert payload["project_id"] == project["project_id"]
+    assert payload["status"] in {"running", "awaiting_approval", "completed"}
+
+
+def test_conversation_thread_can_launch_new_omx_task_after_terminal_failure() -> None:
+    client = make_client()
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "线程任务失败后重发项目",
+            "default_user_brief": {
+                "title": "长夜炉火",
+                "platform": "番茄",
+                "genre": "东方玄幻",
+                "hook": "一个被逐出山门的人，靠炉火中的古老声音翻盘。",
+                "idea_seed": "一个被逐出山门的人，靠炉火中的古老声音翻盘。",
+            },
+            "default_target_chapters": 1,
+        },
+    ).json()
+    thread = client.post(
+        f"/api/projects/{project['project_id']}/conversation-threads",
+        json={"scope": "project_bootstrap"},
+    ).json()
+    client.post(
+        f"/api/conversation-threads/{thread['thread_id']}/messages",
+        json={"content": "我最想保住的是压迫中翻盘和悬念感。"},
+    )
+    first_launch = client.post(f"/api/conversation-threads/{thread['thread_id']}/launch-omx-task", json={})
+    assert first_launch.status_code == 201, first_launch.text
+
+    first_task_id = first_launch.json()["task_id"]
+    failed_task = client.app.state.store.update_omx_task(
+        task_id=first_task_id,
+        status="failed",
+        last_error="simulated failure",
+    )
+    assert failed_task is not None
+
+    relaunched = client.post(f"/api/conversation-threads/{thread['thread_id']}/launch-omx-task", json={})
+
+    assert relaunched.status_code == 201, relaunched.text
+    assert relaunched.json()["task_id"] != first_task_id
+    latest_task = client.get(f"/api/conversation-threads/{thread['thread_id']}/omx-task").json()
+    assert latest_task["task_id"] == relaunched.json()["task_id"]
+
+
+def test_conversation_thread_can_handle_omx_human_action() -> None:
+    client = make_client()
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "线程任务人工动作项目",
+            "default_user_brief": {
+                "title": "长夜炉火",
+                "platform": "番茄",
+                "genre": "东方玄幻",
+                "hook": "炉火中的秘密会改命",
+            },
+            "default_target_chapters": 1,
+        },
+    ).json()
+    thread = client.post(
+        f"/api/projects/{project['project_id']}/conversation-threads",
+        json={"scope": "project_bootstrap"},
+    ).json()
+    run = client.app.state.store.save_run(
+        project_id=project["project_id"],
+        status="awaiting_approval",
+        request={"user_brief": project["default_user_brief"], "target_chapters": 1, "operator_id": "writer-a"},
+        result={
+            "progress": {
+                "current_node": "chief_editor",
+                "latest_event": "phase_decision:human_check",
+                "event_log_tail": ["phase_decision:human_check"],
+                "chapter_no": 1,
+                "phase_decision": "human_check",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            },
+            "phase_decision": {"final_decision": "human_check"},
+            "latest_review_reports": [{"reviewer": "continuity", "decision": "rewrite", "issues": []}],
+        },
+        error=None,
+    )
+    approval = client.app.state.store.create_approval_request(
+        project_id=project["project_id"],
+        run_id=run.run_id,
+        chapter_no=1,
+        requested_action="continue",
+        reason="需要人工确认后继续",
+        payload={"source": "auto"},
+    )
+    task = client.app.state.store.create_omx_task(
+        project_id=project["project_id"],
+        current_run_id=run.run_id,
+        latest_approval_id=approval.approval_id,
+        status="awaiting_approval",
+        operator_id="writer-a",
+        idempotency_key="thread-human-action",
+        source_payload={
+            "operator_id": "writer-a",
+            "project": {"working_title": "长夜炉火", "platform": "番茄", "genre": "东方玄幻"},
+            "planning": {"target_chapters": 1, "phase_goal": "修正后继续"},
+            "user_brief": {"one_sentence_hook": "炉火中的秘密会改命", "must_have": [], "must_not_have": [], "tone": None},
+        },
+        latest_snapshot={},
+        last_error=None,
+    )
+    client.app.state.store.add_conversation_message(
+        thread_id=thread["thread_id"],
+        role="system",
+        message_type="system_action_result",
+        content=f"已基于当前立项共创结论发起 OMX 执行任务。任务号：{task.task_id}。",
+        structured_payload={"source": "conversation_omx_launch", "task_id": task.task_id},
+    )
+
+    acted = client.post(
+        f"/api/conversation-threads/{thread['thread_id']}/omx-task/human-action",
+        json={
+            "action": "provide_human_instruction",
+            "instruction": {
+                "must_fix": ["统一世界术语“灵汐”定义"],
+                "notes": "先统一术语，再继续当前章节",
+                "risk_guard": ["不要引入新组织"],
+            },
+            "comment": "优先修术语，不要扩写新设定。",
+        },
+    )
+
+    assert acted.status_code == 200, acted.text
+    payload = acted.json()
+    assert payload["status"] == "running"
+    followup_run = client.app.state.store.get_run(payload["run_id"])
+    assert followup_run is not None
+    assert followup_run.request["human_instruction"]["must_fix"] == ["统一世界术语“灵汐”定义"]
+
+    messages = client.get(f"/api/conversation-threads/{thread['thread_id']}/messages").json()
+    assert any("已对 OMX 任务" in item["content"] for item in messages)

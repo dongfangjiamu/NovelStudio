@@ -10,6 +10,8 @@ const state = {
   decisionDrafts: [],
   conversationRecoveryModes: {},
   conversationMessages: [],
+  conversationOmxTask: null,
+  conversationOmxTaskThreadId: null,
   businessMetrics: null,
   strategySuggestions: null,
   currentUser: null,
@@ -325,6 +327,7 @@ function createEmptyCharacterCard(overrides = {}) {
     action_mode: "",
     growth_gap: "",
     mask_true_self: "",
+    concept_seed: "",
     summary: "",
     discussion_summary: null,
     character_portrait: null,
@@ -378,6 +381,7 @@ function normalizeCharacterCards(cards = [], { requireName = false } = {}) {
       draft.action_mode,
       draft.growth_gap,
       draft.mask_true_self,
+      draft.concept_seed,
       draft.summary,
     ].some((value) => String(value || "").trim()) || Boolean(discussionSummary);
     if (!meaningful) return;
@@ -398,6 +402,7 @@ function normalizeCharacterCards(cards = [], { requireName = false } = {}) {
       action_mode: String(draft.action_mode || "").trim(),
       growth_gap: String(draft.growth_gap || "").trim(),
       mask_true_self: String(draft.mask_true_self || "").trim(),
+      concept_seed: String(draft.concept_seed || "").trim(),
       summary: String(draft.summary || "").trim(),
       discussion_summary: discussionSummary,
       character_portrait: draft.character_portrait && typeof draft.character_portrait === "object" ? draft.character_portrait : null,
@@ -448,6 +453,7 @@ function normalizeCharacterCardTarget(card = {}, index = 0) {
     action_mode: String(draft.action_mode || "").trim(),
     growth_gap: String(draft.growth_gap || "").trim(),
     mask_true_self: String(draft.mask_true_self || "").trim(),
+    concept_seed: String(draft.concept_seed || "").trim(),
     summary: String(draft.summary || "").trim(),
     discussion_summary: draft.discussion_summary && typeof draft.discussion_summary === "object" ? draft.discussion_summary : null,
     character_portrait: draft.character_portrait && typeof draft.character_portrait === "object" ? draft.character_portrait : null,
@@ -528,14 +534,14 @@ function renderStagePrimaryAction(thread, stageConfirmation) {
   const title = recommendation.title || "现在更适合先确认这版";
   const reason = recommendation.reason || "先把这一阶段正式确认，后面的对话和运行才能稳定继承。";
   const focusLine = recommendation.focus_topic
-    ? `<div class="meta">当前最值得先补：${escapeHtml(recommendation.focus_topic)}</div>`
+    ? `<div class="meta">如果现在只补一个，优先是：${escapeHtml(recommendation.focus_topic)}</div>`
     : "";
   const nextLine =
     recommendation.mode === "apply_and_split"
-      ? "这是当前最推荐的动作。完成后，系统会同时写回阶段摘要，并拆出第一批可复用结论。"
+      ? "完成后，系统会把这一轮的摘要正式写回去，并顺手拆出第一批可继续复用的结论。"
       : recommendation.mode === "apply_summary"
-        ? "先把这一阶段正式确认，再决定是否进入下一条讨论线。"
-        : "先把当前这一点说清，再回来确认阶段摘要。";
+        ? "如果你觉得这版已经八九不离十，可以先把这一轮确认下来，再决定是否继续细化。"
+        : "先把当前这一点聊顺，再回来确认这一轮整理。";
   const button =
     recommendation.mode === "apply_and_split"
       ? `<button class="button primary large" type="button" data-stage-apply-and-split="${thread.thread_id}">${escapeHtml(recommendation.primary_label || "确认并拆出第一批结论")}</button>`
@@ -545,8 +551,8 @@ function renderStagePrimaryAction(thread, stageConfirmation) {
   return `
     <section class="interview-primary-cta">
       <div class="interview-primary-cta-head">
-        <span class="primary-cta-step">第 1 步</span>
-        <span class="status-chip status-approved">现在该点这里</span>
+        <span class="primary-cta-step">当前推荐动作</span>
+        <span class="status-chip status-approved">${recommendation.mode === "continue_clarifying" ? "继续聊" : "准备好了再点"}</span>
       </div>
       <h4>${escapeHtml(title)}</h4>
       <div class="meta">${escapeHtml(reason)}</div>
@@ -621,6 +627,8 @@ function resetWorkspaceState() {
   state.artifactItems = [];
   state.decisionDrafts = [];
   state.conversationMessages = [];
+  state.conversationOmxTask = null;
+  state.conversationOmxTaskThreadId = null;
   state.businessMetrics = null;
   state.strategySuggestions = null;
   state.projectSnapshot = {
@@ -948,106 +956,214 @@ function renderCharacterPortraitSections(portrait) {
   `;
 }
 
+function compactCharacterReviewText(value, limit = 120) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (!text) return "";
+  return text.length <= limit ? text : `${text.slice(0, limit - 1).trimEnd()}...`;
+}
+
+function isCharacterSummaryDraft(summarySource) {
+  const summary = summarySource?.summary;
+  if (!summary || typeof summary !== "object") return false;
+  return summarySource?.status === "draft" || summary.review_status === "draft" || summary.source_scope === "character_seed" || String(summary.title || "").includes("草稿");
+}
+
+function renderCharacterReviewPanel(activeThread, activeSummarySource, activePortrait) {
+  const interview = interviewState(activeThread);
+  const reviewArtifacts = [];
+  if (interview?.current_draft?.sections?.length) {
+    reviewArtifacts.push({
+      key: "draft",
+      title: interview.current_draft.title || "系统理解草稿",
+      note: interview.current_draft.recommendation || "先看系统有没有理解偏。如果不对，直接勾出有偏差的部分。",
+      items: interview.current_draft.sections,
+    });
+  }
+  if (activePortrait?.sections?.length) {
+    reviewArtifacts.push({
+      key: "portrait",
+      title: activePortrait.title || "人物画像草稿",
+      note: activePortrait.readiness || "人物画像先当作工作草稿看，确认过再拿去指导后续写作。",
+      items: activePortrait.sections,
+    });
+  }
+  if (!reviewArtifacts.length) return "";
+  return `
+    <section class="summary-card good character-review-panel">
+      <div class="panel-head">
+        <div>
+          <div class="summary-label">草稿待确认</div>
+          <div class="summary-value">先勾出不准确的内容，再让系统围绕这些点继续讨论</div>
+          <div class="meta">这里展示的理解草案和画像，都先按草稿看。系统不会把它们默认当成最终答案。</div>
+        </div>
+        <div class="actions">
+          <button class="button ghost" type="button" data-character-action="confirm-review">这版大方向对，继续补缺口</button>
+          <button class="button primary" type="button" data-character-action="discuss-review-selection">针对选中项继续讨论</button>
+          <button class="button ghost" type="button" data-character-action="autofill-from-seed">重新生成这一版草稿</button>
+        </div>
+      </div>
+      <div class="meta">勾选有偏差的条目后，系统会只围绕这些点追问你，不再把这些表述直接当成已确认内容。</div>
+      <div class="character-review-artifacts">
+        ${reviewArtifacts
+          .map(
+            (artifact) => `
+              <section class="character-review-card">
+                <div class="character-review-head">
+                  <strong>${escapeHtml(artifact.title || "")}</strong>
+                  <span class="decision-summary-pill draft">待确认</span>
+                </div>
+                <div class="meta">${escapeHtml(artifact.note || "")}</div>
+                <div class="character-review-list">
+                  ${artifact.items
+                    .map(
+                      (item, index) => `
+                        <label class="character-review-item">
+                          <input
+                            type="checkbox"
+                            data-character-review-item="true"
+                            data-review-artifact="${escapeAttribute(artifact.key)}"
+                            data-review-label="${escapeAttribute(item.label || `条目${index + 1}`)}"
+                            data-review-summary="${escapeAttribute(item.summary || "")}"
+                          />
+                          <span>
+                            <strong>${escapeHtml(item.label || `条目${index + 1}`)}</strong>
+                            <small>${escapeHtml(compactCharacterReviewText(item.summary || "", 140) || "待补充")}</small>
+                          </span>
+                        </label>
+                      `
+                    )
+                    .join("")}
+                </div>
+              </section>
+            `
+          )
+          .join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderCharacterCardTabs(cards, scope, { row = false } = {}) {
+  const list = cards.length ? cards : createDefaultCharacterCards();
+  const activeIndex = currentCharacterCardIndex(scope, list);
+  return `
+    <div class="character-card-tabs ${row ? "character-card-tabs-row" : ""}" role="tablist" aria-label="人物卡选项">
+      ${list
+        .map(
+          (item, index) => `
+            <button
+              class="character-card-tab ${index === activeIndex ? "active" : ""}"
+              type="button"
+              role="tab"
+              aria-selected="${index === activeIndex ? "true" : "false"}"
+              data-character-action="select"
+              data-character-scope="${scope}"
+              data-character-index="${index}"
+            >
+              <span>${escapeHtml(characterCardTabLabel(item, index))}</span>
+              <small>${escapeHtml(String(item.name || "").trim() || "未命名")}</small>
+            </button>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderCharacterCardFields(card, scope, activeIndex, { note = "", removable = true } = {}) {
+  return `
+    <article class="character-card-item character-card-editor-panel">
+      <div class="character-card-head">
+        <div>
+          <h4>${escapeHtml(characterCardTabLabel(card, activeIndex))}</h4>
+          ${note ? `<div class="meta">${escapeHtml(note)}</div>` : ""}
+        </div>
+        ${
+          removable
+            ? `<button class="button ghost" type="button" data-character-action="remove" data-character-scope="${scope}" data-character-index="${activeIndex}" ${
+                activeIndex < 0 ? "disabled" : ""
+              }>删除当前卡</button>`
+            : ""
+        }
+      </div>
+      <div class="character-card-grid">
+        <label>
+          <span>人物卡标签</span>
+          <input type="text" data-character-scope="${scope}" data-character-index="${activeIndex}" data-character-field="slot_label" value="${escapeAttribute(card.slot_label || "")}" placeholder="例如：男主、女主、男配3" />
+        </label>
+        <label>
+          <span>角色名</span>
+          <input type="text" data-character-scope="${scope}" data-character-index="${activeIndex}" data-character-field="name" value="${escapeAttribute(card.name || "")}" placeholder="例如：楚焰" />
+        </label>
+        <label>
+          <span>主次定位</span>
+          <select data-character-scope="${scope}" data-character-index="${activeIndex}" data-character-field="cast_type">
+            ${CHARACTER_CAST_TYPES.map((option) => `<option value="${option.value}" ${card.cast_type === option.value ? "selected" : ""}>${option.label}</option>`).join("")}
+          </select>
+        </label>
+        <label>
+          <span>剧情职责</span>
+          <input type="text" data-character-scope="${scope}" data-character-index="${activeIndex}" data-character-field="story_role" value="${escapeAttribute(card.story_role || "")}" placeholder="例如：主角、宿敌、导师、关键盟友" />
+        </label>
+        <label>
+          <span>与主角关系</span>
+          <input type="text" data-character-scope="${scope}" data-character-index="${activeIndex}" data-character-field="relationship" value="${escapeAttribute(card.relationship || "")}" placeholder="例如：敌对试探、互利同盟、师徒拉扯" />
+        </label>
+        <label>
+          <span>核心欲望</span>
+          <textarea rows="3" data-character-scope="${scope}" data-character-index="${activeIndex}" data-character-field="desire" placeholder="这个人物最想得到什么">${escapeHtml(card.desire || "")}</textarea>
+        </label>
+        <label>
+          <span>主要恐惧</span>
+          <textarea rows="3" data-character-scope="${scope}" data-character-index="${activeIndex}" data-character-field="fear" placeholder="这个人物最怕失去什么">${escapeHtml(card.fear || "")}</textarea>
+        </label>
+        <label>
+          <span>声音与气质</span>
+          <textarea rows="3" data-character-scope="${scope}" data-character-index="${activeIndex}" data-character-field="voiceprint" placeholder="说话方式、气质、外在感受">${escapeHtml(card.voiceprint || "")}</textarea>
+        </label>
+        <label>
+          <span>行动方式 / 决策模式</span>
+          <textarea rows="3" data-character-scope="${scope}" data-character-index="${activeIndex}" data-character-field="action_mode" placeholder="例如：先观察再出手，表面退让实则布局">${escapeHtml(card.action_mode || "")}</textarea>
+        </label>
+        <label>
+          <span>补充备注</span>
+          <textarea rows="3" data-character-scope="${scope}" data-character-index="${activeIndex}" data-character-field="summary" placeholder="边界、反差、秘密、人物亮点">${escapeHtml(card.summary || "")}</textarea>
+        </label>
+      </div>
+      ${
+        card.cast_type === "protagonist"
+          ? `
+            <details class="advanced-box" open>
+              <summary>主角补充维度</summary>
+              <div class="character-card-grid">
+                <label>
+                  <span>成长缺口</span>
+                  <textarea rows="3" data-character-scope="${scope}" data-character-index="${activeIndex}" data-character-field="growth_gap" placeholder="例如：只会独自硬扛，不会真正信任同伴">${escapeHtml(card.growth_gap || "")}</textarea>
+                </label>
+                <label>
+                  <span>伪装与真实自我</span>
+                  <textarea rows="3" data-character-scope="${scope}" data-character-index="${activeIndex}" data-character-field="mask_true_self" placeholder="例如：看着冷静疏离，其实极度害怕再次被抛下">${escapeHtml(card.mask_true_self || "")}</textarea>
+                </label>
+              </div>
+            </details>
+          `
+          : ""
+      }
+    </article>
+  `;
+}
+
 function renderCharacterCardEditor(cards, scope) {
   const list = cards.length ? cards : createDefaultCharacterCards();
   const activeIndex = currentCharacterCardIndex(scope, list);
   const card = createEmptyCharacterCard(list[activeIndex] || createCharacterCardWithDefaultLabel(activeIndex));
   return `
     <div class="character-card-shell">
-      <div class="character-card-tabs" role="tablist" aria-label="人物卡选项">
-        ${list
-          .map(
-            (item, index) => `
-              <button
-                class="character-card-tab ${index === activeIndex ? "active" : ""}"
-                type="button"
-                role="tab"
-                aria-selected="${index === activeIndex ? "true" : "false"}"
-                data-character-action="select"
-                data-character-scope="${scope}"
-                data-character-index="${index}"
-              >
-                <span>${escapeHtml(characterCardTabLabel(item, index))}</span>
-                <small>${escapeHtml(String(item.name || "").trim() || "未命名")}</small>
-              </button>
-            `
-          )
-          .join("")}
-      </div>
-      <article class="character-card-item character-card-editor-panel">
-        <div class="character-card-head">
-          <div>
-            <h4>${escapeHtml(characterCardTabLabel(card, activeIndex))}</h4>
-            <div class="meta">先选上方人物卡，再只编辑当前这一张。</div>
-          </div>
-          <button class="button ghost" type="button" data-character-action="remove" data-character-scope="${scope}" data-character-index="${activeIndex}" ${
-            list.length <= 1 ? "disabled" : ""
-          }>删除当前卡</button>
-        </div>
-        <div class="character-card-grid">
-          <label>
-            <span>人物卡标签</span>
-            <input type="text" data-character-scope="${scope}" data-character-index="${activeIndex}" data-character-field="slot_label" value="${escapeAttribute(card.slot_label || "")}" placeholder="例如：男主、女主、男配3" />
-          </label>
-          <label>
-            <span>角色名</span>
-            <input type="text" data-character-scope="${scope}" data-character-index="${activeIndex}" data-character-field="name" value="${escapeAttribute(card.name || "")}" placeholder="例如：楚焰" />
-          </label>
-          <label>
-            <span>主次定位</span>
-            <select data-character-scope="${scope}" data-character-index="${activeIndex}" data-character-field="cast_type">
-              ${CHARACTER_CAST_TYPES.map((option) => `<option value="${option.value}" ${card.cast_type === option.value ? "selected" : ""}>${option.label}</option>`).join("")}
-            </select>
-          </label>
-          <label>
-            <span>剧情职责</span>
-            <input type="text" data-character-scope="${scope}" data-character-index="${activeIndex}" data-character-field="story_role" value="${escapeAttribute(card.story_role || "")}" placeholder="例如：主角、宿敌、导师、关键盟友" />
-          </label>
-          <label>
-            <span>与主角关系</span>
-            <input type="text" data-character-scope="${scope}" data-character-index="${activeIndex}" data-character-field="relationship" value="${escapeAttribute(card.relationship || "")}" placeholder="例如：敌对试探、互利同盟、师徒拉扯" />
-          </label>
-          <label>
-            <span>核心欲望</span>
-            <textarea rows="3" data-character-scope="${scope}" data-character-index="${activeIndex}" data-character-field="desire" placeholder="这个人物最想得到什么">${escapeHtml(card.desire || "")}</textarea>
-          </label>
-          <label>
-            <span>主要恐惧</span>
-            <textarea rows="3" data-character-scope="${scope}" data-character-index="${activeIndex}" data-character-field="fear" placeholder="这个人物最怕失去什么">${escapeHtml(card.fear || "")}</textarea>
-          </label>
-          <label>
-            <span>声音与气质</span>
-            <textarea rows="3" data-character-scope="${scope}" data-character-index="${activeIndex}" data-character-field="voiceprint" placeholder="说话方式、气质、外在感受">${escapeHtml(card.voiceprint || "")}</textarea>
-          </label>
-          <label>
-            <span>行动方式 / 决策模式</span>
-            <textarea rows="3" data-character-scope="${scope}" data-character-index="${activeIndex}" data-character-field="action_mode" placeholder="例如：先观察再出手，表面退让实则布局">${escapeHtml(card.action_mode || "")}</textarea>
-          </label>
-          <label>
-            <span>补充备注</span>
-            <textarea rows="3" data-character-scope="${scope}" data-character-index="${activeIndex}" data-character-field="summary" placeholder="边界、反差、秘密、人物亮点">${escapeHtml(card.summary || "")}</textarea>
-          </label>
-        </div>
-        ${
-          card.cast_type === "protagonist"
-            ? `
-              <details class="advanced-box" open>
-                <summary>主角补充维度</summary>
-                <div class="character-card-grid">
-                  <label>
-                    <span>成长缺口</span>
-                    <textarea rows="3" data-character-scope="${scope}" data-character-index="${activeIndex}" data-character-field="growth_gap" placeholder="例如：只会独自硬扛，不会真正信任同伴">${escapeHtml(card.growth_gap || "")}</textarea>
-                  </label>
-                  <label>
-                    <span>伪装与真实自我</span>
-                    <textarea rows="3" data-character-scope="${scope}" data-character-index="${activeIndex}" data-character-field="mask_true_self" placeholder="例如：看着冷静疏离，其实极度害怕再次被抛下">${escapeHtml(card.mask_true_self || "")}</textarea>
-                  </label>
-                </div>
-              </details>
-            `
-            : ""
-        }
-      </article>
+      ${renderCharacterCardTabs(list, scope)}
+      ${renderCharacterCardFields(card, scope, activeIndex, {
+        note: "这里是当前人物卡的结构化字段。上面那段自由描述生成草稿后，这里会自动回填；你也可以继续手动校对和补录。",
+        removable: list.length > 1,
+      })}
     </div>
   `;
 }
@@ -1066,22 +1182,43 @@ function loadedCharacterDiscussionMessages(thread) {
   return loadedCharacterDiscussionThread(thread) ? state.conversationMessages || [] : [];
 }
 
+function characterDiscussionMessageLabel(item) {
+  if (item?.role === "user") return "你的回答";
+  if (item?.role === "assistant") return "系统追问";
+  return conversationRoleLabel(item?.role, item?.message_type);
+}
+
+function interviewHelperSubmitText(helperKey) {
+  if (helperKey === "skip") return "先跳过这个问题，继续问下一个。";
+  if (helperKey === "rephrase") return "换个问法。";
+  if (helperKey === "more-options") return "给我更多选项。";
+  if (helperKey === "unsure") return "我还不确定，先给我几个更具体的方向。";
+  if (helperKey === "push-harder") return "给我一个更狠一点的版本。";
+  if (helperKey === "scene-probe") return "用一个场景帮我试出来。";
+  if (helperKey === "contrast-probe") return "给我一个反差版本。";
+  return "";
+}
+
 function renderCharacterDiscussionMessages(thread, messages) {
   if (!thread) {
     return `<div class="empty">当前人物卡还没有讨论线程。</div>`;
   }
   if (!loadedCharacterDiscussionThread(thread)) {
-    return `<div class="empty">当前已有讨论线程，但还没有在这个页面展开。点击“继续在此讨论”后，这里的问答记录会直接展开。</div>`;
+    return `<div class="empty">当前已有讨论线程，但还没有在这个页面展开。点“载入当前讨论”后，这里的问答记录会直接展开。</div>`;
   }
   if (!messages.length) {
     return `<div class="empty">当前线程还没有消息。</div>`;
   }
-  const compactHistory = messages.length > 4;
-  const visibleItems = compactHistory ? messages.slice(-4) : messages;
-  const earlierItems = compactHistory ? messages.slice(0, -4) : [];
+  const visibleStream = messages.filter((item) => ["assistant", "user"].includes(item.role));
+  if (!visibleStream.length) {
+    return `<div class="empty">当前线程还没有可供回看的问答重点。</div>`;
+  }
+  const compactHistory = visibleStream.length > 6;
+  const visibleItems = compactHistory ? visibleStream.slice(-6) : visibleStream;
+  const earlierItems = compactHistory ? visibleStream.slice(0, -6) : [];
   const renderMessage = (item) => `
-    <article class="conversation-message ${item.role}">
-      <div class="conversation-role">${conversationRoleLabel(item.role, item.message_type)} · ${formatTimestamp(item.created_at)}</div>
+    <article class="conversation-message compact ${item.role}">
+      <div class="conversation-role">${escapeHtml(characterDiscussionMessageLabel(item))}</div>
       <div class="conversation-content">${escapeHtml(item.content || "").replaceAll("\n", "<br>")}</div>
     </article>
   `;
@@ -1090,7 +1227,7 @@ function renderCharacterDiscussionMessages(thread, messages) {
       earlierItems.length
         ? `
           <details class="conversation-message-history">
-            <summary>查看更早对话（${earlierItems.length}）</summary>
+            <summary>查看更早讨论（${earlierItems.length}）</summary>
             <div class="stack compact conversation-message-history-body">
               ${earlierItems.map((item) => renderMessage(item)).join("")}
             </div>
@@ -1102,6 +1239,103 @@ function renderCharacterDiscussionMessages(thread, messages) {
   `;
 }
 
+function renderConversationOmxTaskPanel(thread, task, { compact = false } = {}) {
+  if (!thread || !task) return "";
+  const latest = task.latest || {};
+  const approval = task.approval || null;
+  const output = task.output || null;
+  const error = task.error || null;
+  const eventTail = (latest.event_log_tail || []).slice(-3);
+  const eventSummary = eventTail.length ? eventTail.join(" / ") : latest.latest_event || "当前还没有新的执行事件。";
+  const statusCopy =
+    task.status === "running"
+      ? "这条线程已经进入 OMX 执行。你可以继续补充讨论，也可以先刷新状态，看是否出现人工决策点。"
+      : task.status === "awaiting_approval"
+        ? "这条线程已经卡在人工决策点。先在这里拍板，再决定是否继续改写或补充要求。"
+        : task.status === "completed"
+          ? "这一轮 OMX 已完成。如果你刚刚又补了新想法，可以按最新结果再发起一轮。"
+          : task.status === "failed"
+            ? "这轮执行已经失败，但线程里的结论还在。你可以继续补几句后重试，也可以直接按当前结果重新发起。"
+            : task.status === "rejected"
+              ? "这轮执行已经被拒绝。你可以先补充新的说明，再重新发起。"
+              : "当前可以继续观察这条 OMX 任务。";
+  const reviewHighlights = (approval?.latest_review_reports || [])
+    .slice(0, 2)
+    .map((item) => {
+      const reviewer = item.reviewer || "reviewer";
+      const decision = item.decision || "待定";
+      const issue = (item.issues || [])[0];
+      return `${reviewer}：${decision}${issue?.fix_instruction ? `，${issue.fix_instruction}` : ""}`;
+    });
+  const utilityActions = [];
+  if (task.status === "running" || task.status === "awaiting_approval") {
+    utilityActions.push(`<button class="button ghost" type="button" data-refresh-omx-thread="${thread.thread_id}">刷新 OMX 状态</button>`);
+  }
+  if (["failed", "rejected", "completed"].includes(task.status)) {
+    utilityActions.push(`<button class="button primary" type="button" data-launch-omx-thread="${thread.thread_id}">重新按当前结果执行</button>`);
+  }
+  const approvalActions = approval?.options?.length
+    ? `
+      <div class="actions compact omx-task-actions">
+        ${approval.options
+          .map((action) => `<button class="button ${action === "approve_continue" ? "primary" : "ghost"}" type="button" data-omx-action="${action}" data-omx-thread-id="${thread.thread_id}">${escapeHtml(omxTaskActionLabel(action))}</button>`)
+          .join("")}
+      </div>
+    `
+    : "";
+  return `
+    <section class="interview-block ${compact ? "" : "accent-block"} omx-task-panel omx-task-panel-${escapeHtml(task.status || "idle")}">
+      <div class="omx-task-head">
+        <div>
+          <strong>当前 OMX 执行</strong>
+          <div class="omx-task-copy">${escapeHtml(statusCopy)}</div>
+        </div>
+        <div class="character-progress-meta">
+          <span class="character-progress-pill">${escapeHtml(task.task_id)}</span>
+          <span class="status-chip status-${escapeHtml(task.status || "open")}">${escapeHtml(STATUS_LABELS[task.status] || task.status)}</span>
+        </div>
+      </div>
+      <div class="omx-task-meta">
+        <div class="meta">当前阶段：${escapeHtml(latest.phase || "未记录")} / 当前节点：${escapeHtml(latest.current_node || "未记录")}</div>
+        <div class="meta">执行摘要：${escapeHtml(eventSummary)}</div>
+        ${
+          task.run_id
+            ? `<div class="meta">关联运行：${escapeHtml(task.run_id)}</div>`
+            : ""
+        }
+      </div>
+      ${
+        utilityActions.length
+          ? `<div class="actions compact omx-task-actions">${utilityActions.join("")}</div>`
+          : ""
+      }
+      ${
+        task.status === "awaiting_approval" && approval
+          ? `
+            <div class="meta"><strong>当前卡点：</strong>${escapeHtml(approval.reason || "系统等待人工处理。")}</div>
+            ${
+              reviewHighlights.length
+                ? `<div class="meta">审校提示：${escapeHtml(reviewHighlights.join(" / "))}</div>`
+                : ""
+            }
+            ${approvalActions}
+          `
+          : ""
+      }
+      ${
+        task.status === "completed" && output?.publish_package
+          ? `<div class="meta">已产出：第 ${escapeHtml(output.publish_package.chapter_no || "?")} 章《${escapeHtml(output.publish_package.title || "未命名章节")}》。</div>`
+          : ""
+      }
+      ${
+        task.status === "failed" && error
+          ? `<div class="meta">失败原因：${escapeHtml(error.message || "执行失败")}</div>`
+          : ""
+      }
+    </section>
+  `;
+}
+
 function renderCharacterDiscussionPanel(project, activeCharacter, activeThread, activeProgress) {
   const activeCharacterLabel = characterCardTabLabel(activeCharacter?.card, activeCharacter?.index || 0);
   const thread = loadedCharacterDiscussionThread(activeThread) || activeThread;
@@ -1109,60 +1343,36 @@ function renderCharacterDiscussionPanel(project, activeCharacter, activeThread, 
   const interview = interviewState(thread);
   const context = threadContext(thread);
   const isLoaded = Boolean(loadedCharacterDiscussionThread(activeThread));
-  const currentDraft = interview?.current_draft?.sections?.length
+  const omxTask = currentConversationOmxTask(thread);
+  const currentFocus = context?.missing_items?.[0] || interview?.next_topic_title || activeProgress.focusDimension?.label || "当前这个点";
+  const deferredFocus = (context?.missing_items || []).slice(1);
+  const focusReason = activeProgress.focusDimension?.reason || context?.next_goal || "先把这一点说顺，系统会继续顺着往下收紧其他维度。";
+  const helperOptions = interview?.show_next_options && interview?.next_options?.length
     ? `
       <div class="interview-block">
-        <strong>${escapeHtml(interview.current_draft.title || "当前理解草案")}</strong>
-        <ul class="interview-list">
-          ${(interview.current_draft.sections || [])
-            .map((item) => `<li><strong>${escapeHtml(item.label || "")}</strong>：${escapeHtml(item.summary || "")}</li>`)
-            .join("")}
-        </ul>
-        <div class="meta">${escapeHtml(interview.current_draft.recommendation || "")}</div>
-      </div>
-    `
-    : "";
-  const stageSummary = interview?.stage_confirmation?.stage_summary?.items?.length
-    ? `
-      <div class="interview-block">
-        <strong>${escapeHtml(interview.stage_confirmation.stage_summary.title || "当前人物摘要")}</strong>
-        <ul class="interview-list">
-          ${(interview.stage_confirmation.stage_summary.items || [])
-            .map((item) => `<li><strong>${escapeHtml(item.label || "")}</strong>：${escapeHtml(item.summary || "")}</li>`)
-            .join("")}
-        </ul>
-        <div class="meta">${escapeHtml(interview.stage_confirmation.stage_summary.readiness || "")}</div>
-      </div>
-    `
-    : "";
-  const helperOptions = interview?.next_options?.length
-    ? `
-      <div class="actions compact">
+        <strong>如果你想借一个起手句</strong>
+        <div class="meta">这些只是帮你起步的灵感话头，你可以直接改，也可以完全按自己的说法来。</div>
+        <div class="actions compact character-option-actions">
         ${interview.next_options
           .map((item, index) => `<button class="button ghost" type="button" data-character-thread-option="${index}">${escapeHtml(item)}</button>`)
           .join("")}
+        </div>
       </div>
     `
     : "";
+  const threadProgressLabel = thread ? conversationThreadProgressLabel(thread) || "进行中" : "尚未开始讨论";
   return `
     <section class="summary-card character-discussion-panel">
       <div class="panel-head">
         <div>
-          <div class="summary-label">人物讨论</div>
-          <div class="summary-value">正在处理：${escapeHtml(activeCharacterLabel)}</div>
-          <div class="meta">${
-            thread
-              ? "讨论、摘要和画像都会围绕当前人物卡原地联动，不再跳去独立页面。"
-              : "先在这里开始当前人物卡的专属讨论，系统会根据这张卡的缺口继续追问。"
-          }</div>
+          <div class="summary-label">当前讨论</div>
+          <div class="summary-value">${thread ? `继续访谈 ${escapeHtml(activeCharacterLabel)}` : `先把 ${escapeHtml(activeCharacterLabel)} 说活`}</div>
+          <div class="meta">${thread ? "这里直接围绕当前人物卡继续聊。前台只露出眼下最值得追的一点，其余覆盖维度交给系统在后台记着。" : "先写自由描述并生成草稿，讨论区就会直接围绕这张人物卡展开。"}</div>
         </div>
         <div class="actions">
-          <button class="button primary" type="button" data-character-action="discuss-inline">${
-            thread ? "继续在此讨论" : `开始讨论${escapeHtml(activeCharacterLabel)}`
-          }</button>
           ${
             thread?.status === "open"
-              ? `<button class="button ghost" type="button" data-character-action="restart-inline-discussion" data-thread-id="${escapeHtml(thread.thread_id)}">重开当前讨论</button>`
+              ? `<button class="button ghost" type="button" data-character-action="discuss-inline">${isLoaded ? "聚焦当前输入框" : "载入当前讨论"}</button>`
               : ""
           }
           ${
@@ -1170,42 +1380,53 @@ function renderCharacterDiscussionPanel(project, activeCharacter, activeThread, 
               ? `<button class="button secondary" type="button" data-apply-stage-summary="${escapeHtml(thread.thread_id)}">${escapeHtml(stageSummaryApplyLabel("character_room"))}</button>`
               : ""
           }
+          ${
+            canLaunchOmxFromThread(thread)
+              ? `<button class="button ghost" type="button" data-launch-omx-thread="${escapeHtml(thread.thread_id)}">${escapeHtml(omxLaunchLabel("character_room"))}</button>`
+              : ""
+          }
         </div>
       </div>
       <div class="character-progress-meta">
-        <span class="character-progress-pill">${escapeHtml(activeProgress.completionLabel)} 设定完成度</span>
-        <span class="character-progress-pill muted">${
-          thread ? `${escapeHtml(conversationThreadProgressLabel(thread) || "0/0")} 讨论进度` : "尚未开始讨论"
-        }</span>
+        <span class="character-progress-pill">${escapeHtml(activeProgress.completionLabel)} 已收束</span>
+        <span class="character-progress-pill muted">${escapeHtml(threadProgressLabel)}</span>
         <span class="character-progress-pill ${thread?.status === "open" ? "good" : "warn"}">${
-          thread?.status === "open" ? "当前线程可继续" : "需要先开始当前人物讨论"
+          thread?.status === "open" ? "采访进行中" : "等待先生成草稿"
         }</span>
       </div>
       ${
         thread
           ? `
-            <div class="character-discussion-grid">
+            ${renderConversationOmxTaskPanel(thread, omxTask, { compact: true })}
+            <div class="character-discussion-grid compact">
               <div class="interview-block accent-block">
-                <strong>当前下一问</strong>
+                <strong>我现在先抓这一点</strong>
+                ${
+                  interview?.reflection_summary
+                    ? `<div class="meta">${escapeHtml(interview.reflection_summary)}</div>`
+                    : ""
+                }
                 <div class="meta">${escapeHtml(interview?.next_prompt || "继续补充你认为最关键的信息。")}</div>
                 ${
                   interview?.goal
                     ? `<div class="meta">${escapeHtml(interview.goal)}</div>`
                     : ""
                 }
-                ${
-                  interview?.reflection_summary
-                    ? `<div class="meta">${escapeHtml(interview.reflection_summary)}</div>`
-                    : ""
-                }
                 ${helperOptions}
               </div>
               <div class="interview-block">
-                <strong>这张卡当前还缺什么</strong>
+                <strong>先别管全部，只先补这一块</strong>
+                <div class="summary-value">${escapeHtml(currentFocus)}</div>
+                <div class="meta">${escapeHtml(focusReason)}</div>
                 ${
-                  context?.missing_items?.length
-                    ? `<ul class="interview-list">${context.missing_items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
-                    : `<div class="meta">当前关键维度已经基本问清，可以开始确认摘要或生成画像。</div>`
+                  deferredFocus.length
+                    ? `
+                      <details class="character-collapsible">
+                        <summary>后台还在跟踪 ${deferredFocus.length} 个后续点</summary>
+                        <div class="meta">这些先不用你现在逐条答：${escapeHtml(deferredFocus.join("、"))}。</div>
+                      </details>
+                    `
+                    : `<div class="meta">剩下没有明显的优先缺口了，可以开始确认草稿、摘要或人物画像。</div>`
                 }
                 ${
                   context?.next_goal
@@ -1214,27 +1435,9 @@ function renderCharacterDiscussionPanel(project, activeCharacter, activeThread, 
                 }
               </div>
             </div>
-            <div class="character-discussion-grid">
-              <div class="interview-block">
-                <strong>已经聊到的点</strong>
-                ${
-                  interview?.confirmed_topics?.length
-                    ? `<ul class="interview-list">${interview.confirmed_topics.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
-                    : `<div class="meta">还没有稳定确认项，先从当前下一问开始回答。</div>`
-                }
-              </div>
-              <div class="interview-block">
-                <strong>当前继承信息</strong>
-                ${
-                  context?.inherited_items?.length
-                    ? `<ul class="interview-list">${context.inherited_items.map((item) => `<li><strong>${escapeHtml(item.label || "")}</strong>：${escapeHtml(item.summary || "")}</li>`).join("")}</ul>`
-                    : `<div class="meta">这张卡当前还没有明确可继承的稳定结论。</div>`
-                }
-              </div>
-            </div>
-            ${currentDraft || stageSummary ? `<div class="character-discussion-grid">${currentDraft}${stageSummary}</div>` : ""}
             <div class="interview-block">
-              <strong>当前人物讨论记录</strong>
+              <strong>最近几轮讨论重点</strong>
+              <div class="meta">这里只保留最近几轮讨论重点，方便你快速接上，不再把整段对话完整铺开。</div>
               <div class="character-inline-message-list">
                 ${renderCharacterDiscussionMessages(thread, messages)}
               </div>
@@ -1243,27 +1446,28 @@ function renderCharacterDiscussionPanel(project, activeCharacter, activeThread, 
               <label>
                 <span>继续讨论 ${escapeHtml(activeCharacterLabel)}</span>
                 <textarea rows="5" data-character-thread-input placeholder="${escapeAttribute(
-                  isLoaded ? conversationInputPlaceholder(thread) : "先点“继续在此讨论”载入当前线程，再直接在这里回答。"
+                  isLoaded ? conversationInputPlaceholder(thread) : "先点“载入当前讨论”，再直接在这里回答。"
                 )}" ${isLoaded ? "" : "disabled"}></textarea>
               </label>
-              <div class="actions">
+              <div class="actions character-helper-actions">
                 <button class="button primary" type="submit" ${isLoaded ? "" : "disabled"}>发送回答</button>
                 <button class="button ghost" type="button" data-character-thread-helper="rephrase" ${isLoaded ? "" : "disabled"}>换个问法</button>
-                <button class="button ghost" type="button" data-character-thread-helper="more-options" ${isLoaded ? "" : "disabled"}>给我更多选项</button>
-                <button class="button ghost" type="button" data-character-thread-helper="skip" ${isLoaded ? "" : "disabled"}>先跳过</button>
-                <button class="button ghost" type="button" data-character-thread-helper="unsure" ${isLoaded ? "" : "disabled"}>我还不确定</button>
+                <button class="button ghost" type="button" data-character-thread-helper="more-options" ${isLoaded ? "" : "disabled"}>给我一点灵感</button>
+                <button class="button ghost" type="button" data-character-thread-helper="push-harder" ${isLoaded ? "" : "disabled"}>更狠一点</button>
+                <button class="button ghost" type="button" data-character-thread-helper="scene-probe" ${isLoaded ? "" : "disabled"}>用场景试一下</button>
+                <button class="button ghost" type="button" data-character-thread-helper="contrast-probe" ${isLoaded ? "" : "disabled"}>给我反差版</button>
               </div>
             </form>
           `
           : `
-            <div class="character-discussion-grid">
+            <div class="character-discussion-grid compact">
               <div class="interview-block accent-block">
-                <strong>为什么现在就要讨论</strong>
-                <div class="meta">人物字段只是草图。只有围绕当前人物卡把关键维度讨论清楚，后面的人物摘要和画像才会稳定。</div>
+                <strong>先说人，不先考试</strong>
+                <div class="meta">先写一段你脑海里的这个人物。系统会把能确定的内容先回填成草稿，再围绕缺口继续聊。</div>
               </div>
               <div class="interview-block">
-                <strong>系统会怎么追问</strong>
-                <div class="meta">系统会根据当前人物卡缺口，从第一印象、核心欲望、关键关系张力、行动方式和人物边界开始，一步步把这张卡收紧。</div>
+                <strong>下一步只做一件事</strong>
+                <div class="meta">点“根据描述生成草稿并开始讨论”，这张人物卡就会直接进入可继续讨论的状态。</div>
               </div>
             </div>
           `
@@ -1290,14 +1494,23 @@ function renderProjectCharacterCards(project = selectedProject()) {
   const activeSummaryItems = activeSummarySource?.summary?.items || [];
   const activeProgress = characterProgressSnapshot(activeCharacter?.card || {});
   const activePortrait = characterPortrait(activeCharacter?.card || {});
+  const activeSummaryIsDraft = isCharacterSummaryDraft(activeSummarySource);
   const hasCharacterSummary = Boolean(anyCharacterSummarySource(project));
   const activeCharacterLabel = characterCardTabLabel(activeCharacter?.card, activeCharacter?.index || 0);
+  const activeConceptSeed = String(activeCharacter?.card?.concept_seed || "").trim();
+  const focusTitle = activeProgress.focusDimension ? activeProgress.focusDimension.label : "关键维度已基本收束";
+  const focusReason = activeProgress.focusDimension
+    ? activeProgress.focusDimension.reason
+    : "这张卡已经有足够的人物基础，可以继续确认摘要，或直接沉淀人物画像。";
+  const stageSummaryAction = activeSummarySource?.status === "draft" && activeSummarySource.threadId
+    ? `<button class="button secondary" type="button" data-apply-stage-summary="${escapeHtml(activeSummarySource.threadId)}">确认这版人物摘要</button>`
+    : "";
   el.projectCharacterCards.hidden = false;
   el.projectCharacterCards.innerHTML = `
     <div class="panel-head">
       <div>
-        <h3>人物卡</h3>
-        <div class="muted">先进入人物设定，再选中一张人物卡，只围绕这一张卡填写与讨论。人物摘要也会按当前人物卡分别沉淀。</div>
+        <h3>人物设定</h3>
+        <div class="muted">只处理当前选中的这张人物卡。顺序很简单：先描述，再生成草稿，再继续讨论缺口。</div>
       </div>
       <div class="actions">
         ${
@@ -1306,116 +1519,128 @@ function renderProjectCharacterCards(project = selectedProject()) {
             : ""
         }
         <button class="button ghost" type="button" data-character-action="add" data-character-scope="project">添加人物卡</button>
-        <button class="button primary" type="button" data-character-action="save" data-character-scope="project">保存人物卡</button>
       </div>
     </div>
-    <div class="meta">当前已配置 ${populatedCount} 张人物卡。建议至少明确主角、关键配角和主要对位者。${
-      hasCharacterSummary ? "如果某张人物卡已经确认过人物摘要，可以先点“从人物摘要补全”同步已有结论。" : ""
+    <div class="meta">当前已配置 ${populatedCount} 张人物卡。先选一张卡，把这一个人物说明白，再切到下一张。${
+      hasCharacterSummary ? "如果某张人物卡已经确认过人物摘要，可以用“从人物摘要补全”把已有结论带回来。" : ""
     }</div>
-    <div class="character-workbench">
-      <section class="summary-card accent character-guide-panel">
+    <div class="character-page-shell">
+      <section class="summary-card accent character-main-stage">
         <div class="panel-head">
           <div>
-            <div class="summary-label">当前人物设定进度</div>
-            <div class="summary-value">${escapeHtml(activeCharacterLabel)} · ${escapeHtml(activeProgress.completionLabel)}</div>
-            <div class="meta">系统会先告诉你这张卡还缺什么，再引导你围绕最关键的点去讨论，最后把字段和讨论内容沉淀成人物画像。</div>
+            <div class="summary-label">当前人物卡</div>
+            <div class="summary-value">${escapeHtml(activeCharacterLabel)}</div>
+            <div class="meta">自由描述可以先写个感觉、一个场景、一段关系张力，系统会先整理成草稿，再继续追问缺口。</div>
+          </div>
+          <div class="character-progress-meta">
+            <span class="character-progress-pill">${escapeHtml(activeProgress.completedCount)} / ${escapeHtml(activeProgress.requiredCount)} 项已收束</span>
+            <span class="character-progress-pill ${activeProgress.readyForPortrait ? "good" : "warn"}">${
+              activeProgress.readyForPortrait ? "可以准备画像" : "先继续补关键维度"
+            }</span>
+          </div>
+        </div>
+        ${renderCharacterCardTabs(cards, "project", { row: true })}
+        <div class="character-step-strip" aria-label="人物设定流程">
+          <span class="character-step active">1. 先描述这个人</span>
+          <span class="character-step">2. 生成或更新草稿</span>
+          <span class="character-step">3. 围绕缺口继续讨论</span>
+        </div>
+        <section class="interview-block accent-block character-seed-panel">
+          <strong>${escapeHtml(activeCharacterLabel)} 的自由描述</strong>
+          <div class="meta">先把你脑海里的感觉写出来。即使不完整，也可以先保存，再慢慢补。</div>
+          <label class="character-seed-field">
+            <span>你现在想到的内容</span>
+            <textarea
+              rows="6"
+              data-character-scope="project"
+              data-character-index="${activeCharacter?.index || 0}"
+              data-character-field="concept_seed"
+              placeholder="例如：她第一次出场时要很冷静、疏离，像永远比别人先看清局势。她最想摆脱被家族拿去交换利益的命运，和男主之间是彼此利用却又慢慢卸下防备的关系。遇到危险时，她不会慌，而是会先观察再突然出手。"
+            >${escapeHtml(activeConceptSeed)}</textarea>
+          </label>
+          <div class="actions character-seed-actions">
+            <button class="button ghost" type="button" data-character-action="save-seed">保存这段描述</button>
+            <button class="button primary" type="button" data-character-action="autofill-from-seed">${
+              activeThread ? "根据描述更新草稿并继续讨论" : "根据描述生成草稿并开始讨论"
+            }</button>
+          </div>
+        </section>
+        ${renderCharacterReviewPanel(activeThread, activeSummarySource, activePortrait)}
+        ${renderCharacterDiscussionPanel(project, activeCharacter, activeThread, activeProgress)}
+      </section>
+      <aside class="character-side-column">
+        <section class="summary-card character-focus-panel">
+          <div class="summary-label">当前最该补的点</div>
+          <div class="summary-value">${escapeHtml(focusTitle)}</div>
+          <div class="meta">${escapeHtml(focusReason)}</div>
+          <div class="character-progress-meta">
+            <span class="character-progress-pill muted">${escapeHtml(activeProgress.completionLabel)} 完成度</span>
+            ${
+              activeThread
+                ? `<span class="character-progress-pill muted">${escapeHtml(conversationThreadProgressLabel(activeThread) || "进行中")} 讨论进度</span>`
+                : `<span class="character-progress-pill muted">讨论尚未开始</span>`
+            }
           </div>
           <div class="actions">
-            <button class="button primary" type="button" data-character-action="discuss" data-character-scope="project">${
-              activeThread ? `继续讨论${escapeHtml(activeCharacterLabel)}` : `讨论${escapeHtml(activeCharacterLabel)}`
-            }</button>
-            ${
-              activeSummarySource?.status === "draft" && activeSummarySource.threadId
-                ? `<button class="button secondary" type="button" data-apply-stage-summary="${escapeHtml(activeSummarySource.threadId)}">确认这版人物摘要</button>`
-                : ""
-            }
+            <button class="button ghost" type="button" data-character-action="save" data-character-scope="project">保存当前人物卡</button>
+            ${stageSummaryAction}
           </div>
-        </div>
-        <div class="character-progress-bar" aria-hidden="true">
-          <span style="width:${Math.max(8, Math.round((activeProgress.completedCount / Math.max(1, activeProgress.requiredCount)) * 100))}%"></span>
-        </div>
-        <div class="character-progress-meta">
-          <span class="character-progress-pill">${escapeHtml(activeProgress.completedCount)} 项已收束</span>
-          <span class="character-progress-pill muted">${escapeHtml(activeProgress.requiredCount - activeProgress.completedCount)} 项待补齐</span>
-          <span class="character-progress-pill ${activeProgress.readyForPortrait ? "good" : "warn"}">${
-            activeProgress.readyForPortrait ? "已达到画像生成建议深度" : "建议先补到推荐深度"
-          }</span>
-        </div>
-        <div class="character-guide-grid">
-          <div class="interview-block">
-            <strong>系统建议先补这一项</strong>
-            ${
-              activeProgress.focusDimension
-                ? `<div class="meta"><strong>${escapeHtml(activeProgress.focusDimension.label)}</strong></div><div class="meta">${escapeHtml(activeProgress.focusDimension.reason)}</div>`
-                : `<div class="meta">当前这张卡的核心维度已经基本收束，可以直接生成或重生人物画像。</div>`
-            }
+        </section>
+        <section class="summary-card character-portrait-panel">
+          <div class="panel-head">
+            <div>
+              <div class="summary-label">人物画像</div>
+              <div class="summary-value">${escapeHtml(activePortrait?.title || `${activeCharacterLabel}人物画像`)}</div>
+              <div class="meta">${escapeHtml(activePortrait?.readiness || "先把草稿和摘要确认得更准，再生成人物画像会更稳。")}</div>
+            </div>
           </div>
-          <div class="interview-block">
-            <strong>推荐讨论程度</strong>
-            <div class="meta">基础人物至少讨论到 6 个维度；主角建议讨论到 8 个维度，尤其要补齐成长缺口和伪装与真实自我。</div>
-          </div>
-        </div>
-        <div class="character-dimension-list">
-          ${activeProgress.dimensions
-            .map(
-              (item) => `
-                <div class="character-dimension-item ${item.done ? "done" : "pending"}">
-                  <span class="criteria-badge">${item.done ? "已收束" : "待补齐"}</span>
-                  <div>
-                    <strong>${escapeHtml(item.label)}</strong>
-                    <div class="meta">${escapeHtml(item.reason)}</div>
-                  </div>
-                </div>
-              `
-            )
-            .join("")}
-        </div>
-        ${
-          activeSummaryItems.length
-            ? `
-              <div class="interview-block">
-                <strong>已确认的人物讨论结论</strong>
-                <ul class="interview-list">${activeSummaryItems
-                  .slice(0, 6)
-                  .map((item) => `<li><strong>${escapeHtml(item.label || "")}</strong>：${escapeHtml(item.summary || "")}</li>`)
-                  .join("")}</ul>
-              </div>
-            `
-            : `
-              <div class="interview-block">
-                <strong>当前讨论状态</strong>
-                <div class="meta">${
-                  activeSummarySource?.status === "applied"
-                    ? "这张人物卡已经有已确认摘要，但你仍可以继续补充后再重新生成画像。"
-                    : "这张人物卡还没有形成稳定讨论摘要。建议先进入讨论，把关键维度说清。"
-                }</div>
-              </div>
-            `
-        }
-      </section>
-      <section class="summary-card character-portrait-panel">
-        <div class="panel-head">
-          <div>
-            <div class="summary-label">人物画像</div>
-            <div class="summary-value">${escapeHtml(activePortrait?.title || `${activeCharacterLabel}人物画像`)}</div>
-            <div class="meta">${escapeHtml(activePortrait?.readiness || "这里会把人物字段和讨论结论融合成可直接继承到章卡、正文和审查的人物画像。")}</div>
-          </div>
+          ${
+            activePortrait?.focus_dimension?.label
+              ? `<div class="meta">如果还想更稳，建议继续补：${escapeHtml(activePortrait.focus_dimension.label)}。</div>`
+              : ""
+          }
           <div class="actions">
             <button class="button ${activeProgress.readyForPortrait ? "primary" : "secondary"}" type="button" data-character-action="generate-portrait">${
               activePortrait ? "基于最新内容重生画像" : "生成人物画像"
             }</button>
           </div>
-        </div>
+          ${
+            activePortrait?.sections?.length
+              ? `
+                <details class="character-collapsible" open>
+                  <summary>查看画像内容</summary>
+                  ${renderCharacterPortraitSections(activePortrait)}
+                </details>
+              `
+              : ""
+          }
+        </section>
+        <details class="summary-card character-collapsible">
+          <summary>查看并修改结构化人物卡</summary>
+          ${renderCharacterCardFields(createEmptyCharacterCard(activeCharacter?.card || {}), "project", activeCharacter?.index || 0, {
+            note: "这里是系统整理后的结构化字段。自由描述和讨论都会持续回填到这里。",
+            removable: false,
+          })}
+          <div class="actions">
+            <button class="button ghost" type="button" data-character-action="remove" data-character-scope="project" data-character-index="${activeCharacter?.index || 0}" ${
+              cards.length <= 1 ? "disabled" : ""
+            }>删除当前卡</button>
+          </div>
+        </details>
         ${
-          activePortrait?.focus_dimension?.label
-            ? `<div class="meta">如果还想更稳，建议继续补：${escapeHtml(activePortrait.focus_dimension.label)}。</div>`
+          activeSummaryItems.length && !activeSummaryIsDraft
+            ? `
+              <details class="summary-card character-collapsible">
+                <summary>查看当前人物摘要</summary>
+                <ul class="interview-list">${activeSummaryItems
+                  .map((item) => `<li><strong>${escapeHtml(item.label || "")}</strong>：${escapeHtml(item.summary || "")}</li>`)
+                  .join("")}</ul>
+              </details>
+            `
             : ""
         }
-        ${renderCharacterPortraitSections(activePortrait)}
-      </section>
+      </aside>
     </div>
-    ${renderCharacterDiscussionPanel(project, activeCharacter, activeThread, activeProgress)}
-    ${renderCharacterCardEditor(cards, "project")}
   `;
   el.projectCharacterCards.querySelectorAll("[data-character-action='add']").forEach((node) => {
     node.addEventListener("click", () => {
@@ -1447,6 +1672,26 @@ function renderProjectCharacterCards(project = selectedProject()) {
       saveProjectCharacterCards().catch((error) => setStatus(String(error.message || error), "error"));
     });
   });
+  el.projectCharacterCards.querySelectorAll("[data-character-action='save-seed']").forEach((node) => {
+    node.addEventListener("click", () => {
+      saveActiveProjectCharacterSeed().catch((error) => setStatus(String(error.message || error), "error"));
+    });
+  });
+  el.projectCharacterCards.querySelectorAll("[data-character-action='confirm-review']").forEach((node) => {
+    node.addEventListener("click", () => {
+      confirmProjectCharacterReview().catch((error) => setStatus(String(error.message || error), "error"));
+    });
+  });
+  el.projectCharacterCards.querySelectorAll("[data-character-action='discuss-review-selection']").forEach((node) => {
+    node.addEventListener("click", () => {
+      discussSelectedProjectCharacterReviewItems().catch((error) => setStatus(String(error.message || error), "error"));
+    });
+  });
+  el.projectCharacterCards.querySelectorAll("[data-character-action='autofill-from-seed']").forEach((node) => {
+    node.addEventListener("click", () => {
+      autofillProjectCharacterCardFromSeed().catch((error) => setStatus(String(error.message || error), "error"));
+    });
+  });
   el.projectCharacterCards.querySelectorAll("[data-character-action='discuss'], [data-character-action='discuss-inline']").forEach((node) => {
     node.addEventListener("click", async () => {
       try {
@@ -1458,11 +1703,6 @@ function renderProjectCharacterCards(project = selectedProject()) {
       } catch (error) {
         setStatus(String(error.message || error), "error");
       }
-    });
-  });
-  el.projectCharacterCards.querySelectorAll("[data-character-action='restart-inline-discussion']").forEach((node) => {
-    node.addEventListener("click", () => {
-      restartConversationThread(node.dataset.threadId, { activateTab: false }).catch((error) => setStatus(String(error.message || error), "error"));
     });
   });
   el.projectCharacterCards.querySelectorAll("[data-character-action='generate-portrait']").forEach((node) => {
@@ -1480,6 +1720,21 @@ function renderProjectCharacterCards(project = selectedProject()) {
       applyStageSummary(node.dataset.applyStageSummary).catch((error) => setStatus(String(error.message || error), "error"));
     });
   });
+  el.projectCharacterCards.querySelectorAll("[data-launch-omx-thread]").forEach((node) => {
+    node.addEventListener("click", () => {
+      launchOmxFromConversationThread(node.dataset.launchOmxThread).catch((error) => setStatus(String(error.message || error), "error"));
+    });
+  });
+  el.projectCharacterCards.querySelectorAll("[data-refresh-omx-thread]").forEach((node) => {
+    node.addEventListener("click", () => {
+      refreshConversationOmxTask(node.dataset.refreshOmxThread).catch((error) => setStatus(String(error.message || error), "error"));
+    });
+  });
+  el.projectCharacterCards.querySelectorAll("[data-omx-action]").forEach((node) => {
+    node.addEventListener("click", () => {
+      handleConversationOmxTaskAction(node.dataset.omxThreadId, node.dataset.omxAction).catch((error) => setStatus(String(error.message || error), "error"));
+    });
+  });
   el.projectCharacterCards.querySelectorAll("[data-character-thread-option]").forEach((node) => {
     node.addEventListener("click", () => {
       const choice = loadedCharacterDiscussionThread(activeThread)?.interview_state?.next_options?.[Number(node.dataset.characterThreadOption)]
@@ -1495,14 +1750,8 @@ function renderProjectCharacterCards(project = selectedProject()) {
   el.projectCharacterCards.querySelectorAll("[data-character-thread-helper]").forEach((node) => {
     node.addEventListener("click", async () => {
       if (!activeThread) return;
-      const helper =
-        node.dataset.characterThreadHelper === "skip"
-          ? "先跳过这个问题，继续问下一个。"
-          : node.dataset.characterThreadHelper === "rephrase"
-            ? "换个问法。"
-            : node.dataset.characterThreadHelper === "more-options"
-              ? "给我更多选项。"
-              : "我还不确定，先给我几个更具体的方向。";
+      const helper = interviewHelperSubmitText(node.dataset.characterThreadHelper || "");
+      if (!helper) return;
       try {
         state.selectedThreadId = activeThread.thread_id;
         await submitConversationMessage(helper);
@@ -1659,9 +1908,16 @@ function formatApiDetail(detail) {
   if (value === "invalid_credentials") return "笔名或密码不正确。";
   if (value === "login_required") return "请先登录。";
   if (value === "character_card_not_found") return "没有找到这张人物卡，请先保存当前人物卡后再试。";
+  if (value === "character_description_required") return "请先写下当前人物的一段自由描述，再让系统生成草稿。";
   if (value === "character_summary_not_ready") return "当前还没有可同步的人物摘要。请先完成当前人物讨论并确认摘要。";
   if (value === "conversation_thread_not_open") return "这条线程已经关闭，不能继续作答。请使用“重开本阶段”或切回最新线程。";
   if (value === "interview_restart_not_supported") return "当前线程不支持重开本阶段。";
+  if (value === "omx_task_not_found_for_thread") return "这条线程还没有发起 OMX 执行任务。";
+  if (value === "omx_task_not_waiting_for_approval") return "当前 OMX 任务不在等待人工处理状态。";
+  if (value.startsWith("omx_launch_requires_project_fields:")) {
+    const missing = value.split(":")[1] || "";
+    return `还不能发起执行，项目还缺这些基础信息：${missing}。请先补齐后再试。`;
+  }
   return value || "请求失败，请稍后重试。";
 }
 
@@ -2136,6 +2392,31 @@ function stageSummaryApplyLabel(scope) {
   return "确认这版阶段摘要";
 }
 
+function canLaunchOmxFromThread(thread) {
+  return Boolean(thread && ["project_bootstrap", "character_room", "outline_room"].includes(thread.scope));
+}
+
+function omxLaunchLabel(scope) {
+  if (scope === "project_bootstrap") return "按这版项目方向进入执行";
+  if (scope === "character_room") return "按这版人物结果进入执行";
+  if (scope === "outline_room") return "按这版大纲方向进入执行";
+  return "进入 OMX 执行";
+}
+
+function currentConversationOmxTask(thread = selectedThread()) {
+  if (!thread || state.conversationOmxTaskThreadId !== thread.thread_id) return null;
+  return state.conversationOmxTask || null;
+}
+
+function omxTaskActionLabel(action) {
+  if (action === "approve_continue") return "按当前方向继续";
+  if (action === "approve_patch") return "按当前意见重写";
+  if (action === "approve_replan") return "先重做规划";
+  if (action === "provide_human_instruction") return "补充人工要求";
+  if (action === "reject") return "先拒绝这轮";
+  return action || "处理";
+}
+
 function conversationThreadProgressLabel(thread) {
   const interview = interviewState(thread);
   return interview?.completion_label || null;
@@ -2173,6 +2454,7 @@ function renderThreadContext(thread) {
     return;
   }
   if (["character_room", "outline_room"].includes(thread.scope)) {
+    const setupFocusMode = currentWorkspaceMode() === "project_setup" && isSetupConversationScope(thread);
     const inherited = context.inherited_items?.length
       ? `<ul class="interview-list">${context.inherited_items.map((item) => `<li><strong>${escapeHtml(item.label || "")}</strong>：${escapeHtml(item.summary || "")}</li>`).join("")}</ul>`
       : `<div class="meta">当前还没有明确可继承的稳定结论。</div>`;
@@ -2195,10 +2477,12 @@ function renderThreadContext(thread) {
         </div>
         <div class="meta">${escapeHtml(context.reason || "")}</div>
         <div class="interview-block accent-block">
-          <strong>建议先补这一点</strong>
+          <strong>${setupFocusMode ? "这轮先从这里聊起" : "建议先补这一点"}</strong>
           <div class="meta">${
             context.priority_item
-              ? `${escapeHtml(context.priority_item)}${context.progress_label ? ` · 当前进度 ${escapeHtml(context.progress_label)}` : ""}`
+              ? `${escapeHtml(context.priority_item)}${
+                  !setupFocusMode && context.progress_label ? ` · 当前进度 ${escapeHtml(context.progress_label)}` : ""
+                }`
               : "当前已经没有明显的优先缺口，可以直接整理这一步的稳定结论。"
           }</div>
           ${
@@ -2215,11 +2499,11 @@ function renderThreadContext(thread) {
         </div>
         <div class="interview-grid">
           <div class="interview-block">
-            <strong>这一步会继承什么</strong>
+            <strong>${setupFocusMode ? "已经承接进来的内容" : "这一步会继承什么"}</strong>
             ${inherited}
           </div>
           <div class="interview-block">
-            <strong>这一步还要补什么</strong>
+            <strong>${setupFocusMode ? "后面再慢慢补" : "这一步还要补什么"}</strong>
             ${missing}
           </div>
         </div>
@@ -2521,6 +2805,7 @@ async function openOrCreateConversationScope(scope, { activateTab = true } = {})
 
 function renderInterviewSummary(thread) {
   const interview = interviewState(thread);
+  const omxTask = currentConversationOmxTask(thread);
   if (!thread || !interview) {
     el.conversationInterviewSummary.innerHTML = "";
     return;
@@ -2528,38 +2813,92 @@ function renderInterviewSummary(thread) {
   const setupFocusMode = currentWorkspaceMode() === "project_setup" && isSetupConversationScope(thread);
   const confirmed = interview.confirmed_topics?.length
     ? `<ul class="interview-list">${interview.confirmed_topics.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
-    : `<div class="meta">还没有稳定确认项，先从当前下一问开始回答。</div>`;
+    : `<div class="meta">还没有稳定确认项，先从你现在最有感觉的一句开始就行。</div>`;
   const unresolved = interview.unresolved_topics?.length
     ? `<ul class="interview-list">${interview.unresolved_topics.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
-    : `<div class="meta">当前关键问题已基本问清，可以开始采纳并执行。</div>`;
+    : `<div class="meta">当前这一轮已经够用了，可以开始整理并确认。</div>`;
   const basis = interview.basis?.length
     ? `<div class="meta">${interview.basis.map((item) => escapeHtml(item)).join(" / ")}</div>`
     : `<div class="meta">当前还没有明确的项目基础信息。</div>`;
   const adopted = interview.adopted_highlights?.length
     ? `<div class="meta">${interview.adopted_highlights.map((item) => escapeHtml(compactDecisionText(item, 36))).join(" / ")}</div>`
-    : `<div class="meta">当前线程还没有采纳结论。</div>`;
+    : `<div class="meta">当前这条线还没有沉淀成已采纳结论。</div>`;
   const skipped = interview.skipped_topics?.length
-    ? `<div class="meta">已跳过：${interview.skipped_topics.map((item) => escapeHtml(item)).join("、")}</div>`
+    ? `<div class="meta">暂时先放着：${interview.skipped_topics.map((item) => escapeHtml(item)).join("、")}</div>`
     : "";
-  const optionButtons = interview.next_options?.length
+  const optionHint = escapeHtml(interview.option_hint || "这些只是灵感话头，不是标准答案。");
+  const responseHint = escapeHtml(
+    interview.response_hint || "直接说一句感觉、例子、关系火花或担心的地方都可以，系统会帮你归纳。"
+  );
+  let resolutionNotice = "";
+  if (interview.last_answer_resolution?.mode === "redirected") {
+    resolutionNotice = `刚才那句已经被自动记到“${escapeHtml(
+      interview.last_answer_resolution.resolved_topic_title || "更贴近的点"
+    )}”，你不用重答。`;
+  } else if (interview.last_answer_resolution?.mode === "multi_capture") {
+    resolutionNotice = `刚才那段里已经同时抓到了这些点：${escapeHtml(
+      (interview.last_answer_resolution.resolved_topic_titles || []).join("、") || interview.last_answer_resolution.resolved_topic_title || "几个关键维度"
+    )}。你不用一题一题地答。`;
+  } else if (interview.last_answer_resolution?.mode === "loose_accept") {
+    resolutionNotice = `刚才那句已经先按“${escapeHtml(
+      interview.last_answer_resolution.resolved_topic_title || "当前这个点"
+    )}”收下，后面再慢慢补精确表达就行。`;
+  } else if (interview.last_helper_action === "rephrase") {
+    resolutionNotice = "我已经把问题换成更口语的说法了，你可以按自己的感觉直接往下说。";
+  } else if (interview.last_helper_action === "more_options") {
+    resolutionNotice = "我补了几组更有画面感的话头，你可以随便借一个起步。";
+  } else if (interview.last_helper_action === "unsure") {
+    resolutionNotice = "先不用想完整，我们先缩小到一个你最有感觉的方向。";
+  } else if (interview.last_helper_action === "push_harder") {
+    resolutionNotice = "这一轮我先把人物往更锋利、更有记忆点的方向推了一步。";
+  } else if (interview.last_helper_action === "scene_probe") {
+    resolutionNotice = "这一轮我们先不用抽象定义，直接用一个小场景把人物试出来。";
+  } else if (interview.last_helper_action === "contrast_probe") {
+    resolutionNotice = "这一轮我先帮你抓人物反差，让这个人更耐看。";
+  }
+  const optionButtons = interview.show_next_options && interview.next_options?.length
     ? `
-      <div class="interview-options">
-        ${interview.next_options
-          .map((item, index) => `<button class="button ghost interview-option" type="button" data-interview-option="${index}">${escapeHtml(item)}</button>`)
-          .join("")}
-        <button class="button ghost interview-option ghost" type="button" data-interview-helper="skip">先跳过</button>
-        <button class="button ghost interview-option ghost" type="button" data-interview-helper="rephrase">换个问法</button>
-        <button class="button ghost interview-option ghost" type="button" data-interview-helper="more-options">给我更多选项</button>
-        <button class="button ghost interview-option ghost" type="button" data-interview-helper="unsure">我还不确定</button>
+      <div class="interview-assist-block">
+        <div class="meta"><strong>如果你想要一点灵感</strong></div>
+        <div class="meta">${optionHint}</div>
+        <div class="interview-options">
+          ${interview.next_options
+            .map((item, index) => `<button class="button ghost interview-option" type="button" data-interview-option="${index}">${escapeHtml(item)}</button>`)
+            .join("")}
+        </div>
       </div>
     `
     : "";
+  const helperButtons = thread.scope === "character_room"
+    ? `
+      <div class="interview-assist-block subdued">
+        <div class="meta"><strong>如果你想换一种聊法</strong></div>
+        <div class="interview-helper-actions">
+          <button class="button ghost interview-option ghost" type="button" data-interview-helper="rephrase">换个问法</button>
+          <button class="button ghost interview-option ghost" type="button" data-interview-helper="more-options">给我一点灵感</button>
+          <button class="button ghost interview-option ghost" type="button" data-interview-helper="push-harder">更狠一点</button>
+          <button class="button ghost interview-option ghost" type="button" data-interview-helper="scene-probe">用场景试一下</button>
+          <button class="button ghost interview-option ghost" type="button" data-interview-helper="contrast-probe">给我反差版</button>
+        </div>
+      </div>
+    `
+    : `
+      <div class="interview-assist-block subdued">
+        <div class="meta"><strong>如果现在不顺</strong></div>
+        <div class="interview-helper-actions">
+          <button class="button ghost interview-option ghost" type="button" data-interview-helper="skip">先放一放</button>
+          <button class="button ghost interview-option ghost" type="button" data-interview-helper="rephrase">换个问法</button>
+          <button class="button ghost interview-option ghost" type="button" data-interview-helper="more-options">给我一点灵感</button>
+          <button class="button ghost interview-option ghost" type="button" data-interview-helper="unsure">帮我缩小范围</button>
+        </div>
+      </div>
+    `;
   const currentDraft = interview.current_draft
     ? `
       <section class="interview-draft">
         <div class="card-head">
           <h4>${escapeHtml(interview.current_draft.title || "当前理解草案")}</h4>
-          <span class="status-chip status-approved">可确认</span>
+          <span class="status-chip status-approved">已整理出草案</span>
         </div>
         <div class="meta">${escapeHtml(interview.current_draft.lead || "")}</div>
         <div class="stack compact">
@@ -2613,21 +2952,34 @@ function renderInterviewSummary(thread) {
     interview.completion_count === interview.total_topics && interview.total_topics
       ? `
         <div class="interview-block accent-block">
-          <strong>${escapeHtml(String(interview.total_topics || 0))} 个核心问题已经答完</strong>
-          <div class="meta">如果你现在没有更多补充，下一步通常不是继续逐条点“采纳为写作规则”，而是先确认这版阶段摘要。</div>
-          <div class="meta">优先动作：请直接点下面这张“现在该点这里”的主卡片，再不要在单条采纳按钮里停留。</div>
+          <strong>${escapeHtml(String(interview.total_topics || 0))} 个核心问题已经聊得差不多了</strong>
+          <div class="meta">如果你现在没有更多补充，下一步通常不是继续逐条点“采纳为写作规则”，而是先确认这一轮阶段摘要。</div>
+          <div class="meta">优先动作：直接看下面这张推荐动作卡，不需要在单条采纳按钮里停留太久。</div>
           <div class="meta">系统推荐：${escapeHtml(
             interview.stage_confirmation?.action_recommendation?.primary_label || "确认并拆出第一批结论"
           )}。这样系统才会把当前阶段结果正式写回项目，并给后续人物讨论、大纲讨论和开书继续继承。</div>
         </div>
       `
       : "";
-  const stageConfirmation = interview.stage_confirmation
+  const readyForStagePanel = (interview.completion_count || 0) >= Math.min(interview.total_topics || 0, 3);
+  const showStageConfirmation = Boolean(
+    interview.stage_confirmation &&
+      (
+        readyForStagePanel ||
+        interview.stage_confirmation.decision_split_preview ||
+        ["apply_summary", "apply_and_split"].includes(interview.stage_confirmation.action_recommendation?.mode)
+      )
+  );
+  const stagePrimaryAction =
+    showStageConfirmation && interview.stage_confirmation?.action_recommendation?.mode !== "continue_clarifying"
+      ? renderStagePrimaryAction(thread, interview.stage_confirmation)
+      : "";
+  const stageConfirmation = showStageConfirmation
     ? `
       <section class="interview-stage-card">
         <div class="card-head">
-          <h4>阶段确认页</h4>
-          <span class="status-chip status-approved">先确认，再分流</span>
+          <h4>这一轮的整理</h4>
+          <span class="status-chip status-approved">边聊边沉淀</span>
         </div>
         ${
           interview.stage_confirmation.action_recommendation
@@ -2648,6 +3000,11 @@ function renderInterviewSummary(thread) {
                         ? `<button class="button secondary" type="button" data-apply-stage-summary="${thread.thread_id}">${escapeHtml(interview.stage_confirmation.action_recommendation.primary_label || stageSummaryApplyLabel(thread.scope))}</button>`
                         : `<button class="button ghost" type="button" data-stage-focus-input="true">${escapeHtml(interview.stage_confirmation.action_recommendation.primary_label || "先补当前这一个")}</button>`
                   }
+                  ${
+                    canLaunchOmxFromThread(thread)
+                      ? `<button class="button ghost" type="button" data-launch-omx-thread="${thread.thread_id}">${escapeHtml(omxLaunchLabel(thread.scope))}</button>`
+                      : ""
+                  }
                 </div>
               </div>
             `
@@ -2655,7 +3012,7 @@ function renderInterviewSummary(thread) {
         }
         <div class="interview-grid">
           <div class="interview-block">
-            <strong>已经聊到</strong>
+            <strong>已经收住</strong>
             ${
               interview.stage_confirmation.confirmed_items?.length
                 ? `<ul class="interview-list">${interview.stage_confirmation.confirmed_items
@@ -2665,7 +3022,7 @@ function renderInterviewSummary(thread) {
             }
           </div>
           <div class="interview-block">
-            <strong>暂定表达</strong>
+            <strong>当前整理</strong>
             ${
               interview.stage_confirmation.provisional_items?.length
                 ? `<ul class="interview-list">${interview.stage_confirmation.provisional_items
@@ -2677,7 +3034,7 @@ function renderInterviewSummary(thread) {
         </div>
         <div class="interview-grid">
           <div class="interview-block">
-            <strong>后面还可以继续补</strong>
+            <strong>后面再慢慢补</strong>
             ${
               interview.stage_confirmation.open_questions?.length
                 ? `<ul class="interview-list">${interview.stage_confirmation.open_questions.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
@@ -2753,6 +3110,11 @@ function renderInterviewSummary(thread) {
                 }</div>
                 <div class="actions">
                   <button class="button secondary" type="button" data-apply-stage-summary="${thread.thread_id}">${stageSummaryApplyLabel(thread.scope)}</button>
+                  ${
+                    canLaunchOmxFromThread(thread)
+                      ? `<button class="button ghost" type="button" data-launch-omx-thread="${thread.thread_id}">${escapeHtml(omxLaunchLabel(thread.scope))}</button>`
+                      : ""
+                  }
                 </div>
               </section>
             `
@@ -2766,32 +3128,37 @@ function renderInterviewSummary(thread) {
       <section class="interview-focus-card">
         <div class="card-head">
           <div>
-            <div class="section-caption">现在先做这一件事</div>
-            <h4>顺着当前这个点继续聊</h4>
+            <div class="section-caption">现在先聊这个</div>
+            <h4>${escapeHtml(interview.next_topic_title || "顺着当前这个点继续聊")}</h4>
           </div>
-          <span class="status-chip status-approved">已聊到 ${interview.completion_label}</span>
+          <span class="status-chip status-approved">${
+            interview.confirmed_topics?.length ? `已收住 ${interview.confirmed_topics.length} 个点` : "从最容易说的开始"
+          }</span>
         </div>
         <div class="interview-focus-prompt">${escapeHtml(interview.next_prompt || "继续补充你认为最关键的信息。")}</div>
-        <div class="meta">${escapeHtml(interview.goal || "")}</div>
         <div class="meta">${escapeHtml(interview.reflection_summary || "")}</div>
+        <div class="meta">${responseHint}</div>
+        ${resolutionNotice ? `<div class="interview-resolution-note">${resolutionNotice}</div>` : ""}
         ${basis}
         ${optionButtons}
+        ${helperButtons}
         <div class="interview-focus-meta">
           <span class="interview-focus-pill">已采纳 ${interview.adopted_count || 0} 条</span>
-          <span class="interview-focus-pill muted">回答后系统会继续追问，不需要一次说完整本书。</span>
+          <span class="interview-focus-pill muted">系统会自动吸收最接近的意思，不需要逐字命中预设选项。</span>
         </div>
       </section>
       <section class="interview-card interview-support-card">
-        ${renderStagePrimaryAction(thread, interview.stage_confirmation)}
+        ${renderConversationOmxTaskPanel(thread, omxTask)}
+        ${stagePrimaryAction}
         ${closureHint}
         <div class="interview-grid compact-grid">
           <div class="interview-block">
-            <strong>已经聊到的点</strong>
+            <strong>已经慢慢收住</strong>
             ${confirmed}
             ${skipped}
           </div>
           <div class="interview-block">
-            <strong>后面还可以继续补</strong>
+            <strong>后面再慢慢补</strong>
             ${unresolved}
           </div>
         </div>
@@ -2803,35 +3170,40 @@ function renderInterviewSummary(thread) {
     : `
       <section class="interview-card">
         <div class="card-head">
-          <h4>当前共创进度</h4>
-          <span class="status-chip status-approved">已聊到 ${interview.completion_label}</span>
+          <h4>当前讨论整理</h4>
+          <span class="status-chip status-approved">${
+            interview.confirmed_topics?.length ? `已收住 ${interview.confirmed_topics.length} 个点` : "正在一起摸第一版"
+          }</span>
         </div>
-        <div class="meta">${escapeHtml(interview.goal || "")}</div>
         <div class="meta">${escapeHtml(interview.reflection_summary || "")}</div>
+        <div class="meta">${responseHint}</div>
+        ${resolutionNotice ? `<div class="interview-resolution-note">${resolutionNotice}</div>` : ""}
         ${basis}
+        ${renderConversationOmxTaskPanel(thread, omxTask)}
         ${restartBlock}
         ${closureHint}
-        ${renderStagePrimaryAction(thread, interview.stage_confirmation)}
+        ${stagePrimaryAction}
         <div class="interview-grid">
           <div class="interview-block">
-            <strong>已经聊到的点</strong>
+            <strong>已经慢慢收住</strong>
             ${confirmed}
             ${skipped}
           </div>
           <div class="interview-block">
-            <strong>后面还可以继续补</strong>
+            <strong>后面再慢慢补</strong>
             ${unresolved}
           </div>
         </div>
         <div class="interview-grid">
           <div class="interview-block">
-            <strong>系统下一问</strong>
+            <strong>顺着这个点继续聊</strong>
             <div class="meta">${escapeHtml(interview.next_prompt || "继续补充你认为最关键的信息。")}</div>
             ${optionButtons}
+            ${helperButtons}
           </div>
           <div class="interview-block">
-            <strong>当前已采纳</strong>
-            <div class="meta">已采纳 ${interview.adopted_count || 0} 条</div>
+            <strong>已经沉淀</strong>
+            <div class="meta">当前已采纳 ${interview.adopted_count || 0} 条</div>
             ${adopted}
           </div>
         </div>
@@ -2845,19 +3217,13 @@ function renderInterviewSummary(thread) {
       if (!choice) return;
       el.conversationInput.value = choice;
       el.conversationInput.focus();
-      setStatus("已把候选回答带入输入框，你可以直接发送或再补一句。", "ready");
+      setStatus("已把一个起手话头带入输入框，你可以直接发送，也可以改成更贴近自己的说法。", "ready");
     });
   });
   el.conversationInterviewSummary.querySelectorAll("[data-interview-helper]").forEach((node) => {
     node.addEventListener("click", async () => {
-      const helper =
-        node.dataset.interviewHelper === "skip"
-          ? "先跳过这个问题，继续问下一个。"
-          : node.dataset.interviewHelper === "rephrase"
-            ? "换个问法。"
-            : node.dataset.interviewHelper === "more-options"
-              ? "给我更多选项。"
-              : "我还不确定，先给我几个更具体的方向。";
+      const helper = interviewHelperSubmitText(node.dataset.interviewHelper || "");
+      if (!helper) return;
       try {
         await submitConversationMessage(helper);
       } catch (error) {
@@ -2929,6 +3295,33 @@ function renderInterviewSummary(thread) {
     node.addEventListener("click", async () => {
       try {
         await applyStageSummary(node.dataset.applyStageSummary);
+      } catch (error) {
+        setStatus(String(error.message || error), "error");
+      }
+    });
+  });
+  el.conversationInterviewSummary.querySelectorAll("[data-launch-omx-thread]").forEach((node) => {
+    node.addEventListener("click", async () => {
+      try {
+        await launchOmxFromConversationThread(node.dataset.launchOmxThread);
+      } catch (error) {
+        setStatus(String(error.message || error), "error");
+      }
+    });
+  });
+  el.conversationInterviewSummary.querySelectorAll("[data-refresh-omx-thread]").forEach((node) => {
+    node.addEventListener("click", async () => {
+      try {
+        await refreshConversationOmxTask(node.dataset.refreshOmxThread);
+      } catch (error) {
+        setStatus(String(error.message || error), "error");
+      }
+    });
+  });
+  el.conversationInterviewSummary.querySelectorAll("[data-omx-action]").forEach((node) => {
+    node.addEventListener("click", async () => {
+      try {
+        await handleConversationOmxTaskAction(node.dataset.omxThreadId, node.dataset.omxAction);
       } catch (error) {
         setStatus(String(error.message || error), "error");
       }
@@ -4781,9 +5174,46 @@ function deriveConversationAction() {
   const threadDecisions = thread ? decisions.filter((item) => item.thread_id === thread.thread_id) : [];
   const executableApproval = latestExecutableApproval(state.projectSnapshot.approvals || []);
   const latestChapter = latestChapterNo(state.projectSnapshot.chapters || []);
+  const omxTask = currentConversationOmxTask(thread);
 
   if (!project) {
     return { disabled: true, label: "按当前结论执行", copy: "先选择项目，才能用当前已采纳结论驱动下一步动作。", action: null };
+  }
+  if (thread && canLaunchOmxFromThread(thread)) {
+    if (!omxTask) {
+      return {
+        disabled: false,
+        label: omxLaunchLabel(thread.scope),
+        copy: "这条线程已经可以直接进入 OMX 执行；如果你还想把方向聊得更稳，也可以继续补几句再发起。",
+        action: { kind: "launch-omx-thread", threadId: thread.thread_id },
+      };
+    }
+    if (omxTask.status === "running") {
+      return {
+        disabled: false,
+        label: "刷新 OMX 状态",
+        copy: "这条线程已经在后台执行。先刷新状态；如果进入人工决策点，线程里的 OMX 面板会直接给出处理按钮。",
+        action: { kind: "refresh-omx-thread", threadId: thread.thread_id },
+      };
+    }
+    if (omxTask.status === "awaiting_approval") {
+      return {
+        disabled: false,
+        label: "刷新 OMX 状态",
+        copy: "当前已经进入人工决策点。先刷新一次；真正的批准、重写或补充说明，请直接在上方 OMX 面板里处理。",
+        action: { kind: "refresh-omx-thread", threadId: thread.thread_id },
+      };
+    }
+    if (["failed", "rejected", "completed"].includes(omxTask.status)) {
+      return {
+        disabled: false,
+        label: "重新按当前结果执行",
+        copy: omxTask.status === "completed"
+          ? "上一轮 OMX 已完成。如果你在这条线程里又补了新方向，可以直接再发起一轮。"
+          : "上一轮 OMX 没有走通，但线程结论还在。你可以先继续聊，也可以直接按当前结果重新发起。",
+        action: { kind: "launch-omx-thread", threadId: thread.thread_id },
+      };
+    }
   }
   if (!decisions.length) {
     return { disabled: true, label: "按当前结论执行", copy: "先把对话中的一条消息采纳为规则或修订指令，再执行。", action: null };
@@ -6245,6 +6675,7 @@ function renderConversationPanel() {
   el.conversationExecute.dataset.runId = actionPlan.action?.runId || "";
   el.conversationExecute.dataset.approvalId = actionPlan.action?.approvalId || "";
   el.conversationExecute.dataset.recoveryMode = actionPlan.action?.recoveryMode || "";
+  el.conversationExecute.dataset.threadId = actionPlan.action?.threadId || "";
   if (state.conversationFeedback?.text) {
     setConversationFeedback(state.conversationFeedback.text, state.conversationFeedback.kind || "error");
   } else {
@@ -6276,13 +6707,13 @@ function renderConversationPanel() {
   }
   if (el.conversationFormLabel) {
     el.conversationFormLabel.textContent = setupFocusMode
-      ? "先回答当前这一个问题；不需要一次想清所有设定。"
+      ? interviewState(thread)?.response_hint || "直接说一句感觉、例子或担心跑偏的地方，系统会帮你归纳，不用按标准答案作答。"
       : "告诉系统你想保留什么、调整什么、或者想继续追问什么";
   }
   el.conversationInput.rows = setupFocusMode ? 5 : 4;
   if (setupFocusMode) {
-    el.conversationInput.placeholder = "例如：我最想保住的是悬念感，因为我希望读者一直想知道废炉里的声音到底是什么。";
-    el.conversationSend.textContent = "发送回答";
+    el.conversationInput.placeholder = conversationInputPlaceholder(thread);
+    el.conversationSend.textContent = "继续聊";
   } else {
     el.conversationInput.placeholder = conversationInputPlaceholder(thread);
     el.conversationSend.textContent = "发送并沉淀";
@@ -6315,13 +6746,37 @@ function scrollArtifactsIntoView() {
   setWorkspaceTab("artifacts");
 }
 
+async function loadConversationOmxTask(threadId) {
+  if (!threadId) {
+    state.conversationOmxTask = null;
+    state.conversationOmxTaskThreadId = null;
+    return null;
+  }
+  try {
+    const task = await api(`/api/conversation-threads/${threadId}/omx-task`);
+    state.conversationOmxTask = task;
+    state.conversationOmxTaskThreadId = threadId;
+    return task;
+  } catch (error) {
+    if (error?.detail === "omx_task_not_found_for_thread") {
+      state.conversationOmxTask = null;
+      state.conversationOmxTaskThreadId = threadId;
+      return null;
+    }
+    throw error;
+  }
+}
+
 async function loadConversationMessages(threadId, { activateTab = true } = {}) {
   state.selectedThreadId = threadId;
   if (activateTab) {
     setWorkspaceTab("conversation");
   }
   renderProjectState();
-  const messages = await api(`/api/conversation-threads/${threadId}/messages`);
+  const [messages] = await Promise.all([
+    api(`/api/conversation-threads/${threadId}/messages`),
+    loadConversationOmxTask(threadId),
+  ]);
   state.conversationMessages = messages;
   renderProjectState();
   renderConversationPanel();
@@ -6584,6 +7039,81 @@ async function applyAndSplitStageSummary(threadId) {
   );
 }
 
+async function launchOmxFromConversationThread(threadId) {
+  if (!threadId) return;
+  const launched = await api(`/api/conversation-threads/${threadId}/launch-omx-task`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+  await loadProjects();
+  if (state.selectedProjectId) {
+    await selectProject(state.selectedProjectId);
+  }
+  if (state.selectedThreadId) {
+    await loadConversationMessages(state.selectedThreadId, { activateTab: false });
+  }
+  setStatus(
+    `已发起 OMX 执行任务 ${launched.task_id}。当前任务正在后台推进；如果后续进入人工决策点，线程里会保留一条发起记录。`,
+    "ready"
+  );
+}
+
+async function refreshConversationOmxTask(threadId) {
+  if (!threadId) return;
+  await loadConversationMessages(threadId, { activateTab: false });
+  setStatus("已刷新 OMX 任务状态。", "ready");
+}
+
+function buildOmxHumanActionPayload(action) {
+  if (action === "approve_continue" || action === "approve_patch" || action === "approve_replan") {
+    return { action };
+  }
+  if (action === "reject") {
+    const comment = window.prompt("可以补一句拒绝原因，留空也可以。", "这轮先不要继续，请回到更稳的方向。");
+    if (comment === null) return null;
+    return { action, comment: String(comment || "").trim() || null };
+  }
+  if (action === "provide_human_instruction") {
+    const notes = window.prompt("请直接写你要补充给系统的要求。系统会把这段话并入下一轮执行。", "先修正当前最关键的问题，再继续，不要扩写新设定。");
+    if (notes === null) return null;
+    const mustFixText = window.prompt("如果有“必须修”的点，可用顿号、逗号或换行分隔；没有可留空。", "");
+    if (mustFixText === null) return null;
+    const mustFix = String(mustFixText || "")
+      .split(/[、,\n]/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+    return {
+      action,
+      comment: String(notes || "").trim() || null,
+      instruction: {
+        notes: String(notes || "").trim() || null,
+        must_fix: mustFix,
+      },
+    };
+  }
+  return { action };
+}
+
+async function handleConversationOmxTaskAction(threadId, action) {
+  if (!threadId || !action) return;
+  const payload = buildOmxHumanActionPayload(action);
+  if (!payload) return;
+  const result = await api(`/api/conversation-threads/${threadId}/omx-task/human-action`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  state.conversationOmxTask = result;
+  state.conversationOmxTaskThreadId = threadId;
+  await loadProjects();
+  if (state.selectedProjectId) {
+    await selectProject(state.selectedProjectId);
+  }
+  if (state.selectedThreadId) {
+    await loadConversationMessages(state.selectedThreadId, { activateTab: false });
+  }
+  setStatus(`已处理 OMX 任务动作：${omxTaskActionLabel(action)}。`, "ready");
+}
+
 async function splitStageSummary(threadId) {
   if (!threadId) return;
   const created = await api(`/api/conversation-threads/${threadId}/split-stage-summary`, {
@@ -6746,6 +7276,8 @@ async function selectProject(projectId) {
   if (!knownThread) {
     state.selectedThreadId = conversationThreads[0]?.thread_id || null;
     state.conversationMessages = [];
+    state.conversationOmxTask = null;
+    state.conversationOmxTaskThreadId = null;
   }
   renderProjectState();
   if (state.selectedRunId) {
@@ -6761,6 +7293,8 @@ async function selectProject(projectId) {
     await loadConversationMessages(state.selectedThreadId, { activateTab: false });
   } else {
     state.conversationMessages = [];
+    state.conversationOmxTask = null;
+    state.conversationOmxTaskThreadId = null;
     renderConversationPanel();
   }
 }
@@ -6978,7 +7512,7 @@ async function createProject(event) {
   }
 }
 
-async function saveProjectCharacterCards() {
+async function saveProjectCharacterCards({ statusMessage } = {}) {
   if (!state.selectedProjectId) return;
   const project = selectedProject();
   if (!project) return;
@@ -6995,7 +7529,67 @@ async function saveProjectCharacterCards() {
   syncProjectCharacterCardsDraft(updated, true);
   renderProjects();
   renderProjectState();
-  setStatus(`已保存 ${updated.default_user_brief?.character_cards?.length || 0} 张人物卡。`, "ready");
+  setStatus(statusMessage || `已保存 ${updated.default_user_brief?.character_cards?.length || 0} 张人物卡。`, "ready");
+}
+
+async function saveActiveProjectCharacterSeed() {
+  const activeCharacter = currentProjectCharacterCard();
+  const label = characterCardTabLabel(activeCharacter?.card, activeCharacter?.index || 0);
+  await saveProjectCharacterCards({ statusMessage: `已保存 ${label} 的自由描述。` });
+}
+
+function selectedProjectCharacterReviewItems() {
+  if (!el.projectCharacterCards) return [];
+  const seen = new Set();
+  return Array.from(el.projectCharacterCards.querySelectorAll("[data-character-review-item]:checked"))
+    .map((node) => {
+      if (!(node instanceof HTMLInputElement)) return null;
+      const artifact = String(node.dataset.reviewArtifact || "").trim();
+      const label = String(node.dataset.reviewLabel || "").trim();
+      const summary = String(node.dataset.reviewSummary || "").trim();
+      const key = `${artifact}:${label}:${summary}`;
+      if (!artifact || !label || seen.has(key)) return null;
+      seen.add(key);
+      return { artifact, label, summary };
+    })
+    .filter(Boolean);
+}
+
+async function ensureProjectCharacterDiscussionThread() {
+  await openOrCreateConversationScope("character_room", { activateTab: false });
+  const activeCharacter = currentProjectCharacterCard();
+  const thread = selectedThread() || (activeCharacter ? latestCharacterThreadForTarget(activeCharacter.target) : null);
+  if (thread?.thread_id) {
+    state.selectedThreadId = thread.thread_id;
+  }
+  return thread;
+}
+
+async function discussSelectedProjectCharacterReviewItems() {
+  const selectedItems = selectedProjectCharacterReviewItems();
+  if (!selectedItems.length) {
+    throw new Error("请先勾出不准确的草稿项，再继续讨论。");
+  }
+  const thread = await ensureProjectCharacterDiscussionThread();
+  if (!thread?.thread_id) {
+    throw new Error("当前人物卡的讨论线程还没准备好，请稍后再试。");
+  }
+  const reviewLines = selectedItems
+    .map((item) => `- ${item.artifact === "draft" ? "理解草稿" : item.artifact === "summary" ? "人物摘要" : "人物画像"} / ${item.label}：${item.summary || "这项表达有偏差"}`)
+    .join("\n");
+  state.selectedThreadId = thread.thread_id;
+  await submitConversationMessage(
+    `下面这些草稿内容我觉得不准确，请不要直接沿用，而是逐项跟我确认并一起修正：\n${reviewLines}\n请先从最关键的一项开始问我，并帮我把这些地方补准。`
+  );
+}
+
+async function confirmProjectCharacterReview() {
+  const thread = await ensureProjectCharacterDiscussionThread();
+  if (!thread?.thread_id) {
+    throw new Error("当前人物卡的讨论线程还没准备好，请稍后再试。");
+  }
+  state.selectedThreadId = thread.thread_id;
+  await submitConversationMessage("这版草稿的大方向基本对。请保留已经正确的部分，只围绕还缺的维度或我后续指出有偏差的地方继续追问我。");
 }
 
 async function syncProjectCharacterCardsFromSummary() {
@@ -7008,6 +7602,34 @@ async function syncProjectCharacterCardsFromSummary() {
   renderProjects();
   renderProjectState();
   setStatus(`已根据已确认的人物摘要同步 ${updated.default_user_brief?.character_cards?.length || 0} 张人物卡。`, "ready");
+}
+
+async function autofillProjectCharacterCardFromSeed() {
+  if (!state.selectedProjectId) return;
+  const currentSection = currentProjectSetupSection(selectedProject());
+  await saveProjectCharacterCards();
+  const activeCharacter = currentProjectCharacterCard();
+  const description = String(activeCharacter?.card?.concept_seed || "").trim();
+  if (!activeCharacter?.target?.character_id) {
+    throw new Error("请先选中一张人物卡，并至少填写人物标签或角色名。");
+  }
+  if (!description) {
+    throw new Error("请先写下你脑海里这个人物的大致描述，再让系统生成草稿。");
+  }
+  const updated = await api(`/api/projects/${state.selectedProjectId}/character-cards/${activeCharacter.target.character_id}/autofill`, {
+    method: "POST",
+    body: JSON.stringify({ description }),
+  });
+  state.projects = state.projects.map((item) => (item.project_id === updated.project_id ? updated : item));
+  syncProjectCharacterCardsDraft(updated, true);
+  setCurrentCharacterCardIndex("project", activeCharacter.index, state.projectCharacterCardsDraft);
+  await selectProject(state.selectedProjectId);
+  setCurrentCharacterCardIndex("project", activeCharacter.index, state.projectCharacterCardsDraft);
+  if (currentSection) {
+    setProjectSetupSection(currentSection, selectedProject());
+  }
+  await openOrCreateConversationScope("character_room", { activateTab: false });
+  setStatus(`已根据这段描述生成 ${characterCardTabLabel(activeCharacter.card, activeCharacter.index)} 的待确认草稿。先勾出不准确的地方，再继续讨论。`, "ready");
 }
 
 async function generateProjectCharacterPortrait() {
@@ -7038,6 +7660,8 @@ function showProjectCreator() {
   state.selectedRunId = null;
   state.selectedThreadId = null;
   state.conversationMessages = [];
+  state.conversationOmxTask = null;
+  state.conversationOmxTaskThreadId = null;
   state.projectSnapshot = {
     chapters: [],
     runs: [],
@@ -7101,6 +7725,14 @@ async function executeConversationAction() {
   }
   if (kind === "retry-run") {
     await handleRunAction("retry-run", el.conversationExecute.dataset.runId);
+    return;
+  }
+  if (kind === "launch-omx-thread") {
+    await launchOmxFromConversationThread(el.conversationExecute.dataset.threadId);
+    return;
+  }
+  if (kind === "refresh-omx-thread") {
+    await refreshConversationOmxTask(el.conversationExecute.dataset.threadId);
     return;
   }
   if (kind === "continue-run" || kind === "start-run") {

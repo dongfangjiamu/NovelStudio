@@ -167,3 +167,21 @@ class StrategySuggestionModel(Base):
     adopted_decision_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     created_at: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     updated_at: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+
+
+class OmxTaskModel(Base):
+    __tablename__ = "omx_tasks"
+
+    task_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    current_run_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    latest_approval_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, index=True)
+    operator_id: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True, index=True)
+    source_payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    latest_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    updated_at: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    completed_at: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)

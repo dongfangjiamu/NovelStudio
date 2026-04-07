@@ -162,6 +162,23 @@ class StrategySuggestionRecord:
     updated_at: str
 
 
+@dataclass(frozen=True)
+class OmxTaskRecord:
+    task_id: str
+    project_id: str
+    current_run_id: str
+    latest_approval_id: str | None
+    status: str
+    operator_id: str
+    idempotency_key: str | None
+    source_payload: dict[str, Any]
+    latest_snapshot: dict[str, Any]
+    last_error: str | None
+    created_at: str
+    updated_at: str
+    completed_at: str | None
+
+
 class InMemoryStore:
     def __init__(self) -> None:
         self._lock = RLock()
@@ -177,6 +194,7 @@ class InMemoryStore:
         self._conversation_messages: dict[str, ConversationMessageRecord] = {}
         self._conversation_decisions: dict[str, ConversationDecisionRecord] = {}
         self._strategy_suggestions: dict[str, StrategySuggestionRecord] = {}
+        self._omx_tasks: dict[str, OmxTaskRecord] = {}
 
     def create_project(
         self,
@@ -823,6 +841,88 @@ class InMemoryStore:
                 updated_at=now,
             )
             self._strategy_suggestions[record.candidate_id] = record
+            return record
+
+    def create_omx_task(
+        self,
+        *,
+        project_id: str,
+        current_run_id: str,
+        latest_approval_id: str | None,
+        status: str,
+        operator_id: str,
+        idempotency_key: str | None,
+        source_payload: dict[str, Any],
+        latest_snapshot: dict[str, Any],
+        last_error: str | None,
+    ) -> OmxTaskRecord:
+        with self._lock:
+            now = utc_now_iso()
+            record = OmxTaskRecord(
+                task_id=f"task_{uuid4().hex[:12]}",
+                project_id=project_id,
+                current_run_id=current_run_id,
+                latest_approval_id=latest_approval_id,
+                status=status,
+                operator_id=operator_id,
+                idempotency_key=idempotency_key,
+                source_payload=dict(source_payload),
+                latest_snapshot=dict(latest_snapshot),
+                last_error=last_error,
+                created_at=now,
+                updated_at=now,
+                completed_at=now if status in {"completed", "failed", "rejected"} else None,
+            )
+            self._omx_tasks[record.task_id] = record
+            return record
+
+    def get_omx_task(self, task_id: str) -> OmxTaskRecord | None:
+        with self._lock:
+            return self._omx_tasks.get(task_id)
+
+    def get_omx_task_by_idempotency_key(self, idempotency_key: str) -> OmxTaskRecord | None:
+        normalized = str(idempotency_key or "").strip()
+        if not normalized:
+            return None
+        with self._lock:
+            return next((item for item in self._omx_tasks.values() if item.idempotency_key == normalized), None)
+
+    def update_omx_task(
+        self,
+        *,
+        task_id: str,
+        current_run_id: str | None = None,
+        latest_approval_id: str | None = None,
+        status: str | None = None,
+        latest_snapshot: dict[str, Any] | None = None,
+        last_error: str | None = None,
+    ) -> OmxTaskRecord | None:
+        with self._lock:
+            current = self._omx_tasks.get(task_id)
+            if current is None:
+                return None
+            next_status = status or current.status
+            now = utc_now_iso()
+            record = OmxTaskRecord(
+                task_id=current.task_id,
+                project_id=current.project_id,
+                current_run_id=current_run_id or current.current_run_id,
+                latest_approval_id=latest_approval_id if latest_approval_id is not None else current.latest_approval_id,
+                status=next_status,
+                operator_id=current.operator_id,
+                idempotency_key=current.idempotency_key,
+                source_payload=current.source_payload,
+                latest_snapshot=dict(latest_snapshot) if latest_snapshot is not None else current.latest_snapshot,
+                last_error=last_error if last_error is not None else current.last_error,
+                created_at=current.created_at,
+                updated_at=now,
+                completed_at=(
+                    current.completed_at
+                    if current.completed_at is not None and next_status in {"completed", "failed", "rejected"}
+                    else now if next_status in {"completed", "failed", "rejected"} else None
+                ),
+            )
+            self._omx_tasks[task_id] = record
             return record
 
     def health_status(self) -> dict[str, str | None]:
