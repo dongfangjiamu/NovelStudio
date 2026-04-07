@@ -16,3 +16,5 @@ node_modules/
 backups/
 novel_studio/.langgraph_api/
 novel_studio/*.db
+.playwright-cli/
+output/
